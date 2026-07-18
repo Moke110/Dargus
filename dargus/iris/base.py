@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Protocol
 
 PredictionMatrix = dict[str, dict[str, dict[str, Any]]]

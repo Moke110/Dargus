@@ -14,3 +14,4 @@ literature/
 .env
 .DS_Store
 *.log
+CLAUDE.local.md

@@ -196,7 +196,10 @@ class DirectorAgent(BaseAgent):
             from dargus.dbase import DBase
             from dargus.iris.selector import IrisSelector
 
-            selector = IrisSelector(DBase(project_id, root_dir=self.projects_root))
+            selector = IrisSelector(
+                DBase(project_id, root_dir=self.projects_root),
+                config=self.config,
+            )
             return {"result": selector.predict(drug_ids, disease_id)}
 
         if task_type == "reader_scan":

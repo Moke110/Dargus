@@ -55,7 +55,7 @@ class IrisSelector:
             return [IrisSearch()]
 
         # Fallback: search + llm
-        return [IrisSearch(), IrisLlm()]
+        return [IrisSearch(), IrisLlm(config=self.config)]
 
     def _record_level(self, record: Any) -> str | None:
         schema = self.dbase._templates.get(record.template_id)

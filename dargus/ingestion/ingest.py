@@ -46,16 +46,21 @@ def ingest_dataset(
     for path in Path(data_dir).glob("*"):
         if not path.is_file():
             continue
-        for raw in converter.convert(path):
-            record_id = hashlib.sha1(json.dumps(raw, sort_keys=True).encode("utf-8")).hexdigest()[
-                :16
-            ]
+        for row_idx, raw in enumerate(converter.convert(path)):
+            record_id = hashlib.sha1(
+                json.dumps(
+                    {"path": path.name, "row": row_idx, "raw": raw},
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()[:16]
             record = retriever.fill_template(
                 raw,
                 source_metadata={
                     "type": "public_db",
                     "database_id": dataset_name,
                     "record_id": record_id,
+                    "source_file": path.name,
+                    "source_row": row_idx,
                 },
                 suggested_template=converter.template_id,
             )

@@ -2,22 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Protocol
+from typing import Any
 
 from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.llm_backends import LLMBackend, llm_backend_from_config
 
 logger = logging.getLogger(__name__)
-
-
-class LLMBackend(Protocol):
-    def complete(self, prompt: str) -> str: ...
-
-
-class MockLLMBackend:
-    """Default backend for tests and offline runs."""
-
-    def complete(self, prompt: str) -> str:
-        return json.dumps({})
 
 
 class IrisLlm(IrisAgent):
@@ -25,8 +15,12 @@ class IrisLlm(IrisAgent):
 
     name = "Iris-llm"
 
-    def __init__(self, backend: LLMBackend | None = None):
-        self.backend = backend or MockLLMBackend()
+    def __init__(
+        self,
+        backend: LLMBackend | None = None,
+        config: dict[str, Any] | None = None,
+    ):
+        self.backend = backend or llm_backend_from_config(config)
 
     def predict(
         self,

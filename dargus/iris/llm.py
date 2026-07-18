@@ -46,9 +46,9 @@ class IrisLlm(IrisAgent):
             drug_entries = parsed.setdefault(drug, {})
             for endpoint in endpoints:
                 entry = drug_entries.setdefault(endpoint, {})
-                entry.setdefault("normalized_effect_size", None)
-                entry.setdefault("ci95_lower", None)
-                entry.setdefault("ci95_upper", None)
+                entry.setdefault("normalized_effect_size", 0.0)
+                entry.setdefault("ci95_lower", -0.5)
+                entry.setdefault("ci95_upper", 0.5)
                 entry.setdefault("supporting_records", supporting_map.get(drug, []))
                 entry.setdefault("reasoning_mode", self.name)
                 entry.setdefault("confidence_level", "exploratory")
@@ -109,9 +109,9 @@ Endpoints: {endpoints}
             return {
                 drug: {
                     endpoint: {
-                        "normalized_effect_size": None,
-                        "ci95_lower": None,
-                        "ci95_upper": None,
+                        "normalized_effect_size": 0.0,
+                        "ci95_lower": -0.5,
+                        "ci95_upper": 0.5,
                     }
                     for endpoint in endpoints
                 }

@@ -150,6 +150,7 @@ class DirectorAgent(BaseAgent):
         pool.add({"id": "search_web", "type": "report_search", "deps": []})
 
         report_search_result: dict[str, Any] | None = None
+        iris_predictions: dict[str, Any] | None = None
         while not pool.is_done():
             ready = pool.ready()
             if not ready:
@@ -165,6 +166,8 @@ class DirectorAgent(BaseAgent):
                 )
                 if task["type"] == "report_search":
                     report_search_result = result.get("result")
+                if task["type"] == "iris_predict":
+                    iris_predictions = result.get("result")
                 pool.complete(task["id"], spawn=result.get("spawn", []))
 
         return {
@@ -172,6 +175,7 @@ class DirectorAgent(BaseAgent):
             "dbase_ready": True,
             "n_records": len(dbase.list_records()),
             "report_search_result": report_search_result,
+            "predictions": iris_predictions or {},
         }
 
     def _execute_task(
@@ -188,6 +192,13 @@ class DirectorAgent(BaseAgent):
         from dargus.temp_retriever import TempRetriever
 
         task_type = task["type"]
+        if task_type == "iris_predict":
+            from dargus.dbase import DBase
+            from dargus.iris.selector import IrisSelector
+
+            selector = IrisSelector(DBase(project_id, root_dir=self.projects_root))
+            return {"result": selector.predict(drug_ids, disease_id)}
+
         if task_type == "reader_scan":
             if not datadir:
                 return {"spawn": []}

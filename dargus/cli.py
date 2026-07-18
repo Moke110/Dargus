@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from dargus import DirectorAgent
 
@@ -20,6 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("disease")
     scan_parser.add_argument("--endpoints", nargs="+")
     scan_parser.add_argument("--drugs", nargs="+")
+
+    scan_v4_parser = subparsers.add_parser("scan-v4", help="v4.0 D-Base + Iris efficacy scan")
+    scan_v4_parser.add_argument("--drugs", required=True)
+    scan_v4_parser.add_argument("--disease", required=True)
+    scan_v4_parser.add_argument("--datadir")
+    scan_v4_parser.add_argument("--projects-root", default="projects")
 
     status_parser = subparsers.add_parser("status", help="check project status")
     status_parser.add_argument("project_id")
@@ -43,6 +50,31 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"    {drug}: {pred['normalized_effect_size']} "
                     f"[{pred['ci_95_lower']}, {pred['ci_95_upper']}]"
+                )
+        return 0
+    if args.command == "scan-v4":
+        from dargus.workflows.target_efficacy_scan import run_v4
+
+        drugs_path = Path(args.drugs)
+        if drugs_path.exists():
+            drug_ids = drugs_path.read_text(encoding="utf-8").strip().split(",")
+        else:
+            drug_ids = [d.strip() for d in args.drugs.split(",") if d.strip()]
+
+        result = run_v4(
+            drugs=drug_ids,
+            disease=args.disease,
+            datadir=args.datadir,
+            projects_root=args.projects_root,
+        )
+        print(f"Project: {result['project_id']}")
+        print("Predictions:")
+        for drug, endpoints in result["predictions"].items():
+            print(f"  {drug}:")
+            for endpoint, pred in endpoints.items():
+                print(
+                    f"    {endpoint}: {pred['normalized_effect_size']} "
+                    f"[{pred['ci95_lower']}, {pred['ci95_upper']}]"
                 )
         return 0
     if args.command == "status":

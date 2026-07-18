@@ -1,0 +1,28 @@
+name: dargus
+description: |
+  Dargus is a clinical-efficacy prediction system. It reads multi-level
+  evidence and outputs drug-disease effect sizes with 95% confidence intervals.
+version: "0.1.0"
+entrypoint:
+  mcp:
+    command: python
+    args: ["-m", "dargus.mcp_server"]
+commands:
+  scan-v4:
+    description: Run a target-disease efficacy scan using D-Base + Iris.
+    args:
+      - name: drugs
+        type: string
+        required: true
+      - name: disease
+        type: string
+        required: true
+      - name: datadir
+        type: string
+        required: false
+  status:
+    description: Show project status.
+    args:
+      - name: project_id
+        type: string
+        required: true

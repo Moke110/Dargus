@@ -122,6 +122,15 @@ class DBase:
             "provenance_note": record.provenance_note,
         }
 
+    def _record_to_json(self, record: TemplateRecord) -> dict:
+        return {
+            "template_id": record.template_id,
+            "record_id": record.record_id,
+            "source": record.source,
+            "sparse_vector": record.sparse_vector,
+            "provenance_note": record.provenance_note,
+        }
+
     def query(
         self,
         template_id: str | None = None,
@@ -200,10 +209,10 @@ class DBase:
 
         self.manifest_path.write_text(json.dumps(self._manifest, indent=2), encoding="utf-8")
 
-        # Legacy human-readable store is no longer part of the D-Base format.
-        legacy_records_path = self.dbase_dir / "records.jsonl"
-        if legacy_records_path.exists():
-            legacy_records_path.unlink()
+        records_jsonl_path = self.dbase_dir / "records.jsonl"
+        with records_jsonl_path.open("w", encoding="utf-8") as fh:
+            for record in self._records:
+                fh.write(json.dumps(self._record_to_json(record)) + "\n")
 
     def list_records(self) -> list[TemplateRecord]:
         return list(self._records)

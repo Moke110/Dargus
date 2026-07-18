@@ -11,20 +11,21 @@ from dargus.dbase.vocabulary import VocabularyManager
 
 
 class DBase:
-    """Experiment-level conclusion store: sparse matrix + factor vocabularies."""
+    """Experiment-level conclusion store: factorized sparse matrix + vocabularies."""
 
     def __init__(self, project_id: str, root_dir: str | Path):
         self.project_id = project_id
         self.root = Path(root_dir)
         self.dbase_dir = self.root / "dbase"
         self.templates_dir = self.dbase_dir / "templates"
-        self.records_path = self.dbase_dir / "records.jsonl"
         self.vocab_path = self.dbase_dir / "vocabularies.json"
         self.matrix_path = self.dbase_dir / "records.npz"
+        self.manifest_path = self.dbase_dir / "records_manifest.json"
 
-        self._records: list[TemplateRecord] = []
         self._templates: dict[str, TemplateSchema] = {}
         self._vocab: VocabularyManager | None = None
+        self._records: list[TemplateRecord] = []
+        self._manifest: list[dict] = []
         self._matrix: sp.csr_matrix | None = None
         self._dirty = True
 
@@ -44,19 +45,32 @@ class DBase:
             schema = TemplateSchema.from_yaml(yaml_path)
             self._templates[schema.template_id] = schema
 
-        if self.records_path.exists():
-            with self.records_path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    data = json.loads(line)
-                    self._records.append(TemplateRecord(**data))
-
-        if self.matrix_path.exists():
-            loaded = sp.load_npz(self.matrix_path)
-            self._matrix = loaded
+        if self.manifest_path.exists() and self.matrix_path.exists():
+            self._manifest = json.loads(
+                self.manifest_path.read_text(encoding="utf-8")
+            )
+            self._matrix = sp.load_npz(self.matrix_path)
             self._dirty = False
+            self._reconstruct_records_from_matrix()
+
+    def _reconstruct_records_from_matrix(self) -> None:
+        self._records = []
+        if self._matrix is None or self._matrix.shape[0] == 0:
+            return
+        for row_idx, entry in enumerate(self._manifest):
+            row = self._matrix[row_idx]
+            self._records.append(
+                TemplateRecord(
+                    template_id=entry["template_id"],
+                    record_id=entry["record_id"],
+                    source=entry["source"],
+                    sparse_vector={
+                        "indices": row.indices.tolist(),
+                        "values": row.data.tolist(),
+                    },
+                    provenance_note=entry.get("provenance_note", ""),
+                )
+            )
 
     @property
     def vocab(self) -> VocabularyManager:
@@ -74,8 +88,22 @@ class DBase:
         return self._templates[template_id]
 
     def add_record(self, record: TemplateRecord) -> None:
+        """Add a single TemplateRecord. One record per call for safety."""
+        if not isinstance(record, TemplateRecord):
+            raise TypeError("record must be a TemplateRecord")
+        if record.template_id not in self._templates:
+            raise KeyError(f"Template {record.template_id!r} not registered")
         self._records.append(record)
+        self._manifest.append(self._record_to_manifest_entry(record))
         self._dirty = True
+
+    def _record_to_manifest_entry(self, record: TemplateRecord) -> dict:
+        return {
+            "record_id": record.record_id,
+            "template_id": record.template_id,
+            "source": record.source,
+            "provenance_note": record.provenance_note,
+        }
 
     def query(
         self,
@@ -136,7 +164,9 @@ class DBase:
                 indices.append(i)
             indptr.append(len(data))
 
-        self._matrix = sp.csr_matrix((data, indices, indptr), shape=(len(self._records), n_cols))
+        self._matrix = sp.csr_matrix(
+            (data, indices, indptr), shape=(len(self._records), n_cols)
+        )
         self._dirty = False
         return self._matrix
 
@@ -147,13 +177,20 @@ class DBase:
 
         self.vocab.save(self.vocab_path)
 
-        with self.records_path.open("w", encoding="utf-8") as fh:
-            for rec in self._records:
-                fh.write(rec.model_dump_json() + "\n")
-
         matrix = self.to_sparse_matrix()
         if matrix.shape[0] > 0 and matrix.shape[1] > 0:
             sp.save_npz(self.matrix_path, matrix)
+        elif self.matrix_path.exists():
+            self.matrix_path.unlink()
+
+        self.manifest_path.write_text(
+            json.dumps(self._manifest, indent=2), encoding="utf-8"
+        )
+
+        # Legacy human-readable store is no longer part of the D-Base format.
+        legacy_records_path = self.dbase_dir / "records.jsonl"
+        if legacy_records_path.exists():
+            legacy_records_path.unlink()
 
     def list_records(self) -> list[TemplateRecord]:
         return list(self._records)

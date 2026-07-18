@@ -1,0 +1,23 @@
+methodology_registry:
+  disease_models:
+    - method: "Genetic knockout"
+      citation: "Capecchi, 2005, Nat Med"
+      guidelines: ["ARRIVE guidelines"]
+      benchmarks: []
+    - method: "Chemical induction (MPTP)"
+      citation: "Jackson-Lewis & Przedborski, 2007, Nat Protoc"
+      guidelines: []
+      benchmarks: []
+    - method: "Xenograft (PDX)"
+      citation: "Siolas & Hannon, 2013, Annu Rev Pathol"
+      guidelines: []
+      benchmarks: []
+  endpoints:
+    - method: "Rotarod"
+      citation: "Dunham & Miya, 1957, J Am Pharm Assoc"
+      guidelines: []
+      benchmarks: []
+    - method: "Survival analysis"
+      citation: "Kaplan & Meier, 1958, J Am Stat Assoc"
+      guidelines: []
+      benchmarks: []

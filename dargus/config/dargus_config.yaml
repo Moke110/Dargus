@@ -1,0 +1,51 @@
+# Dargus default configuration
+
+embedding:
+  drug: "morgan_rdkit"      # Options: morgan_rdkit, chemberta, molclr, graphmvp
+  disease: "clinical_mlp"   # Options: clinical_mlp, mondo_gnn, pubmed_svd
+  dimension: 512
+
+core_tools:
+  pdf_extractor: "pymupdf"
+  literature_search: "biopython"
+  drug_embedding: "morgan_rdkit"
+  disease_embedding: "clinical_mlp"
+
+level_embedding:
+  dimension: 512
+  effect_dimensions: 192
+  quality_dimensions: 128
+  context_dimensions: 128
+  confidence_dimensions: 64
+
+diris:
+  model: "bayesian"
+  n_samples: 2000
+  n_chains: 4
+  target_accept: 0.9
+  random_seed: 42
+
+retriever:
+  max_papers_per_query: 50
+  email: null
+  api_key: null
+  backends:
+    - pubmed
+    - semantic_scholar
+
+projects:
+  root_dir: "projects"
+  default_endpoints:
+    "Parkinson's disease":
+      - "UPDRS-III_change"
+      - "MDS-UPDRS_total_change"
+    "Alzheimer's disease":
+      - "ADAS-Cog_change"
+      - "MMSE_change"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+
+safety:
+  disclaimer: "Dargus outputs are for research purposes only and do not constitute clinical advice."

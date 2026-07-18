@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dargus"
+version = "0.1.0"
+description = "Clinical efficacy prediction system for drug-development researchers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Dargus Team"}
+]
+keywords = ["drug-discovery", "clinical-efficacy", "agent-system", "bioinformatics"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "PyYAML>=6.0",
+    "pydantic>=2.0",
+    "PyMuPDF>=1.23",
+    "biopython>=1.81",
+    "rdkit>=2023.9.1",
+    "pymc>=5.10",
+    "pytensor>=2.18",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+docking = ["vina>=1.2"]
+admet = ["admet-ai"]
+singlecell = ["scanpy>=1.9", "scvi-tools>=1.0"]
+genetics = ["coloc", "ldsc"]
+dev = ["pytest>=7.4", "black>=23.0", "ruff>=0.1.0", "mypy>=1.6"]
+all = ["dargus[docking,admet,singlecell,genetics,dev]"]
+
+[project.scripts]
+dargus = "dargus.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dargus*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true

@@ -1,0 +1,37 @@
+disease_endpoints:
+  "Parkinson's disease":
+    endpoints:
+      - name: "UPDRS-III_change"
+        description: "Unified Parkinson's Disease Rating Scale Part III motor examination change from baseline"
+        mcid: 3.25
+        unit: "points"
+        direction: "lower_is_better"
+      - name: "MDS-UPDRS_total_change"
+        description: "Movement Disorder Society UPDRS total score change"
+        mcid: 5.0
+        unit: "points"
+        direction: "lower_is_better"
+  "Alzheimer's disease":
+    endpoints:
+      - name: "ADAS-Cog_change"
+        description: "Alzheimer's Disease Assessment Scale-Cognitive subscale change"
+        mcid: 2.0
+        unit: "points"
+        direction: "lower_is_better"
+      - name: "MMSE_change"
+        description: "Mini-Mental State Examination change"
+        mcid: 1.4
+        unit: "points"
+        direction: "lower_is_better"
+  "HCC":
+    endpoints:
+      - name: "ORR"
+        description: "Objective response rate"
+        mcid: 0.20
+        unit: "proportion"
+        direction: "higher_is_better"
+      - name: "PFS_HR"
+        description: "Progression-free survival hazard ratio"
+        mcid: 0.75
+        unit: "hazard_ratio"
+        direction: "lower_is_better"

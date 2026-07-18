@@ -41,8 +41,9 @@ docking = ["vina>=1.2"]
 admet = ["admet-ai"]
 singlecell = ["scanpy>=1.9", "scvi-tools>=1.0"]
 genetics = ["coloc", "ldsc"]
+llm = ["litellm>=1.0"]
 dev = ["pytest>=7.4", "black>=23.0", "ruff>=0.1.0", "mypy>=1.6"]
-all = ["dargus[docking,admet,singlecell,genetics,dev]"]
+all = ["dargus[docking,admet,singlecell,genetics,llm,dev]"]
 
 [project.scripts]
 dargus = "dargus.cli:main"

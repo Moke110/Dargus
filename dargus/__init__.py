@@ -3,5 +3,6 @@
 __version__ = "0.1.0"
 
 from dargus.agents.director import DirectorAgent
+from dargus.dbase import DBase
 
-__all__ = ["DirectorAgent", "__version__"]
+__all__ = ["DirectorAgent", "DBase", "__version__"]

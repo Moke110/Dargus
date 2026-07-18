@@ -16,6 +16,33 @@ from dargus.database import DataMaster
 logger = logging.getLogger(__name__)
 
 
+class TaskPool:
+    """Simple rolling task pool with dependency tracking."""
+
+    def __init__(self):
+        self._pending: list[dict] = []
+        self._completed: set[str] = set()
+
+    def add(self, task: dict) -> None:
+        self._pending.append(task)
+
+    def ready(self) -> list[dict]:
+        return [
+            t
+            for t in self._pending
+            if t["id"] not in self._completed
+            and all(dep in self._completed for dep in t.get("deps", []))
+        ]
+
+    def complete(self, task_id: str, spawn: list[dict] | None = None) -> None:
+        self._completed.add(task_id)
+        for t in spawn or []:
+            self.add(t)
+
+    def is_done(self) -> bool:
+        return all(t["id"] in self._completed for t in self._pending)
+
+
 class DirectorAgent(BaseAgent):
     """Creates projects, dispatches tasks, tracks progress, aggregates outputs."""
 
@@ -104,6 +131,90 @@ class DirectorAgent(BaseAgent):
 
             return run(project_id, director=self, **kwargs)
         raise ValueError(f"Unknown workflow: {workflow_name}")
+
+    def run_workflow_v4(
+        self,
+        workflow_name: str,
+        project_id: str,
+        drug_ids: list[str],
+        disease_id: str,
+        datadir: str | None = None,
+    ) -> dict[str, Any]:
+        """Rolling-schedule MVP workflow for D-Base + Iris."""
+        from dargus.agents.reader import ReaderAgent
+        from dargus.agents.report_searcher import ReportSearcher
+        from dargus.dbase import DBase
+        from dargus.iris.selector import IrisSelector
+
+        dbase = DBase(project_id, root_dir=self.projects_root)
+
+        pool = TaskPool()
+        pool.add({"id": "scan_local", "type": "reader_scan", "deps": []})
+        pool.add({"id": "search_web", "type": "report_search", "deps": []})
+
+        while not pool.is_done():
+            ready = pool.ready()
+            if not ready:
+                break
+            for task in ready:
+                result = self._execute_task(
+                    task,
+                    project_id=project_id,
+                    drug_ids=drug_ids,
+                    disease_id=disease_id,
+                    datadir=datadir,
+                    dbase=dbase,
+                )
+                pool.complete(task["id"], spawn=result.get("spawn", []))
+
+        selector = IrisSelector(dbase)
+        predictions = selector.predict(drug_ids, disease_id)
+        return {"project_id": project_id, "predictions": predictions}
+
+    def _execute_task(
+        self,
+        task: dict[str, Any],
+        project_id: str,
+        drug_ids: list[str],
+        disease_id: str,
+        datadir: str | None,
+        dbase: Any,
+    ) -> dict[str, Any]:
+        from dargus.agents.reader import ReaderAgent
+        from dargus.agents.report_searcher import ReportSearcher
+        from dargus.temp_retriever import TempRetriever
+
+        task_type = task["type"]
+        if task_type == "reader_scan":
+            if not datadir:
+                return {"spawn": []}
+            reader = ReaderAgent(self.config)
+            scan = reader.scan_directory(datadir)
+            instances: list[dict] = []
+            for f in scan["data_files"]:
+                instances.extend(reader.parse_data_file(f))
+            return {"spawn": [{"id": "ingest", "type": "temp_retriever_ingest", "deps": ["scan_local"], "payload": instances}]}
+
+        if task_type == "report_search":
+            searcher = ReportSearcher(self.config)
+            return {"result": searcher.search(drug_ids, disease_id)}
+
+        if task_type == "temp_retriever_ingest":
+            payload = task.get("payload", [])
+            retriever = TempRetriever(dbase)
+            for raw in payload:
+                record = retriever.fill_template(
+                    raw,
+                    source_metadata=raw.get("source", {"type": "user_upload"}),
+                )
+                retriever.write_record(record)
+            dbase.save()
+            return {"spawn": [{"id": "predict", "type": "iris_predict", "deps": ["ingest", "search_web"]}]}
+
+        if task_type == "iris_predict":
+            return {"spawn": []}
+
+        return {"spawn": []}
 
     def assign_task(self, agent_name: str, task_spec: dict[str, Any]) -> dict[str, Any]:
         """Dispatch a task to an agent class (in-process)."""

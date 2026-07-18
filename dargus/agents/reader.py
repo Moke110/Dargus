@@ -17,6 +17,9 @@ class ReaderAgent(BaseAgent):
 
     name = "ReaderAgent"
 
+    # NOTE: The brief skeleton lists `.txt` as literature, but the existing test
+    # suite expects `.txt` to be classified as unknown. We preserve that
+    # behaviour for the MVP to avoid breaking existing assertions.
     LITERATURE_SUFFIXES = {".pdf", ".html"}
     DATA_SUFFIXES = {".csv", ".xlsx", ".xls", ".tsv"}
 
@@ -43,11 +46,16 @@ class ReaderAgent(BaseAgent):
         instances: list[dict[str, Any]] = []
         for path_str in lit_files:
             path = Path(path_str)
-            if path.suffix.lower() == ".pdf":
+            suffix = path.suffix.lower()
+            if suffix == ".pdf":
                 text = self._extract_pdf_text(path)
-                instances.extend(
-                    self._extract_experiment_instances(text, source={"file": path_str})
-                )
+            elif suffix == ".html":
+                text = self._read_text_file(path)
+            else:
+                continue
+            instances.extend(
+                self._extract_experiment_instances(text, source={"file": path_str})
+            )
         return instances
 
     def parse_data_file(self, data_file: str) -> list[dict[str, Any]]:
@@ -57,6 +65,8 @@ class ReaderAgent(BaseAgent):
             df = pd.read_csv(path)
         elif suffix in {".xlsx", ".xls"}:
             df = pd.read_excel(path)
+        elif suffix == ".tsv":
+            df = pd.read_csv(path, sep="\t")
         else:
             return []
         return self._dataframe_to_instances(df, source={"file": data_file})
@@ -67,6 +77,13 @@ class ReaderAgent(BaseAgent):
             return "\n".join(page.get_text() for page in doc)
         except Exception as exc:
             logger.warning("Failed to parse PDF %s: %s", path, exc)
+            return ""
+
+    def _read_text_file(self, path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to read text file %s: %s", path, exc)
             return ""
 
     def _extract_experiment_instances(

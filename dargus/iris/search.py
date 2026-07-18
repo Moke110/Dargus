@@ -46,8 +46,8 @@ class IrisSearch(IrisAgent):
                     self._get_field_value(dbase, r, "ci95_upper")
                     for r in endpoint_records
                 ]
-                lowers = [l for l in lowers if l is not None]
-                uppers = [u for u in uppers if u is not None]
+                lowers = [lo for lo in lowers if lo is not None]
+                uppers = [up for up in uppers if up is not None]
                 result[drug][endpoint] = {
                     "normalized_effect_size": mean_effect,
                     "ci95_lower": min(lowers) if lowers else mean_effect - 0.5,

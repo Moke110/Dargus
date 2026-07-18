@@ -4,8 +4,6 @@ import uuid
 from typing import Any
 
 from dargus.dbase import DBase, TemplateRecord
-from dargus.dbase.template import TemplateSchema
-
 
 _UNIT_SUFFIXES = frozenset({"nm", "um", "mm", "mgml", "μm"})
 
@@ -83,7 +81,24 @@ class TempRetriever:
             "target_id": ["target", "gene", "protein"],
             "disease_id": ["disease", "indication"],
             "assay_type": ["assay", "method"],
-            "readout": ["ic50", "ic50_nM", "ic50_nm", "ki", "ki_nM", "ki_nm", "kd", "kd_nM", "kd_nm", "ec50", "ec50_nM", "ec50_nm", "cc50", "cc50_nM", "cc50_nm", "value"],
+            "readout": [
+                "ic50",
+                "ic50_nM",
+                "ic50_nm",
+                "ki",
+                "ki_nM",
+                "ki_nm",
+                "kd",
+                "kd_nM",
+                "kd_nm",
+                "ec50",
+                "ec50_nM",
+                "ec50_nm",
+                "cc50",
+                "cc50_nM",
+                "cc50_nm",
+                "value",
+            ],
             "log_pvalue": ["p_value", "pvalue", "p"],
         }
         keys_to_try = [name] + synonyms.get(name, [])

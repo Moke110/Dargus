@@ -74,7 +74,8 @@ class IrisLlm(IrisAgent):
         self, summary: str, drug_ids: list[str], disease_id: str, endpoints: list[str]
     ) -> str:
         return f"""You are a clinical pharmacology assistant.
-Given the following evidence summary, predict the normalized effect size (Cohen's d scale divided by MCID) for each drug on each clinical endpoint.
+Given the following evidence summary, predict the normalized effect size
+(Cohen's d scale divided by MCID) for each drug on each clinical endpoint.
 Return ONLY a JSON object with this exact structure:
 {{
   "drug_id": {{
@@ -95,7 +96,9 @@ Disease: {disease_id}
 Endpoints: {endpoints}
 """
 
-    def _parse_output(self, raw: str, drug_ids: list[str], endpoints: list[str]) -> PredictionMatrix:
+    def _parse_output(
+        self, raw: str, drug_ids: list[str], endpoints: list[str]
+    ) -> PredictionMatrix:
         try:
             # Extract JSON if wrapped in markdown
             text = raw.strip()

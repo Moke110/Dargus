@@ -207,7 +207,16 @@ class DirectorAgent(BaseAgent):
             instances: list[dict] = []
             for f in scan["data_files"]:
                 instances.extend(reader.parse_data_file(f))
-            return {"spawn": [{"id": "ingest", "type": "temp_retriever_ingest", "deps": ["scan_local"], "payload": instances}]}
+            return {
+                "spawn": [
+                    {
+                        "id": "ingest",
+                        "type": "temp_retriever_ingest",
+                        "deps": ["scan_local"],
+                        "payload": instances,
+                    }
+                ]
+            }
 
         if task_type == "report_search":
             searcher = ReportSearcher(self.config)
@@ -223,7 +232,15 @@ class DirectorAgent(BaseAgent):
                 )
                 retriever.write_record(record)
             dbase.save()
-            return {"spawn": [{"id": "predict", "type": "iris_predict", "deps": ["ingest", "search_web"]}]}
+            return {
+                "spawn": [
+                    {
+                        "id": "predict",
+                        "type": "iris_predict",
+                        "deps": ["ingest", "search_web"],
+                    }
+                ]
+            }
 
         if task_type == "iris_predict":
             return {"spawn": []}

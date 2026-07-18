@@ -15,14 +15,25 @@ class TdcDtiConverter(BaseConverter):
         self.assay_name = assay_name
 
     def convert(self, path: Path) -> list[dict[str, Any]]:
-        try:
-            df = pd.read_csv(path, sep="\t", on_bad_lines="skip")
-        except pd.errors.ParserError:
+        for opts in [
+            {"sep": "\t", "on_bad_lines": "skip"},
+            {"sep": "\t", "on_bad_lines": "skip", "quoting": 3},
+        ]:
+            try:
+                df = pd.read_csv(path, **opts)
+                break
+            except pd.errors.ParserError:
+                continue
+        else:
             return []
+
+        drug_col = "Drug" if "Drug" in df.columns else "ID1"
+        target_col = "Target" if "Target" in df.columns else "ID2"
+
         rows = []
         for _, row in df.iterrows():
-            drug = str(row.get("Drug", ""))
-            target = str(row.get("Target", ""))
+            drug = str(row.get(drug_col, ""))
+            target = str(row.get(target_col, ""))
             if not drug or not target:
                 continue
             rows.append(

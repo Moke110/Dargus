@@ -15,7 +15,10 @@ class TdcAdmetConverter(BaseConverter):
         self.assay_name = assay_name
 
     def convert(self, path: Path) -> list[dict[str, Any]]:
-        df = pd.read_csv(path, sep="\t")
+        try:
+            df = pd.read_csv(path, sep="\t", on_bad_lines="skip")
+        except pd.errors.ParserError:
+            return []
         rows = []
         for _, row in df.iterrows():
             drug = str(row.get("Drug", row.get("Drug_ID", "")))

@@ -25,6 +25,7 @@ class DBase:
         self._templates: dict[str, TemplateSchema] = {}
         self._vocab: VocabularyManager | None = None
         self._records: list[TemplateRecord] = []
+        self._record_ids: set[str] = set()
         self._manifest: list[dict] = []
         self._matrix: sp.csr_matrix | None = None
         self._dirty = True
@@ -53,6 +54,7 @@ class DBase:
 
     def _reconstruct_records_from_matrix(self) -> None:
         self._records = []
+        self._record_ids = set()
         if self._matrix is None or self._matrix.shape[0] == 0:
             return
         n_manifest = len(self._manifest)
@@ -76,6 +78,7 @@ class DBase:
                     provenance_note=entry.get("provenance_note", ""),
                 )
             )
+            self._record_ids.add(entry["record_id"])
 
     @property
     def vocab(self) -> VocabularyManager:
@@ -98,7 +101,7 @@ class DBase:
             raise TypeError("record must be a TemplateRecord")
         if record.template_id not in self._templates:
             raise KeyError(f"Template {record.template_id!r} not registered")
-        if any(rec.record_id == record.record_id for rec in self._records):
+        if record.record_id in self._record_ids:
             raise ValueError(f"Record with record_id {record.record_id!r} already exists")
 
         schema = self._templates[record.template_id]
@@ -111,6 +114,7 @@ class DBase:
                 )
 
         self._records.append(record)
+        self._record_ids.add(record.record_id)
         self._manifest.append(self._record_to_manifest_entry(record))
         self._dirty = True
 

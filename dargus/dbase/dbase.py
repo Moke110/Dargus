@@ -46,9 +46,7 @@ class DBase:
             self._templates[schema.template_id] = schema
 
         if self.manifest_path.exists() and self.matrix_path.exists():
-            self._manifest = json.loads(
-                self.manifest_path.read_text(encoding="utf-8")
-            )
+            self._manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
             self._matrix = sp.load_npz(self.matrix_path)
             self._dirty = False
             self._reconstruct_records_from_matrix()
@@ -101,9 +99,7 @@ class DBase:
         if record.template_id not in self._templates:
             raise KeyError(f"Template {record.template_id!r} not registered")
         if any(rec.record_id == record.record_id for rec in self._records):
-            raise ValueError(
-                f"Record with record_id {record.record_id!r} already exists"
-            )
+            raise ValueError(f"Record with record_id {record.record_id!r} already exists")
 
         schema = self._templates[record.template_id]
         n_fields = schema.n_fields
@@ -185,9 +181,7 @@ class DBase:
                 indices.append(i)
             indptr.append(len(data))
 
-        self._matrix = sp.csr_matrix(
-            (data, indices, indptr), shape=(len(self._records), n_cols)
-        )
+        self._matrix = sp.csr_matrix((data, indices, indptr), shape=(len(self._records), n_cols))
         self._dirty = False
         return self._matrix
 
@@ -204,9 +198,7 @@ class DBase:
         elif self.matrix_path.exists():
             self.matrix_path.unlink()
 
-        self.manifest_path.write_text(
-            json.dumps(self._manifest, indent=2), encoding="utf-8"
-        )
+        self.manifest_path.write_text(json.dumps(self._manifest, indent=2), encoding="utf-8")
 
         # Legacy human-readable store is no longer part of the D-Base format.
         legacy_records_path = self.dbase_dir / "records.jsonl"

@@ -40,9 +40,10 @@ class IrisEnsemble:
                     weights.append(1.0 / width)
 
                 total_weight = sum(weights)
-                mean_effect = sum(
-                    e["normalized_effect_size"] * w for e, w in zip(estimates, weights)
-                ) / total_weight
+                mean_effect = (
+                    sum(e["normalized_effect_size"] * w for e, w in zip(estimates, weights))
+                    / total_weight
+                )
 
                 # Ensemble CI: weighted average of widths around mean
                 all_supporting: list[str] = []

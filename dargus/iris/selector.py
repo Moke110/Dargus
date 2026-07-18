@@ -28,9 +28,7 @@ class IrisSelector:
         selected = self._select_agents(drug_ids, disease_id)
         predictions: dict[str, PredictionMatrix] = {}
         for agent in selected:
-            predictions[agent.name] = agent.predict(
-                self.dbase, drug_ids, disease_id, endpoints
-            )
+            predictions[agent.name] = agent.predict(self.dbase, drug_ids, disease_id, endpoints)
 
         ensemble = IrisEnsemble()
         return ensemble.aggregate(predictions)
@@ -41,10 +39,7 @@ class IrisSelector:
         for drug in drug_ids:
             records = self.dbase.query(drug_id=drug, disease_id=disease_id)
             # Direct clinical records
-            clinical = [
-                r for r in records
-                if self._record_level(r) == "clinical"
-            ]
+            clinical = [r for r in records if self._record_level(r) == "clinical"]
             if clinical:
                 has_direct = True
             if records:

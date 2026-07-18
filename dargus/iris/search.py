@@ -29,23 +29,14 @@ class IrisSearch(IrisAgent):
                 if not endpoint_records:
                     continue
                 # Simple average of fold_change
-                effects = [
-                    self._get_field_value(dbase, r, "fold_change")
-                    for r in endpoint_records
-                ]
+                effects = [self._get_field_value(dbase, r, "fold_change") for r in endpoint_records]
                 effects = [e for e in effects if e is not None]
                 if not effects:
                     continue
                 mean_effect = sum(effects) / len(effects)
                 # Conservative CI: max range
-                lowers = [
-                    self._get_field_value(dbase, r, "ci95_lower")
-                    for r in endpoint_records
-                ]
-                uppers = [
-                    self._get_field_value(dbase, r, "ci95_upper")
-                    for r in endpoint_records
-                ]
+                lowers = [self._get_field_value(dbase, r, "ci95_lower") for r in endpoint_records]
+                uppers = [self._get_field_value(dbase, r, "ci95_upper") for r in endpoint_records]
                 lowers = [lo for lo in lowers if lo is not None]
                 uppers = [up for up in uppers if up is not None]
                 result[drug][endpoint] = {

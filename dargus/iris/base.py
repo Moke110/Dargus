@@ -18,5 +18,4 @@ class IrisAgent(Protocol):
         endpoints: list[str],
         embeddings: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
-    ) -> PredictionMatrix:
-        ...
+    ) -> PredictionMatrix: ...

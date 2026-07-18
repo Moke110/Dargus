@@ -53,9 +53,7 @@ class ReaderAgent(BaseAgent):
                 text = self._read_text_file(path)
             else:
                 continue
-            instances.extend(
-                self._extract_experiment_instances(text, source={"file": path_str})
-            )
+            instances.extend(self._extract_experiment_instances(text, source={"file": path_str}))
         return instances
 
     def parse_data_file(self, data_file: str) -> list[dict[str, Any]]:

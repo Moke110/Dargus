@@ -45,8 +45,7 @@ class LiteLLMBackend:
             import litellm
         except ImportError as exc:
             raise RuntimeError(
-                "litellm is required for LiteLLMBackend. "
-                "Install with: pip install 'dargus[llm]'"
+                "litellm is required for LiteLLMBackend. " "Install with: pip install 'dargus[llm]'"
             ) from exc
 
         messages = [{"role": "user", "content": prompt}]

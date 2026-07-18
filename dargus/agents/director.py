@@ -140,11 +140,8 @@ class DirectorAgent(BaseAgent):
         disease_id: str,
         datadir: str | None = None,
     ) -> dict[str, Any]:
-        """Rolling-schedule MVP workflow for D-Base + Iris."""
-        from dargus.agents.reader import ReaderAgent
-        from dargus.agents.report_searcher import ReportSearcher
+        """Rolling-schedule MVP workflow for D-Base."""
         from dargus.dbase import DBase
-        from dargus.iris.selector import IrisSelector
 
         dbase = DBase(project_id, root_dir=self.projects_root)
 
@@ -152,6 +149,7 @@ class DirectorAgent(BaseAgent):
         pool.add({"id": "scan_local", "type": "reader_scan", "deps": []})
         pool.add({"id": "search_web", "type": "report_search", "deps": []})
 
+        report_search_result: dict[str, Any] | None = None
         while not pool.is_done():
             ready = pool.ready()
             if not ready:
@@ -165,11 +163,16 @@ class DirectorAgent(BaseAgent):
                     datadir=datadir,
                     dbase=dbase,
                 )
+                if task["type"] == "report_search":
+                    report_search_result = result.get("result")
                 pool.complete(task["id"], spawn=result.get("spawn", []))
 
-        selector = IrisSelector(dbase)
-        predictions = selector.predict(drug_ids, disease_id)
-        return {"project_id": project_id, "predictions": predictions}
+        return {
+            "project_id": project_id,
+            "dbase_ready": True,
+            "n_records": len(dbase.list_records()),
+            "report_search_result": report_search_result,
+        }
 
     def _execute_task(
         self,

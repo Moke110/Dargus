@@ -35,7 +35,7 @@ def ingest_dataset(
     if dataset_name not in CONVERTERS:
         raise ValueError(f"Unknown dataset {dataset_name!r}")
 
-    dbase = DBase(project_id, root_dir=projects_root)
+    dbase = DBase(project_id, root_dir=Path(projects_root) / project_id)
     _register_templates(dbase)
 
     converter_factory = CONVERTERS[dataset_name]

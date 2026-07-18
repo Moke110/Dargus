@@ -37,27 +37,38 @@ class IrisLlm(IrisAgent):
         embeddings: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> PredictionMatrix:
-        summary = self._summarize_dbase(dbase, drug_ids, disease_id)
+        summary, supporting_map = self._summarize_dbase(dbase, drug_ids, disease_id)
         prompt = self._build_prompt(summary, drug_ids, disease_id, endpoints)
         raw = self.backend.complete(prompt)
         parsed = self._parse_output(raw, drug_ids, endpoints)
 
         for drug in drug_ids:
+            drug_entries = parsed.setdefault(drug, {})
             for endpoint in endpoints:
-                entry = parsed.get(drug, {}).get(endpoint, {})
-                if entry:
-                    entry.setdefault("supporting_records", [])
-                    entry.setdefault("reasoning_mode", self.name)
-                    entry.setdefault("confidence_level", "exploratory")
+                entry = drug_entries.setdefault(endpoint, {})
+                entry.setdefault("normalized_effect_size", None)
+                entry.setdefault("ci95_lower", None)
+                entry.setdefault("ci95_upper", None)
+                entry.setdefault("supporting_records", supporting_map.get(drug, []))
+                entry.setdefault("reasoning_mode", self.name)
+                entry.setdefault("confidence_level", "exploratory")
         return parsed
 
-    def _summarize_dbase(self, dbase: Any, drug_ids: list[str], disease_id: str) -> str:
+    def _summarize_dbase(
+        self, dbase: Any, drug_ids: list[str], disease_id: str
+    ) -> tuple[str, dict[str, list[str]]]:
         lines = [f"Disease: {disease_id}", f"Drugs: {', '.join(drug_ids)}", "Records:"]
+        supporting: dict[str, list[str]] = {drug: [] for drug in drug_ids}
         for drug in drug_ids:
             records = dbase.query(drug_id=drug, disease_id=disease_id)
             for r in records:
-                lines.append(f"- {r.record_id}: {r.provenance_note}")
-        return "\n".join(lines)
+                supporting[drug].append(r.record_id)
+                note = r.provenance_note
+                if note:
+                    lines.append(f"- {r.record_id}: {note}")
+                else:
+                    lines.append(f"- {r.record_id}")
+        return "\n".join(lines), supporting
 
     def _build_prompt(
         self, summary: str, drug_ids: list[str], disease_id: str, endpoints: list[str]
@@ -68,9 +79,9 @@ Return ONLY a JSON object with this exact structure:
 {{
   "drug_id": {{
     "endpoint_name": {{
-      "normalized_effect_size": float,
-      "ci95_lower": float,
-      "ci95_upper": float,
+      "normalized_effect_size": 0.0,
+      "ci95_lower": 0.0,
+      "ci95_upper": 0.0,
       "reasoning": "short explanation"
     }}
   }}
@@ -95,4 +106,14 @@ Endpoints: {endpoints}
             return json.loads(text.strip())
         except Exception as exc:
             logger.warning("Failed to parse Iris-llm output: %s", exc)
-            return {drug: {} for drug in drug_ids}
+            return {
+                drug: {
+                    endpoint: {
+                        "normalized_effect_size": None,
+                        "ci95_lower": None,
+                        "ci95_upper": None,
+                    }
+                    for endpoint in endpoints
+                }
+                for drug in drug_ids
+            }

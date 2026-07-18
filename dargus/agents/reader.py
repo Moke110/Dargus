@@ -45,7 +45,9 @@ class ReaderAgent(BaseAgent):
             path = Path(path_str)
             if path.suffix.lower() == ".pdf":
                 text = self._extract_pdf_text(path)
-                instances.extend(self._extract_experiment_instances(text, source={"file": path_str}))
+                instances.extend(
+                    self._extract_experiment_instances(text, source={"file": path_str})
+                )
         return instances
 
     def parse_data_file(self, data_file: str) -> list[dict[str, Any]]:
@@ -67,11 +69,15 @@ class ReaderAgent(BaseAgent):
             logger.warning("Failed to parse PDF %s: %s", path, exc)
             return ""
 
-    def _extract_experiment_instances(self, text: str, source: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_experiment_instances(
+        self, text: str, source: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         # MVP: return a single unstructured instance; later use LLM/regex extraction.
         return [{"source": source, "raw_text": text[:2000], "note": "MVP extraction stub"}]
 
-    def _dataframe_to_instances(self, df: pd.DataFrame, source: dict[str, Any]) -> list[dict[str, Any]]:
+    def _dataframe_to_instances(
+        self, df: pd.DataFrame, source: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         instances: list[dict[str, Any]] = []
         for _, row in df.iterrows():
             instance = {"source": source}

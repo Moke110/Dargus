@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import logging
 import uuid
 from typing import Any
 
 from dargus.dbase import DBase, TemplateRecord
 from dargus.dbase.template import TemplateSchema
 
-logger = logging.getLogger(__name__)
+
+_UNIT_SUFFIXES = frozenset({"nm", "um", "mm", "mgml", "μm"})
 
 
 class TempRetriever:
@@ -34,7 +34,7 @@ class TempRetriever:
                 continue
             idx = schema.field_index(field.name)
             indices.append(idx)
-            values.append(float(val) if field.type != "factor" else float(val))
+            values.append(int(val) if field.type == "factor" else float(val))
 
         return TemplateRecord(
             template_id=template_id,
@@ -46,16 +46,32 @@ class TempRetriever:
 
     def _match_template(self, raw_input: dict[str, Any]) -> str:
         # MVP: simple keyword matching. Later: LLM-assisted.
-        keys = set(k.lower() for k in raw_input)
-        if {"ic50", "ki", "kd"} & keys:
+        def _normalize_key(key: str) -> str:
+            key = key.lower()
+            if "_" in key:
+                base, _, suffix = key.rpartition("_")
+                if suffix in _UNIT_SUFFIXES:
+                    return base
+            return key
+
+        normalized_keys = {_normalize_key(k) for k in raw_input}
+
+        if {"ic50", "ki", "kd"} & normalized_keys:
             candidate = "in_vitro_kinase_inhibition_v1"
-            if candidate in self.dbase._templates:
+            try:
+                self.dbase.get_template(candidate)
                 return candidate
-        if {"cell_viability", "cc50", "ec50"} & keys:
+            except KeyError:
+                pass
+        if {"cell_viability", "cc50", "ec50"} & normalized_keys:
             candidate = "cell_viability_assay_v1"
-            if candidate in self.dbase._templates:
+            try:
+                self.dbase.get_template(candidate)
                 return candidate
-        available = list(self.dbase._templates.keys())
+            except KeyError:
+                pass
+
+        available = sorted(p.stem for p in self.dbase.templates_dir.glob("*.yaml"))
         if available:
             return available[0]
         raise RuntimeError("No templates registered in D-Base")

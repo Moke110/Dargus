@@ -11,7 +11,6 @@ class VocabularyManager:
     def __init__(self, vocabularies: dict[str, dict[str, int]] | None = None):
         self._vocab: dict[str, dict[str, int]] = vocabularies or {}
         self._synonyms: dict[str, dict[str, str]] = {}
-        self._deprecated: dict[str, set[str]] = {}
 
     def get_or_create(self, vocab_name: str, term: str) -> int:
         """Return existing factor or assign a new integer."""
@@ -31,9 +30,6 @@ class VocabularyManager:
     def add_synonym(self, vocab_name: str, synonym: str, canonical: str) -> None:
         self._synonyms.setdefault(vocab_name, {})[synonym] = canonical
 
-    def deprecate(self, vocab_name: str, term: str) -> None:
-        self._deprecated.setdefault(vocab_name, set()).add(term)
-
     def _canonical(self, vocab_name: str, term: str) -> str:
         return self._synonyms.get(vocab_name, {}).get(term, term)
 
@@ -48,7 +44,6 @@ class VocabularyManager:
         payload = {
             "vocabularies": self.to_dict(),
             "synonyms": self._synonyms,
-            "deprecated": {k: list(v) for k, v in self._deprecated.items()},
         }
         Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -59,7 +54,4 @@ class VocabularyManager:
         for vocab_name, synonyms in data.get("synonyms", {}).items():
             for syn, canonical in synonyms.items():
                 vm.add_synonym(vocab_name, syn, canonical)
-        for vocab_name, terms in data.get("deprecated", {}).items():
-            for term in terms:
-                vm.deprecate(vocab_name, term)
         return vm

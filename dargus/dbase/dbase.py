@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import scipy.sparse as sp
 
 from dargus.dbase.record import TemplateRecord
@@ -23,7 +21,6 @@ class DBase:
         self.records_path = self.dbase_dir / "records.jsonl"
         self.vocab_path = self.dbase_dir / "vocabularies.json"
         self.matrix_path = self.dbase_dir / "records.npz"
-        self.index_dir = self.dbase_dir / "index"
 
         self._records: list[TemplateRecord] = []
         self._templates: dict[str, TemplateSchema] = {}
@@ -35,8 +32,7 @@ class DBase:
         self._load()
 
     def _ensure_dirs(self) -> None:
-        for d in [self.templates_dir, self.index_dir]:
-            d.mkdir(parents=True, exist_ok=True)
+        self.templates_dir.mkdir(parents=True, exist_ok=True)
 
     def _load(self) -> None:
         if self.vocab_path.exists():
@@ -60,6 +56,7 @@ class DBase:
         if self.matrix_path.exists():
             loaded = sp.load_npz(self.matrix_path)
             self._matrix = loaded
+            self._dirty = False
 
     @property
     def vocab(self) -> VocabularyManager:
@@ -157,17 +154,6 @@ class DBase:
         matrix = self.to_sparse_matrix()
         if matrix.shape[0] > 0 and matrix.shape[1] > 0:
             sp.save_npz(self.matrix_path, matrix)
-
-        self._save_index()
-
-    def _save_index(self) -> None:
-        by_template: dict[str, list[int]] = {}
-        for i, rec in enumerate(self._records):
-            by_template.setdefault(rec.template_id, []).append(i)
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-        (self.index_dir / "by_template.json").write_text(
-            json.dumps(by_template), encoding="utf-8"
-        )
 
     def list_records(self) -> list[TemplateRecord]:
         return list(self._records)

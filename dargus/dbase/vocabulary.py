@@ -27,6 +27,13 @@ class VocabularyManager:
         canonical = self._canonical(vocab_name, term)
         return vocab.get(canonical)
 
+    def reverse_lookup(self, vocab_name: str, factor: int) -> str | None:
+        vocab = self._vocab.get(vocab_name, {})
+        for term, value in vocab.items():
+            if value == factor:
+                return term
+        return None
+
     def add_synonym(self, vocab_name: str, synonym: str, canonical: str) -> None:
         self._synonyms.setdefault(vocab_name, {})[synonym] = canonical
 

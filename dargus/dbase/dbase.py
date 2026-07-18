@@ -57,6 +57,13 @@ class DBase:
         self._records = []
         if self._matrix is None or self._matrix.shape[0] == 0:
             return
+        n_manifest = len(self._manifest)
+        n_matrix = self._matrix.shape[0]
+        if n_manifest != n_matrix:
+            raise RuntimeError(
+                f"Manifest/matrix row count mismatch: "
+                f"manifest has {n_manifest} rows but matrix has {n_matrix} rows"
+            )
         for row_idx, entry in enumerate(self._manifest):
             row = self._matrix[row_idx]
             self._records.append(
@@ -93,6 +100,20 @@ class DBase:
             raise TypeError("record must be a TemplateRecord")
         if record.template_id not in self._templates:
             raise KeyError(f"Template {record.template_id!r} not registered")
+        if any(rec.record_id == record.record_id for rec in self._records):
+            raise ValueError(
+                f"Record with record_id {record.record_id!r} already exists"
+            )
+
+        schema = self._templates[record.template_id]
+        n_fields = schema.n_fields
+        for idx in record.sparse_vector.get("indices", []):
+            if idx < 0 or idx >= n_fields:
+                raise ValueError(
+                    f"sparse_vector index {idx} out of range for template "
+                    f"{record.template_id!r} (n_fields={n_fields})"
+                )
+
         self._records.append(record)
         self._manifest.append(self._record_to_manifest_entry(record))
         self._dirty = True

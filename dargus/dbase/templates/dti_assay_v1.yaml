@@ -1,0 +1,21 @@
+template_id: dti_assay_v1
+description: Drug-target interaction assay (Ki/Kd/IC50).
+fields:
+  - name: biological_level
+    type: factor
+    vocabulary: [molecular]
+  - name: drug_id
+    type: factor
+    vocabulary_ref: global_drug_vocab
+  - name: target_id
+    type: factor
+    vocabulary_ref: global_target_vocab
+  - name: assay_type
+    type: factor
+    vocabulary_ref: global_assay_vocab
+  - name: readout
+    type: float
+  - name: readout_unit
+    type: factor
+    vocabulary_ref: global_unit_vocab
+    optional: true

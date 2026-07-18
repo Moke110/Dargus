@@ -3,8 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from dargus.dbase import DBase
-from dargus.iris.base import PredictionMatrix
+from dargus.iris.analog import IrisAnalog
+from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.bayes import IrisBayes
 from dargus.iris.ensemble import IrisEnsemble
+from dargus.iris.gnn import IrisGnn
 from dargus.iris.llm import IrisLlm
 from dargus.iris.search import IrisSearch
 
@@ -25,32 +28,58 @@ class IrisSelector:
         if endpoints is None:
             endpoints = self._default_endpoints(disease_id)
 
-        selected = self._select_agents(drug_ids, disease_id)
-        predictions: dict[str, PredictionMatrix] = {}
-        for agent in selected:
-            predictions[agent.name] = agent.predict(self.dbase, drug_ids, disease_id, endpoints)
+        agents = self.select(drug_ids, disease_id)
+        ensemble = IrisEnsemble(agents)
+        return ensemble.predict(
+            self.dbase,
+            drug_ids=drug_ids,
+            disease_id=disease_id,
+            endpoints=endpoints,
+        )
 
-        ensemble = IrisEnsemble()
-        return ensemble.aggregate(predictions)
+    def select(self, drug_ids: list[str], disease_id: str) -> list[IrisAgent]:
+        counts = self._count_records(drug_ids, disease_id)
+        has_clinical = counts.get("clinical", 0) >= 1
+        has_preclinical = (
+            sum(counts.get(level, 0) for level in ["molecular", "cellular", "exvivo", "animal"])
+            >= 2
+        )
+        total = sum(counts.values())
 
-    def _select_agents(self, drug_ids: list[str], disease_id: str) -> list[Any]:
-        agents: list[Any] = []
-        has_direct = False
-        for drug in drug_ids:
-            records = self.dbase.query(drug_id=drug, disease_id=disease_id)
-            # Direct clinical records
-            clinical = [r for r in records if self._record_level(r) == "clinical"]
-            if clinical:
-                has_direct = True
-            if records:
-                agents.append(IrisSearch())
-                break
+        agents: list[IrisAgent] = [IrisSearch()]
+        if has_clinical:
+            agents.append(IrisBayes())
+        if has_preclinical:
+            agents.extend([IrisAnalog(), IrisBayes()])
+        if total <= 2:
+            agents.append(IrisLlm(config=self.config))
+        if total >= 10:
+            agents.append(IrisGnn())
+        return agents
 
-        if has_direct:
-            return [IrisSearch()]
+    def _count_records(self, drug_ids: list[str], disease_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for rec in self.dbase.query(disease_id=disease_id):
+            schema = self.dbase._templates.get(rec.template_id)
+            if schema is None:
+                continue
+            try:
+                idx = schema.field_index("drug_id")
+            except KeyError:
+                continue
+            indices = rec.sparse_vector.get("indices", [])
+            values = rec.sparse_vector.get("values", [])
+            if idx not in indices:
+                continue
+            val = int(values[indices.index(idx)])
+            vocab_ref = schema.field_def("drug_id").vocabulary_ref or "drug_id"
+            drug = self.dbase.vocab.reverse_lookup(vocab_ref, val)
+            if drug not in drug_ids:
+                continue
 
-        # Fallback: search + llm
-        return [IrisSearch(), IrisLlm(config=self.config)]
+            level = self._record_level(rec) or "molecular"
+            counts[level] = counts.get(level, 0) + 1
+        return counts
 
     def _record_level(self, record: Any) -> str | None:
         schema = self.dbase._templates.get(record.template_id)
@@ -66,11 +95,9 @@ class IrisSelector:
             return None
         pos = indices.index(idx)
         factor_int = int(values[pos])
-        # Reverse lookup in schema field vocabulary first
         field = schema.field_def("biological_level")
         if field.vocabulary and factor_int < len(field.vocabulary):
             return field.vocabulary[factor_int]
-        # Fallback to global vocab
         vocab = self.dbase.vocab._vocab.get("biological_level", {})
         for term, val in vocab.items():
             if val == factor_int:

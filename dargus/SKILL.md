@@ -1,55 +1,31 @@
-# Dargus — Drug Research Assistant Team
+# Dargus — Claude Code Skill
 
 ## Description
 
-A 10-agent AI research team plus a full-stack reasoning engine for systematic drug-efficacy hypothesis generation. Dargus analyzes existing data across six biological levels and translates multi-level evidence into clinical endpoint predictions with confidence intervals. It does **not** run wet experiments.
+A clinical-efficacy prediction system that reads multi-level evidence and outputs drug-disease effect sizes with confidence intervals.
 
 ## Quick start
 
 ```
-/dargus scan LRRK2 "Parkinson's disease"     → target-disease efficacy prediction
-/dargus repurpose my_drugs.csv "HCC"         → drug repurposing screen
-/dargus translate IC50=50nM "HCC"            → predict clinical outcome from cell data
-/dargus review "LRRK2 inhibitors"            → systematic literature review
-```
-
-## Agent team
-
-| Agent | Role |
-|-------|------|
-| DirectorAgent | Project management, task orchestration, progress tracking |
-| RetrieverAgent | Unified literature retrieval; spawns SubRetrieverAgents |
-| DataMaster | Multi-source data → unified sample-level database |
-| MoleculeAgent | Molecular-level analysis (SAR, ADMET, descriptors) |
-| CellAgent | Cellular-level analysis (transcriptomics, CRISPR, sensitivity) |
-| ExvivoAgent | Ex vivo model analysis (organoids, organ-chips, 3D culture) |
-| AnimalAgent | Animal model analysis (translatability, efficacy, toxicity) |
-| ClinicAgent | Clinical data analysis (trials, meta-analysis, safety) |
-| EpiAgent | Epidemiological analysis (GWAS, MR, rare variants) |
-| TranslateAgent | Cross-level translation assessment for a disease |
-| Diris | Full-stack reasoning engine: evidence → effect size + CI |
-
-## Installation
-
-```bash
-pip install dargus
-```
-
-For development:
-
-```bash
-pip install -e ".[dev]"
+/dargus scan-v4 --drugs LRRK2-IN-1 --disease "Alzheimer's disease" --datadir ./data
+/dargus status <project_id>
 ```
 
 ## Commands
 
-- `/dargus scan <target> <disease>` — target-disease efficacy prediction
-- `/dargus repurpose <drugs> <disease>` — repurposing screen
-- `/dargus translate <data> <disease>` — cross-level translation
-- `/dargus review <query>` — systematic literature review
-- `/dargus agent <name> <task>` — call a specific agent
-- `/dargus status <project>` — check project progress
-- `/dargus export <project>` — export project outputs
+- `/dargus scan-v4 --drugs <drugs> --disease <disease> [--datadir <path>]` — run a target-disease efficacy scan.
+- `/dargus status <project_id>` — show project status.
+
+## MCP Tools
+
+When running as an MCP server, Dargus exposes:
+
+- `dargus_start_project`
+- `dargus_ingest_data`
+- `dargus_search_literature`
+- `dargus_predict`
+- `dargus_query_dbase`
+- `dargus_status`
 
 ## Configuration
 

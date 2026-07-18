@@ -1,60 +1,44 @@
-# Dargus Agent Roster and Contracts
+# Dargus v4.0 Agent Roster and Contracts
 
-## Management agents
+## Orchestration
 
 ### DirectorAgent
 
 - **Responsibilities**: project bootstrap, workflow selection, task dispatch, progress tracking, output aggregation.
 - **Does not**: perform analysis, interpret results, modify agent outputs.
-- **Entry points**: `start_project`, `status`, `run_workflow`, `assign_task`.
+- **Entry points**: `start_project`, `status`, `run_workflow`, `run_workflow_v4`, `assign_task`.
 
-### RetrieverAgent
+## Ingestion
 
-- **Responsibilities**: unified literature search, PDF extraction, structured data extraction.
-- **Entry points**: `search`, `extract`, `load_library`.
+### ReaderAgent
 
-## Data agents
+- **Responsibilities**: scan directories, classify files, parse data files, extract experiment instances.
+- **Entry points**: `scan_directory`, `parse_data_file`.
 
-### DataMaster
+### ReportSearcher
 
-- **Responsibilities**: create project database, ingest heterogeneous sources, normalize metadata, query data.
-- **Entry points**: `ingest`, `query`, `get_summary_stats`.
+- **Responsibilities**: search literature databases, download candidate papers/data, suggest manual downloads.
+- **Entry points**: `search`.
 
-## Analysis agents
+### TempRetriever
 
-Each analysis agent handles one biological level and produces the standard five-pack.
+- **Responsibilities**: map raw inputs or experiment instances to `TemplateRecord`; sole writer to D-Base.
+- **Entry points**: `fill_template`, `write_record`.
 
-| Agent | Level | Entry point |
-|-------|-------|-------------|
-| MoleculeAgent | molecular | `dargus_molecular_analyze` |
-| CellAgent | cellular | `dargus_cellular_analyze` |
-| ExvivoAgent | exvivo | `dargus_exvivo_analyze` |
-| AnimalAgent | animal | `dargus_animal_analyze` |
-| ClinicAgent | clinical | `dargus_clinical_analyze` |
-| EpiAgent | epidemiology | `dargus_epidemiology_analyze` |
+## Prediction
 
-## Translation agent
+| Agent | Role | Entry point |
+|-------|------|-------------|
+| IrisSearch | direct evidence aggregation | `predict` |
+| IrisLlm | LLM-based synthesis | `predict` |
+| IrisAnalog | analogical reasoning | `predict` |
+| IrisBayes | hierarchical Bayesian inference | `predict` |
+| IrisGnn | graph neural network prediction | `predict` |
+| IrisSelector | choose Iris-* based on data richness | `predict` |
+| IrisEnsemble | combine Iris-* outputs | `predict` |
 
-### TranslateAgent
+## D-Base Interaction Rules
 
-- **Responsibilities**: assess disease-specific cross-level translation reliability.
-- **Entry point**: `dargus_translate_assess`.
-
-## Reasoning engine
-
-### Diris
-
-- **Responsibilities**: predict normalized clinical effect sizes and CIs from embeddings and level evidence.
-- **Entry point**: `dargus_reasoning_predict`.
-
-## Standard five-pack
-
-Every analysis agent writes:
-
-1. `report.md`
-2. `figures/*.png`
-3. `data/*.csv`
-4. `code/analysis.py`
-5. `level_embedding.json`
-
-See `docs/agent_work_norms.md` for details.
+- Only `TempRetriever` writes D-Base.
+- All Iris-* read D-Base only.
+- `DirectorAgent` schedules; it does not directly touch D-Base.

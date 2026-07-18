@@ -1,67 +1,42 @@
-# Dargus — Drug Research Assistant Team
+# Dargus — Clinical Efficacy Prediction System
 
-Dargus is a clinical-efficacy prediction system for drug-development researchers. It analyzes existing data across six biological levels (molecular, cellular, ex vivo models, animal, clinical, epidemiological) and translates multi-level evidence into predictions of clinical endpoint effect sizes with confidence intervals.
+Dargus is a clinical-efficacy prediction system for drug-development researchers. It analyzes existing evidence across six biological levels (molecular, cellular, ex vivo, animal, clinical, epidemiological) and translates multi-level evidence into predictions of clinical endpoint effect sizes with 95% confidence intervals.
 
 ## Quick start
 
 ```bash
-pip install -e .
-python -m dargus.workflows.target_efficacy_scan --target LRRK2 --disease "Parkinson's disease"
+pip install -e ".[dev]"
+dargus scan-v4 --drugs LRRK2-IN-1 --disease "Alzheimer's disease" --datadir ./my_data
 ```
 
-Or from a Coding Agent:
+Or from a Coding Agent via the Dargus skill:
 
 ```
-/dargus scan LRRK2 "Parkinson's disease"
+/dargus scan-v4 --drugs LRRK2-IN-1 --disease "Alzheimer's disease" --datadir ./my_data
 ```
+
+## Architecture
+
+- **D-Base**: sparse-matrix experiment store (`dargus/dbase/`).
+- **TempRetriever**: maps raw inputs to D-Base records; the only D-Base writer.
+- **ReaderAgent** & **ReportSearcher**: ingest local files and search literature.
+- **DirectorAgent**: orchestrates projects and workflows.
+- **Iris-\***: pluggable prediction agents (`IrisSearch`, `IrisLlm`, `IrisAnalog`, `IrisBayes`, `IrisGnn`).
+- **IrisSelector** & **IrisEnsemble**: choose and combine Iris agents.
 
 ## Design
 
-See [`design.md`](./design.md) for the full product design.
-
-## Phase plans
-
-- [`docs/phase0.md`](./docs/phase0.md) — MVP (accepted)
-- [`docs/phase1.md`](./docs/phase1.md) — full agent system
-- [`docs/phase2.md`](./docs/phase2.md) — calibration and ecosystem
-- [`docs/benchdata.md`](./docs/benchdata.md) — recommended benchmark datasets by download order
-
-## Repository layout
-
-```
-dargus/
-  agents/          # Agent implementations
-  database/        # DataMaster schema and converters
-  embedding/       # Drug/disease embedding providers
-  knowledge/       # Methodology registries and knowledge base
-  reasoning/       # Diris full-stack reasoning engine
-  tools/           # Shared tools (stats, viz, literature)
-  workflows/       # Pre-defined workflows
-docs/              # Plans, decisions, norms, progress
-tests/             # Test suites
-projects/          # Generated project directories (gitignored)
-```
-
-## Benchmark datasets
-
-See [`docs/benchdata.md`](./docs/benchdata.md) for a curated list of drug-development benchmark datasets.
-
-To automatically download Tier 1 debugging datasets:
-
-```bash
-python scripts/download_tier1.py --output-dir data/benchmarks/tier1
-```
+- `docs/superpowers/specs/2026-07-18-dargus-dbase-iris-design.md` — v4.0 architecture.
+- `docs/superpowers/specs/2026-07-19-dargus-completion-roadmap-design.md` — completion roadmap.
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-ruff check .
-black --check .
-pytest
+pip install -e ".[dev,llm]"
+pytest -q
+ruff check dargus tests
+black --check dargus tests
 ```
-
-See [`docs/dev_norms.md`](./docs/dev_norms.md) and [`docs/agent_work_norms.md`](./docs/agent_work_norms.md).
 
 ## Disclaimer
 

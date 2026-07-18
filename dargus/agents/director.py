@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 from dargus.agents.base import BaseAgent, new_task_id
-from dargus.database import DataMaster
+from dargus.dbase import DBase
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +99,8 @@ class DirectorAgent(BaseAgent):
         config_path = project_dir / "project_config.yaml"
         config_path.write_text(yaml.safe_dump(project_config), encoding="utf-8")
 
-        # Initialize database
-        DataMaster(project_id, projects_root=str(self.projects_root))
+        # Initialize D-Base
+        DBase(project_id, root_dir=str(self.projects_root))
 
         logger.info("Started project %s at %s", project_id, project_dir)
         return {"project_id": project_id, "project_dir": str(project_dir)}

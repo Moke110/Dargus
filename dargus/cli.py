@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--endpoints", nargs="+")
     scan_parser.add_argument("--drugs", nargs="+")
 
-    scan_v4_parser = subparsers.add_parser("scan-v4", help="v4.0 D-Base + Iris efficacy scan")
+    scan_v4_parser = subparsers.add_parser("scan-v4", help="0.5.0 D-Base + Iris efficacy scan")
     scan_v4_parser.add_argument("--drugs", required=True)
     scan_v4_parser.add_argument("--disease", required=True)
     scan_v4_parser.add_argument("--datadir")

@@ -18,17 +18,17 @@ Or from a Coding Agent via the Dargus skill:
 ## Architecture
 
 - **D-Base**: sparse-matrix experiment store (`dargus/dbase/`).
-- **TempRetriever**: maps raw inputs to D-Base records; the only D-Base writer.
-- **ReaderAgent** & **ReportSearcher**: ingest local files and search literature.
-- **DirectorAgent**: orchestrates projects and workflows.
-- **Iris-\***: pluggable prediction agents (`IrisSearch`, `IrisLlm`, `IrisAnalog`, `IrisBayes`, `IrisGnn`).
-- **IrisSelector** & **IrisEnsemble**: choose and combine Iris agents.
+- **DBaseManager**: maps raw inputs to D-Base records; the only D-Base writer.
+- **DiseaseExpert** & **LevelExperts**: ingest data, curate records, and analyze evidence across six biological levels.
+- **Iris**: orchestrates projects, workflows, and agent ensemble.
+- **Iris-\***: pluggable prediction agents (`IrisSearch`, `IrisLlm`, `IrisAnalog`, `IrisBayes`, `IrisGnn`, `IrisExpert`).
+- **IrisEnsemble**: combines Iris agent predictions with weighted aggregation.
 
 ## Design
 
-- `spec.md` — v4.0 architecture.
+- `spec.md` — v0.5.0 architecture.
 - `.superpowers/plans/` — implementation plans.
-- `.superpowers/progress.md` — execution progress log.
+- `.superpowers/versions/` — version history and progress.
 
 ## Development
 

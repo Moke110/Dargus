@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
-from dargus.dbase.paths import default_dargus_home, global_dbase_root
+from dargus.dbase.paths import default_dargus_home
 from dargus.experts.disease import DiseaseExpert
 from dargus.iris.analog import IrisAnalog
 from dargus.iris.bayes import IrisBayes
@@ -40,7 +40,7 @@ class Iris:
         dbase = DBase.global_instance()
         return {
             "dargus_home": str(default_dargus_home()),
-            "dbase_dir": str(global_dbase_root()),
+            "dbase_dir": str(dbase.dbase_dir),
             "n_records": len(dbase.list_records()),
             "n_templates": len(dbase._templates),
         }

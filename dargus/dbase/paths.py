@@ -10,5 +10,5 @@ def default_dargus_home() -> Path:
 
 
 def global_dbase_root() -> Path:
-    """Return the global D-Base root directory."""
-    return default_dargus_home() / "dbase"
+    """Return the root directory under which the global D-Base ``dbase/`` lives."""
+    return default_dargus_home()

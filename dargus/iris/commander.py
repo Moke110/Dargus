@@ -1,17 +1,13 @@
-"""Iris commander — project manager and prediction orchestrator."""
+"""Iris commander — orchestrates global D-Base workflows."""
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-import yaml
-
-from dargus.dbase import DBase, TemplateSchema
+from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
+from dargus.dbase.paths import default_dargus_home, global_dbase_root
 from dargus.experts.disease import DiseaseExpert
 from dargus.iris.analog import IrisAnalog
 from dargus.iris.bayes import IrisBayes
@@ -20,226 +16,111 @@ from dargus.iris.expert import IrisExpert
 from dargus.iris.gnn import IrisGnn
 from dargus.iris.llm import IrisLlm
 from dargus.iris.search import IrisSearch
+from dargus.workflows.train import TrainingReport
+from dargus.workflows.train import run as run_train
 
 logger = logging.getLogger(__name__)
 
 
 class Iris:
-    """Coordinates D-Base, expert system, and Iris-* agents for a project."""
+    """Coordinates D-Base, expert system, and Iris-* agents."""
 
     name = "Iris"
 
     def __init__(self, config: dict[str, Any] | None = None):
         self.config = config or {}
-        self.projects_root = Path(self.config.get("projects", {}).get("root_dir", "projects"))
 
-    def start_project(
-        self,
-        disease: str,
-        target: str | None = None,
-        clinical_endpoints: list[str] | None = None,
-        user_data_paths: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Create a new project directory, config, and database."""
-        project_id = self._make_project_id(disease, target)
-        project_dir = self.projects_root / project_id
-        project_dir.mkdir(parents=True, exist_ok=True)
-
-        for subdir in [
-            "literature/molecular",
-            "literature/cellular",
-            "literature/exvivo",
-            "literature/animal",
-            "literature/clinical",
-            "literature/epidemiology",
-            "literature/translation",
-            "outputs/molecular",
-            "outputs/cellular",
-            "outputs/exvivo",
-            "outputs/animal",
-            "outputs/clinical",
-            "outputs/epidemiology",
-            "translation",
-            "synthesis",
-            "logs/agent_traces",
-        ]:
-            (project_dir / subdir).mkdir(parents=True, exist_ok=True)
-
-        if clinical_endpoints is None:
-            clinical_endpoints = self._default_endpoints(disease)
-        project_config = {
-            "project_id": project_id,
-            "disease": disease,
-            "target": target,
-            "clinical_endpoints": clinical_endpoints,
-            "user_data_paths": user_data_paths or [],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        config_path = project_dir / "project_config.yaml"
-        config_path.write_text(yaml.safe_dump(project_config), encoding="utf-8")
-
-        # Initialize D-Base
-        DBase(project_id, root_dir=str(self.projects_root))
-
-        logger.info("Started project %s at %s", project_id, project_dir)
-        return {"project_id": project_id, "project_dir": str(project_dir)}
-
-    def status(self, project_id: str) -> dict[str, Any]:
-        """Read project status from config and agent traces."""
-        project_dir = self.projects_root / project_id
-        config_path = project_dir / "project_config.yaml"
-        status: dict[str, Any] = {"project_id": project_id}
-        if config_path.exists():
-            with config_path.open("r", encoding="utf-8") as fh:
-                status["config"] = yaml.safe_load(fh)
-        traces_dir = project_dir / "logs" / "agent_traces"
-        traces: dict[str, list[dict[str, Any]]] = {}
-        if traces_dir.exists():
-            for trace_file in traces_dir.glob("*.jsonl"):
-                with trace_file.open("r", encoding="utf-8") as fh:
-                    events = [json.loads(line) for line in fh if line.strip()]
-                traces[trace_file.stem] = events
-        status["agent_traces"] = traces
-        status["outputs"] = self._list_outputs(project_dir)
-        return status
-
-    def ingest_project(self, project_id: str, datadir: str) -> dict[str, Any]:
-        """Scan a local data directory and write records into D-Base."""
-        dbase = DBase(project_id, root_dir=self.projects_root)
+    def _global_manager(self) -> DBaseManager:
+        dbase = DBase.global_instance()
         self._ensure_default_templates(dbase)
-        manager = DBaseManager(dbase)
+        return DBaseManager(dbase)
+
+    def status(self) -> dict[str, Any]:
+        """Report global D-Base status."""
+        dbase = DBase.global_instance()
+        return {
+            "dargus_home": str(default_dargus_home()),
+            "dbase_dir": str(global_dbase_root()),
+            "n_records": len(dbase.list_records()),
+            "n_templates": len(dbase._templates),
+        }
+
+    def train(self, datadir: str) -> TrainingReport:
+        """Run the Train workflow on the global D-Base."""
+        return run_train(datadir)
+
+    def infer(
+        self,
+        drug_ids: list[str],
+        disease_id: str,
+        endpoints: list[str] | None = None,
+        datadir: str | None = None,
+        confirm_callback: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """Run the Infer workflow.
+
+        ``confirm_callback`` receives the ``PlanProposal`` for approval before
+        agents execute. If ``datadir`` is provided, training has already run by
+        the workflow layer; this method performs prediction only.
+        """
+        manager = self._global_manager()
         disease_expert = DiseaseExpert(manager)
 
-        data_suffixes = {".csv", ".tsv", ".xlsx", ".xls"}
-        data_files = [
-            str(p)
-            for p in Path(datadir).iterdir()
-            if p.is_file() and p.suffix.lower() in data_suffixes
-        ]
-        result = disease_expert.ingest(data_files)
-        return {"project_id": project_id, "n_records": result.n_records, "errors": result.errors}
-
-    def _ensure_default_templates(self, dbase: DBase) -> None:
-        drug_vocab = "global_drug_vocab"
-        disease_vocab = "global_disease_vocab"
-        if "in_vitro_kinase_inhibition_v1" not in dbase._templates:
-            dbase.add_template(
-                TemplateSchema(
-                    template_id="in_vitro_kinase_inhibition_v1",
-                    fields=[
-                        {"name": "biological_level", "type": "factor", "vocabulary": ["molecular"]},
-                        {"name": "drug_id", "type": "factor", "vocabulary_ref": drug_vocab},
-                        {"name": "disease_id", "type": "factor", "vocabulary_ref": disease_vocab},
-                        {"name": "readout", "type": "float"},
-                    ],
-                )
-            )
-        if "cell_viability_assay_v1" not in dbase._templates:
-            dbase.add_template(
-                TemplateSchema(
-                    template_id="cell_viability_assay_v1",
-                    fields=[
-                        {"name": "biological_level", "type": "factor", "vocabulary": ["cellular"]},
-                        {"name": "drug_id", "type": "factor", "vocabulary_ref": drug_vocab},
-                        {"name": "disease_id", "type": "factor", "vocabulary_ref": disease_vocab},
-                        {"name": "readout", "type": "float"},
-                    ],
-                )
-            )
-
-    def plan_prediction(
-        self,
-        project_id: str,
-        drug_ids: list[str],
-        disease_id: str,
-        endpoints: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Produce a prediction plan for review/confirmation."""
-        if endpoints is None:
-            endpoints = self._default_endpoints(disease_id)
-        return {
-            "project_id": project_id,
-            "drug_ids": drug_ids,
-            "disease_id": disease_id,
-            "endpoints": endpoints,
-            "agents": ["Iris-search", "Iris-analog", "Iris-bayes", "Iris-gnn", "Iris-llm"],
-        }
-
-    def predict(
-        self,
-        project_id: str,
-        drug_ids: list[str],
-        disease_id: str,
-        endpoints: list[str] | None = None,
-        confirm_callback: Any = None,
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run Iris-* agents and return an ensemble prediction.
-
-        The optional ``confirm_callback`` receives the plan proposal and must
-        return a truthy value before agents are executed. ``context`` may
-        include ``datadir`` to ingest and ``agents`` to select which agents to
-        run (default: disease_expert only).
-        """
-        context = context or {}
-        if "datadir" in context:
-            self.ingest_project(project_id, context["datadir"])
-
-        plan = self.plan_prediction(project_id, drug_ids, disease_id, endpoints)
-        if confirm_callback is not None and not confirm_callback(plan):
+        plan = disease_expert.plan(drug_ids, disease_id, endpoints)
+        if confirm_callback is not None and not confirm_callback(plan.to_dict()):
             raise RuntimeError("Prediction plan was not confirmed")
 
-        dbase = DBase(project_id, root_dir=self.projects_root)
-        manager = DBaseManager(dbase)
-
-        agent_names = context.get("agents", ["disease_expert"])
         predictions: dict[str, dict[str, dict[str, Any]]] = {}
-        for name in agent_names:
-            agent_predictions = self._run_agent(
-                name, dbase, manager, drug_ids, disease_id, plan["endpoints"], context
-            )
-            if agent_predictions:
-                predictions[name] = agent_predictions
+        for agent_name in plan.agents:
+            try:
+                agent_predictions = self._run_agent(
+                    agent_name, manager, drug_ids, disease_id, plan.endpoints
+                )
+                if agent_predictions:
+                    predictions[agent_name] = agent_predictions
+            except Exception:
+                logger.warning(
+                    "Agent %s failed during prediction, skipping", agent_name, exc_info=True
+                )
 
         if not predictions:
             return {
-                drug: {endpoint: self._empty_pred() for endpoint in plan["endpoints"]}
+                drug: {endpoint: self._empty_pred() for endpoint in plan.endpoints}
                 for drug in drug_ids
             }
         if len(predictions) == 1:
             return next(iter(predictions.values()))
-        return self.ensemble(predictions)
+        return self.ensemble(predictions, plan.weights)
+
+    def benchmark(self, config_path: str) -> dict[str, Any]:
+        """Run the Benchmark workflow."""
+        from dargus.workflows.benchmark import run as run_benchmark
+
+        return run_benchmark(config_path)
 
     def _run_agent(
         self,
         name: str,
-        dbase: DBase,
         manager: DBaseManager,
         drug_ids: list[str],
         disease_id: str,
         endpoints: list[str],
-        context: dict[str, Any],
     ) -> dict[str, dict[str, dict[str, Any]]] | None:
-        embeddings = context.get("embeddings")
-        if name == "disease_expert":
-            disease_expert = DiseaseExpert(manager)
-            return disease_expert.predict(drug_ids, disease_id, endpoints)
-        if name == "expert":
+        dbase = manager.dbase
+        if name == "Iris-expert":
             agent = IrisExpert(DiseaseExpert(manager))
-            return agent.predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
-        if name == "search":
-            return IrisSearch().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
-        if name == "analog":
-            return IrisAnalog().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
-        if name == "bayes":
-            return IrisBayes().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
-        if name == "gnn":
-            return IrisGnn().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
-        if name == "llm":
+            return agent.predict(dbase, drug_ids, disease_id, endpoints)
+        if name == "Iris-search":
+            return IrisSearch().predict(dbase, drug_ids, disease_id, endpoints)
+        if name == "Iris-analog":
+            return IrisAnalog().predict(dbase, drug_ids, disease_id, endpoints)
+        if name == "Iris-bayes":
+            return IrisBayes().predict(dbase, drug_ids, disease_id, endpoints)
+        if name == "Iris-gnn":
+            return IrisGnn().predict(dbase, drug_ids, disease_id, endpoints)
+        if name == "Iris-llm":
             config = self.config if self.config else None
-            return IrisLlm(config=config).predict(
-                dbase, drug_ids, disease_id, endpoints, embeddings, context
-            )
+            return IrisLlm(config=config).predict(dbase, drug_ids, disease_id, endpoints)
         return None
 
     def _empty_pred(self) -> dict[str, Any]:
@@ -256,11 +137,7 @@ class Iris:
         predictions: dict[str, dict[str, dict[str, Any]]],
         weights: dict[str, float] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Aggregate predictions from multiple Iris-* agents.
-
-        ``weights`` maps agent names to positive weights. If omitted, inverse
-        interval width weighting is used.
-        """
+        """Aggregate predictions from multiple Iris-* agents."""
         ensemble = IrisEnsemble()
         aggregated = ensemble.aggregate(predictions)
         if weights:
@@ -281,25 +158,35 @@ class Iris:
                         entry["efficacy_up"] = sum(weighted_up) / denom
         return aggregated
 
-    def _make_project_id(self, disease: str, target: str | None) -> str:
-        safe_disease = disease.replace(" ", "_").replace("'", "")
-        safe_target = (target or "unknown").replace(" ", "_")
-        date = datetime.now(timezone.utc).strftime("%Y%m%d")
-        return f"{safe_target}_{safe_disease}_{date}"
+    def _ensure_default_templates(self, dbase: DBase) -> None:
+        drug_vocab = "global_drug_vocab"
+        disease_vocab = "global_disease_vocab"
+        endpoint_vocab = "global_endpoint_vocab"
+        if "clinical_trial_outcome_v1" not in dbase._templates:
+            from dargus.dbase import TemplateSchema
 
-    def _default_endpoints(self, disease: str) -> list[str]:
-        return (
-            self.config.get("projects", {})
-            .get("default_endpoints", {})
-            .get(disease, ["primary_endpoint_change"])
-        )
-
-    def _list_outputs(self, project_dir: Path) -> dict[str, list[str]]:
-        outputs_dir = project_dir / "outputs"
-        result: dict[str, list[str]] = {}
-        if not outputs_dir.exists():
-            return result
-        for layer_dir in outputs_dir.iterdir():
-            if layer_dir.is_dir():
-                result[layer_dir.name] = [str(p) for p in layer_dir.rglob("*") if p.is_file()]
-        return result
+            dbase.add_template(
+                TemplateSchema(
+                    template_id="clinical_trial_outcome_v1",
+                    fields=[
+                        {
+                            "name": "biological_level",
+                            "type": "factor",
+                            "vocabulary": [
+                                "molecular",
+                                "cellular",
+                                "exvivo",
+                                "animal",
+                                "clinical",
+                                "epi",
+                            ],
+                        },
+                        {"name": "drug_id", "type": "factor", "vocabulary_ref": drug_vocab},
+                        {"name": "disease_id", "type": "factor", "vocabulary_ref": disease_vocab},
+                        {"name": "endpoint", "type": "factor", "vocabulary_ref": endpoint_vocab},
+                        {"name": "fold_change", "type": "float"},
+                        {"name": "ci95_lower", "type": "float"},
+                        {"name": "ci95_upper", "type": "float"},
+                    ],
+                )
+            )

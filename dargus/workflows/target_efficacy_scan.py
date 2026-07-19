@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -21,19 +22,20 @@ def run_v4(
     datadir: str | None = None,
     projects_root: str = "projects",
 ) -> dict:
-    """Run the v4.0 target-disease efficacy scan workflow."""
+    """Run the 0.6.0 target-disease efficacy scan workflow."""
     from dargus.iris.commander import Iris
 
-    iris = Iris(config={"projects": {"root_dir": projects_root}})
-    project = iris.start_project(disease=disease)
+    if projects_root:
+        os.environ["DARGUS_HOME"] = projects_root
+
+    iris = Iris()
     if datadir:
-        iris.ingest_project(project["project_id"], datadir)
-    predictions = iris.predict(
-        project_id=project["project_id"],
+        iris.train(datadir)
+    predictions = iris.infer(
         drug_ids=drugs,
         disease_id=disease,
     )
-    return {"project_id": project["project_id"], "predictions": predictions}
+    return {"predictions": predictions}
 
 
 if __name__ == "__main__":
@@ -50,5 +52,4 @@ if __name__ == "__main__":
         drugs=args.drugs,
         disease=args.disease,
     )
-    print(f"Workflow completed: {result['project_id']}")
     print(f"Predictions: {result['predictions']}")

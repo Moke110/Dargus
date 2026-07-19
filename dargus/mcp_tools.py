@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
 from typing import Any
 
 from dargus.dbase import DBase
@@ -12,6 +12,11 @@ def _respond(success: bool, data: dict[str, Any] | None = None, error: str | Non
     return {"success": success, "data": data or {}, "error": error}
 
 
+def _set_dargus_home(projects_root: str) -> None:
+    """Temporarily override DARGUS_HOME for the global D-Base."""
+    os.environ["DARGUS_HOME"] = projects_root
+
+
 def tool_start_project(
     disease: str,
     target: str | None = None,
@@ -20,14 +25,15 @@ def tool_start_project(
     projects_root: str = "projects",
 ) -> dict:
     try:
-        iris = Iris(config={"projects": {"root_dir": projects_root}})
-        result = iris.start_project(
-            disease=disease,
-            target=target,
-            clinical_endpoints=endpoints,
-            user_data_paths=data_paths,
-        )
-        return _respond(True, data=result)
+        _set_dargus_home(projects_root)
+        iris = Iris()
+        # In the new global D-Base model, "starting a project" means ensuring
+        # the D-Base is initialized and reporting its status.
+        status = iris.status()
+        status["disease"] = disease
+        status["target"] = target
+        status["endpoints"] = endpoints or ["primary_endpoint_change"]
+        return _respond(True, data=status)
     except Exception as exc:  # noqa: BLE001
         return _respond(False, error=str(exc))
 
@@ -38,9 +44,17 @@ def tool_ingest_data(
     projects_root: str = "projects",
 ) -> dict:
     try:
-        iris = Iris(config={"projects": {"root_dir": projects_root}})
-        result = iris.ingest_project(project_id, datadir)
-        return _respond(True, data=result)
+        _set_dargus_home(projects_root)
+        iris = Iris()
+        report = iris.train(datadir)
+        return _respond(
+            True,
+            data={
+                "n_records": report.n_records,
+                "dbase_size": report.dbase_size,
+                "errors": report.errors,
+            },
+        )
     except Exception as exc:  # noqa: BLE001
         return _respond(False, error=str(exc))
 
@@ -54,7 +68,8 @@ def tool_search_literature(
     try:
         from dargus.agents.report_searcher import ReportSearcher
 
-        iris = Iris(config={"projects": {"root_dir": projects_root}})
+        _set_dargus_home(projects_root)
+        iris = Iris()
         searcher = ReportSearcher(iris.config)
         result = searcher.search(drug_ids, disease_id)
         return _respond(True, data={"project_id": project_id, "result": result})
@@ -70,14 +85,14 @@ def tool_predict(
     projects_root: str = "projects",
 ) -> dict:
     try:
-        iris = Iris(config={"projects": {"root_dir": projects_root}})
-        predictions = iris.predict(
-            project_id=project_id,
+        _set_dargus_home(projects_root)
+        iris = Iris()
+        predictions = iris.infer(
             drug_ids=drug_ids,
             disease_id=disease_id,
             endpoints=endpoints,
         )
-        return _respond(True, data={"project_id": project_id, "predictions": predictions})
+        return _respond(True, data={"predictions": predictions})
     except Exception as exc:  # noqa: BLE001
         return _respond(False, error=str(exc))
 
@@ -90,7 +105,8 @@ def tool_query_dbase(
     projects_root: str = "projects",
 ) -> dict:
     try:
-        dbase = DBase(project_id, root_dir=projects_root)
+        _set_dargus_home(projects_root)
+        dbase = DBase.global_instance()
         records = dbase.query(
             template_id=template_id,
             drug_id=drug_id,
@@ -99,7 +115,6 @@ def tool_query_dbase(
         return _respond(
             True,
             data={
-                "project_id": project_id,
                 "n_records": len(records),
                 "records": [json.loads(r.model_dump_json()) for r in records],
             },
@@ -109,10 +124,10 @@ def tool_query_dbase(
 
 
 def tool_status(project_id: str, projects_root: str = "projects") -> dict:
-    root = Path(projects_root)
-    project_dir = root / project_id
-    if not project_dir.exists():
-        return _respond(False, error=f"Project {project_id!r} not found at {project_dir}")
-
-    iris = Iris(config={"projects": {"root_dir": str(root)}})
-    return _respond(True, data=iris.status(project_id))
+    try:
+        _set_dargus_home(projects_root)
+        iris = Iris()
+        status = iris.status()
+        return _respond(True, data=status)
+    except Exception as exc:  # noqa: BLE001
+        return _respond(False, error=str(exc))

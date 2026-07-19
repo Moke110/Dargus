@@ -26,8 +26,7 @@ Or from a Coding Agent via the Dargus skill:
 
 ## Design
 
-- `specs/spec.md` — v4.0 architecture.
-- `specs/spec_completion_roadmap.md` — completion roadmap.
+- `spec.md` — v4.0 architecture.
 - `.superpowers/plans/` — implementation plans.
 - `.superpowers/progress.md` — execution progress log.
 

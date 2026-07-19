@@ -120,9 +120,11 @@ class DiseaseExpert:
             level_experts=list(self.level_experts.keys()),
             agents=available_agents,
             weights=weights,
-            reasoning="Aggregate evidence across biological levels."
-            if records
-            else "Insufficient data; using conservative agents only.",
+            reasoning=(
+                "Aggregate evidence across biological levels."
+                if records
+                else "Insufficient data; using conservative agents only."
+            ),
         )
 
     def predict(

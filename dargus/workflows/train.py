@@ -20,9 +20,9 @@ class TrainingReport:
     """Report from a Train workflow run."""
 
     n_records: int = 0
+    n_skipped: int = 0
     dbase_size: int = 0
     errors: list[str] = field(default_factory=list)
-    files: list[str] = field(default_factory=list)
 
 
 def run(datadir: str) -> TrainingReport:
@@ -37,12 +37,17 @@ def run(datadir: str) -> TrainingReport:
         str(p) for p in data_path.iterdir() if p.is_file() and p.suffix.lower() in DATA_SUFFIXES
     ]
 
+    initial_size = len(dbase.list_records())
     result = disease_expert.ingest(data_files)
+    final_size = len(dbase.list_records())
+
+    n_new = final_size - initial_size
+
     return TrainingReport(
-        n_records=result.n_records,
-        dbase_size=len(dbase.list_records()),
+        n_records=n_new,
+        n_skipped=result.n_records - n_new,
+        dbase_size=final_size,
         errors=result.errors,
-        files=data_files,
     )
 
 

@@ -34,14 +34,64 @@ class DBaseManager:
                 return record
         return None
 
-    def write_record(self, record: TemplateRecord) -> None:
+    def write_record(self, record: TemplateRecord, dedup: bool = True) -> bool:
         """Write one complete TemplateRecord to D-Base.
 
-        This is the only sanctioned D-Base writer.
+        This is the only sanctioned D-Base writer. When ``dedup`` is True and an
+        equivalent record already exists, the write is skipped and False is
+        returned. The record is persisted immediately.
         """
         if not isinstance(record, TemplateRecord):
             raise TypeError("DBaseManager.write_record() requires a TemplateRecord")
+        if dedup and self._is_duplicate(record):
+            return False
         self.dbase.add_record(record)
+        self.dbase.save()
+        return True
+
+    def _is_duplicate(self, record: TemplateRecord) -> bool:
+        key = self._record_dedup_key(record)
+        for existing in self.dbase.list_records():
+            if self._record_dedup_key(existing) == key:
+                return True
+        return False
+
+    def _record_dedup_key(
+        self, record: TemplateRecord
+    ) -> tuple[str, str | None, str | None, str | None, str | None]:
+        source = record.source
+        source_key = ""
+        if isinstance(source, dict):
+            source_key = source.get("type", "") or ""
+        return (
+            source_key,
+            self._record_field(record, "drug_id"),
+            self._record_field(record, "disease_id"),
+            self._record_field(record, "endpoint"),
+            self._record_field(record, "biological_level"),
+        )
+
+    def _record_field(self, record: TemplateRecord, field_name: str) -> str | None:
+        schema = self.dbase.get_template(record.template_id)
+        try:
+            idx = schema.field_index(field_name)
+        except KeyError:
+            return None
+        indices = record.sparse_vector.get("indices", [])
+        values = record.sparse_vector.get("values", [])
+        if idx not in indices:
+            return None
+        pos = indices.index(idx)
+        field = schema.field_def(field_name)
+        if field.type == "factor":
+            factor_value = int(values[pos])
+            if field.vocabulary:
+                if 0 <= factor_value < len(field.vocabulary):
+                    return field.vocabulary[factor_value]
+                return None
+            vocab_ref = field.vocabulary_ref or field_name
+            return self.dbase.vocab.reverse_lookup(vocab_ref, factor_value)
+        return str(values[pos])
 
     def fill_template(
         self,

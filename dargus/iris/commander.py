@@ -13,7 +13,13 @@ import yaml
 from dargus.dbase import DBase, TemplateSchema
 from dargus.dbase.manager import DBaseManager
 from dargus.experts.disease import DiseaseExpert
+from dargus.iris.analog import IrisAnalog
+from dargus.iris.bayes import IrisBayes
 from dargus.iris.ensemble import IrisEnsemble
+from dargus.iris.expert import IrisExpert
+from dargus.iris.gnn import IrisGnn
+from dargus.iris.llm import IrisLlm
+from dargus.iris.search import IrisSearch
 
 logger = logging.getLogger(__name__)
 
@@ -166,24 +172,84 @@ class Iris:
         disease_id: str,
         endpoints: list[str] | None = None,
         confirm_callback: Any = None,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
         """Run Iris-* agents and return an ensemble prediction.
 
         The optional ``confirm_callback`` receives the plan proposal and must
-        return a truthy value before agents are executed.
+        return a truthy value before agents are executed. ``context`` may
+        include ``datadir`` to ingest and ``agents`` to select which agents to
+        run (default: disease_expert only).
         """
+        context = context or {}
+        if "datadir" in context:
+            self.ingest_project(project_id, context["datadir"])
+
         plan = self.plan_prediction(project_id, drug_ids, disease_id, endpoints)
         if confirm_callback is not None and not confirm_callback(plan):
             raise RuntimeError("Prediction plan was not confirmed")
 
         dbase = DBase(project_id, root_dir=self.projects_root)
         manager = DBaseManager(dbase)
-        disease_expert = DiseaseExpert(manager)
-        return disease_expert.predict(
-            drug_ids=drug_ids,
-            disease_id=disease_id,
-            endpoints=plan["endpoints"],
-        )
+
+        agent_names = context.get("agents", ["disease_expert"])
+        predictions: dict[str, dict[str, dict[str, Any]]] = {}
+        for name in agent_names:
+            agent_predictions = self._run_agent(
+                name, dbase, manager, drug_ids, disease_id, plan["endpoints"], context
+            )
+            if agent_predictions:
+                predictions[name] = agent_predictions
+
+        if not predictions:
+            return {
+                drug: {endpoint: self._empty_pred() for endpoint in plan["endpoints"]}
+                for drug in drug_ids
+            }
+        if len(predictions) == 1:
+            return next(iter(predictions.values()))
+        return self.ensemble(predictions)
+
+    def _run_agent(
+        self,
+        name: str,
+        dbase: DBase,
+        manager: DBaseManager,
+        drug_ids: list[str],
+        disease_id: str,
+        endpoints: list[str],
+        context: dict[str, Any],
+    ) -> dict[str, dict[str, dict[str, Any]]] | None:
+        embeddings = context.get("embeddings")
+        if name == "disease_expert":
+            disease_expert = DiseaseExpert(manager)
+            return disease_expert.predict(drug_ids, disease_id, endpoints)
+        if name == "expert":
+            agent = IrisExpert(DiseaseExpert(manager))
+            return agent.predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
+        if name == "search":
+            return IrisSearch().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
+        if name == "analog":
+            return IrisAnalog().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
+        if name == "bayes":
+            return IrisBayes().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
+        if name == "gnn":
+            return IrisGnn().predict(dbase, drug_ids, disease_id, endpoints, embeddings, context)
+        if name == "llm":
+            config = self.config if self.config else None
+            return IrisLlm(config=config).predict(
+                dbase, drug_ids, disease_id, endpoints, embeddings, context
+            )
+        return None
+
+    def _empty_pred(self) -> dict[str, Any]:
+        return {
+            "efficacy_low": 0.0,
+            "efficacy_up": 1.0,
+            "supporting_records": [],
+            "reasoning_mode": self.name,
+            "confidence_level": "insufficient_data",
+        }
 
     def ensemble(
         self,

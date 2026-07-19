@@ -26,8 +26,10 @@ Or from a Coding Agent via the Dargus skill:
 
 ## Design
 
-- `docs/superpowers/specs/2026-07-18-dargus-dbase-iris-design.md` — v4.0 architecture.
-- `docs/superpowers/specs/2026-07-19-dargus-completion-roadmap-design.md` — completion roadmap.
+- `specs/spec.md` — v4.0 architecture.
+- `specs/spec_completion_roadmap.md` — completion roadmap.
+- `.superpowers/plans/` — implementation plans.
+- `.superpowers/progress.md` — execution progress log.
 
 ## Development
 

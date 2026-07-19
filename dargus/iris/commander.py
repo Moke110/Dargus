@@ -68,7 +68,11 @@ class Iris:
 
         plan = disease_expert.plan(drug_ids, disease_id, endpoints)
         if confirm_callback is not None and not confirm_callback(plan.to_dict()):
-            raise RuntimeError("Prediction plan was not confirmed")
+            return {
+                "aborted": True,
+                "reason": "Prediction plan was not confirmed by user.",
+                "plan_suggestion": plan.to_dict(),
+            }
 
         predictions: dict[str, dict[str, dict[str, Any]]] = {}
         for agent_name in plan.agents:

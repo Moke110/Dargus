@@ -53,6 +53,14 @@ class BenchmarkExtractor:
         return records
 
     def _matches(self, record: TemplateRecord, key: str, value: Any) -> bool:
+        from dargus.dbase import DBase
+        from dargus.dbase.manager import DBaseManager
+
         if key == "source.type":
             return isinstance(record.source, dict) and record.source.get("type") == value
-        return False
+
+        manager = DBaseManager(DBase.global_instance())
+        field_value = manager._record_field(record, key)
+        if field_value is None:
+            return False
+        return str(field_value) == str(value)

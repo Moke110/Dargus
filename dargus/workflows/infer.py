@@ -33,12 +33,14 @@ def run(
         "datadir": datadir,
         "message": "Add new data for supplemental training before inference? [y/N]",
     }
-    if not confirm_callback(train_plan):
-        return {"aborted": True, "reason": "User declined training-pre-confirmation gate."}
+    should_train = confirm_callback(train_plan)
 
-    if datadir is not None:
+    if should_train and datadir is not None:
         train_report = run_train(datadir)
         logger.info("Training report: %s", train_report)
+    elif should_train and datadir is None:
+        logger.info("User wants to train but no datadir provided; continuing with inference only.")
+    # If user rejects, skip training and continue directly to inference
 
     iris = Iris()
     return iris.infer(

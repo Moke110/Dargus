@@ -98,12 +98,31 @@ class DiseaseExpert:
         """Propose a prediction plan."""
         if endpoints is None:
             endpoints = ["primary_endpoint_change"]
+
+        records = self.manager.read_records(disease_id=disease_id)
+        available_agents = ["Iris-search", "Iris-expert"]
+        weights = {"Iris-search": 0.6, "Iris-expert": 0.4}
+        if records:
+            available_agents.extend(["Iris-analog", "Iris-bayes", "Iris-gnn", "Iris-llm"])
+            weights = {
+                "Iris-search": 0.15,
+                "Iris-analog": 0.15,
+                "Iris-bayes": 0.25,
+                "Iris-gnn": 0.15,
+                "Iris-llm": 0.15,
+                "Iris-expert": 0.15,
+            }
+
         return PlanProposal(
             drug_ids=drug_ids,
             disease_id=disease_id,
             endpoints=endpoints,
             level_experts=list(self.level_experts.keys()),
-            reasoning="Aggregate evidence across biological levels.",
+            agents=available_agents,
+            weights=weights,
+            reasoning="Aggregate evidence across biological levels."
+            if records
+            else "Insufficient data; using conservative agents only.",
         )
 
     def predict(

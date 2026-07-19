@@ -23,7 +23,20 @@ class PlanProposal:
     disease_id: str
     endpoints: list[str]
     level_experts: list[str]
+    agents: list[str] = field(default_factory=list)
+    weights: dict[str, float] = field(default_factory=dict)
     reasoning: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "drug_ids": self.drug_ids,
+            "disease_id": self.disease_id,
+            "endpoints": self.endpoints,
+            "level_experts": self.level_experts,
+            "agents": self.agents,
+            "weights": self.weights,
+            "reasoning": self.reasoning,
+        }
 
 
 @dataclass

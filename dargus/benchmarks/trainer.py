@@ -52,5 +52,6 @@ class IrisBenchmarkTrainer:
                 embeddings=embeddings,
             )
             for drug in pred:
-                result[drug].update(pred[drug])
+                if drug in result:
+                    result[drug].update(pred[drug])
         return result

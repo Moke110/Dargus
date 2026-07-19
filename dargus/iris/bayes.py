@@ -4,6 +4,7 @@ from typing import Any
 
 from dargus.dbase import DBase
 from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.probability_utils import probability_interval_from_effect
 from dargus.reasoning.bayesian.model import HierarchicalBayesianModel
 from dargus.reasoning.bayesian.records_adapter import LEVEL_ORDER, RecordsAdapter
 
@@ -37,9 +38,8 @@ class IrisBayes(IrisAgent):
                 )
                 if len(y) == 0:
                     result[drug_id][endpoint] = {
-                        "normalized_effect_size": 0.0,
-                        "ci95_lower": -1.0,
-                        "ci95_upper": 1.0,
+                        "efficacy_low": 0.0,
+                        "efficacy_up": 1.0,
                         "supporting_records": [],
                         "reasoning_mode": self.name,
                         "confidence_level": "insufficient_data",
@@ -51,10 +51,12 @@ class IrisBayes(IrisAgent):
                 )
                 model.fit(draws=self.draws, tune=self.tune, chains=self.chains)
                 pred = model.predict(level=LEVEL_ORDER.index("clinical"), group=0)
+                efficacy_low, efficacy_up = probability_interval_from_effect(
+                    pred["mean"], pred["ci_lower"], pred["ci_upper"]
+                )
                 result[drug_id][endpoint] = {
-                    "normalized_effect_size": pred["mean"],
-                    "ci95_lower": pred["ci_lower"],
-                    "ci95_upper": pred["ci_upper"],
+                    "efficacy_low": efficacy_low,
+                    "efficacy_up": efficacy_up,
                     "supporting_records": records[:10],
                     "reasoning_mode": self.name,
                     "confidence_level": "multi_level_evidence" if len(y) > 1 else "single_study",

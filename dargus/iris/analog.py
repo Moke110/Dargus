@@ -6,6 +6,7 @@ import numpy as np
 
 from dargus.dbase import DBase
 from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.probability_utils import probability_interval_from_effect
 
 
 class IrisAnalog(IrisAgent):
@@ -27,9 +28,8 @@ class IrisAnalog(IrisAgent):
             for endpoint in endpoints:
                 if not analog_records:
                     result[drug_id][endpoint] = {
-                        "normalized_effect_size": 0.0,
-                        "ci95_lower": -1.0,
-                        "ci95_upper": 1.0,
+                        "efficacy_low": 0.0,
+                        "efficacy_up": 1.0,
                         "supporting_records": [],
                         "reasoning_mode": self.name,
                         "confidence_level": "insufficient_data",
@@ -39,10 +39,12 @@ class IrisAnalog(IrisAgent):
                 values = [r["value"] for r in analog_records]
                 mean = float(np.mean(values))
                 std = float(np.std(values)) if len(values) > 1 else 1.0
+                efficacy_low, efficacy_up = probability_interval_from_effect(
+                    mean, mean - 1.96 * std, mean + 1.96 * std
+                )
                 result[drug_id][endpoint] = {
-                    "normalized_effect_size": mean,
-                    "ci95_lower": float(mean - 1.96 * std),
-                    "ci95_upper": float(mean + 1.96 * std),
+                    "efficacy_low": efficacy_low,
+                    "efficacy_up": efficacy_up,
                     "supporting_records": [r["record_id"] for r in analog_records[:10]],
                     "reasoning_mode": self.name,
                     "confidence_level": "analogical_evidence",

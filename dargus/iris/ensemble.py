@@ -55,39 +55,42 @@ class IrisEnsemble(IrisAgent):
 
                 weights = []
                 for e in estimates:
-                    width = e.get("ci95_upper", 1.0) - e.get("ci95_lower", 0.0)
+                    width = e.get("efficacy_up", 1.0) - e.get("efficacy_low", 0.0)
                     if width <= 0:
                         width = 1.0
                     weights.append(1.0 / width)
 
                 weights = np.array(weights)
-                mean_effect = float(
+                low = float(
                     np.average(
-                        [e["normalized_effect_size"] for e in estimates],
+                        [e["efficacy_low"] for e in estimates],
                         weights=weights,
                     )
                 )
-                weighted_var = float(
+                up = float(
                     np.average(
-                        [(e["normalized_effect_size"] - mean_effect) ** 2 for e in estimates],
+                        [e["efficacy_up"] for e in estimates],
                         weights=weights,
                     )
                 )
-                ci_width = 1.96 * np.sqrt(weighted_var)
+                low, up = min(low, up), max(low, up)
 
                 all_supporting: list[str] = []
                 for e in estimates:
                     all_supporting.extend(e.get("supporting_records", []))
 
                 result[drug][endpoint] = {
-                    "normalized_effect_size": mean_effect,
-                    "ci95_lower": mean_effect - ci_width,
-                    "ci95_upper": mean_effect + ci_width,
+                    "efficacy_low": low,
+                    "efficacy_up": up,
                     "supporting_records": sorted(set(all_supporting)),
                     "reasoning_mode": self.name,
                     "confidence_level": "ensemble",
                     "component_predictions": {
-                        e["_mode"]: e["normalized_effect_size"] for e in estimates
+                        e["_mode"]: {
+                            "efficacy_low": e["efficacy_low"],
+                            "efficacy_up": e["efficacy_up"],
+                        }
+                        for e in estimates
                     },
                 }
         return result

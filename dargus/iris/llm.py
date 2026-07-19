@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.base import IrisAgent, PredictionMatrix, normalize_prediction_entry
 from dargus.llm_backends import LLMBackend, llm_backend_from_config
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,11 @@ class IrisLlm(IrisAgent):
                 entry.setdefault("supporting_records", supporting_map.get(drug, []))
                 entry.setdefault("reasoning_mode", self.name)
                 entry.setdefault("confidence_level", "exploratory")
+                drug_entries[endpoint] = normalize_prediction_entry(
+                    entry,
+                    reasoning_mode=self.name,
+                    confidence_level="exploratory",
+                )
         return parsed
 
     def _summarize_dbase(

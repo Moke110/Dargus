@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.probability_utils import probability_interval_from_effect
 
 
 class IrisSearch(IrisAgent):
@@ -39,10 +40,14 @@ class IrisSearch(IrisAgent):
                 uppers = [self._get_field_value(dbase, r, "ci95_upper") for r in endpoint_records]
                 lowers = [lo for lo in lowers if lo is not None]
                 uppers = [up for up in uppers if up is not None]
+                ci_lower = min(lowers) if lowers else mean_effect - 0.5
+                ci_upper = max(uppers) if uppers else mean_effect + 0.5
+                efficacy_low, efficacy_up = probability_interval_from_effect(
+                    mean_effect, ci_lower, ci_upper
+                )
                 result[drug][endpoint] = {
-                    "normalized_effect_size": mean_effect,
-                    "ci95_lower": min(lowers) if lowers else mean_effect - 0.5,
-                    "ci95_upper": max(uppers) if uppers else mean_effect + 0.5,
+                    "efficacy_low": efficacy_low,
+                    "efficacy_up": efficacy_up,
                     "supporting_records": [r.record_id for r in endpoint_records],
                     "reasoning_mode": self.name,
                     "confidence_level": "direct_evidence",

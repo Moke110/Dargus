@@ -4,6 +4,7 @@ from typing import Any
 
 from dargus.dbase import DBase
 from dargus.iris.base import IrisAgent, PredictionMatrix
+from dargus.iris.probability_utils import probability_interval_from_effect
 from dargus.reasoning.gnn.graph_builder import DBaseGraphBuilder
 from dargus.reasoning.gnn.model import HeteroGnnPredictor
 
@@ -63,11 +64,14 @@ class IrisGnn(IrisAgent):
                 disease_idx=[disease_idx_val],
             )
             records = self._supporting_records(dbase, drug_id)
+            mean = float(pred["mean"][0])
+            ci_lower = float(pred["ci_lower"][0])
+            ci_upper = float(pred["ci_upper"][0])
+            efficacy_low, efficacy_up = probability_interval_from_effect(mean, ci_lower, ci_upper)
             for endpoint in endpoints:
                 result[drug_id][endpoint] = {
-                    "normalized_effect_size": float(pred["mean"][0]),
-                    "ci95_lower": float(pred["ci_lower"][0]),
-                    "ci95_upper": float(pred["ci_upper"][0]),
+                    "efficacy_low": efficacy_low,
+                    "efficacy_up": efficacy_up,
                     "supporting_records": records,
                     "reasoning_mode": self.name,
                     "confidence_level": "graph_inference",
@@ -82,9 +86,8 @@ class IrisGnn(IrisAgent):
 
     def _empty_pred(self) -> dict:
         return {
-            "normalized_effect_size": 0.0,
-            "ci95_lower": -1.0,
-            "ci95_upper": 1.0,
+            "efficacy_low": 0.0,
+            "efficacy_up": 1.0,
             "supporting_records": [],
             "reasoning_mode": self.name,
             "confidence_level": "insufficient_data",

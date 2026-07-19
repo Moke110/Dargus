@@ -1,5 +1,6 @@
 """Dargus expert system."""
 
+from dargus.experts.disease import DiseaseExpert
 from dargus.experts.levels import (
     AnimalExpert,
     CellularExpert,
@@ -17,6 +18,7 @@ from dargus.experts.types import (
 )
 
 __all__ = [
+    "DiseaseExpert",
     "LevelExpert",
     "MolecularExpert",
     "CellularExpert",

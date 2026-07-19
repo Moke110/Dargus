@@ -12,8 +12,8 @@ import yaml
 
 from dargus.dbase import DBase, TemplateSchema
 from dargus.dbase.manager import DBaseManager
+from dargus.experts.disease import DiseaseExpert
 from dargus.iris.ensemble import IrisEnsemble
-from dargus.iris.selector import IrisSelector
 
 logger = logging.getLogger(__name__)
 
@@ -99,26 +99,19 @@ class Iris:
 
     def ingest_project(self, project_id: str, datadir: str) -> dict[str, Any]:
         """Scan a local data directory and write records into D-Base."""
-        from dargus.agents.reader import ReaderAgent
-
         dbase = DBase(project_id, root_dir=self.projects_root)
         self._ensure_default_templates(dbase)
         manager = DBaseManager(dbase)
-        reader = ReaderAgent(self.config)
-        scan = reader.scan_directory(datadir)
-        instances: list[dict[str, Any]] = []
-        for f in scan.get("data_files", []):
-            instances.extend(reader.parse_data_file(f))
+        disease_expert = DiseaseExpert(manager)
 
-        for raw in instances:
-            record = manager.fill_template(
-                raw,
-                source_metadata=raw.get("source", {"type": "user_upload"}),
-            )
-            manager.write_record(record)
-        dbase.save()
-
-        return {"project_id": project_id, "n_records": len(dbase.list_records())}
+        data_suffixes = {".csv", ".tsv", ".xlsx", ".xls"}
+        data_files = [
+            str(p)
+            for p in Path(datadir).iterdir()
+            if p.is_file() and p.suffix.lower() in data_suffixes
+        ]
+        result = disease_expert.ingest(data_files)
+        return {"project_id": project_id, "n_records": result.n_records, "errors": result.errors}
 
     def _ensure_default_templates(self, dbase: DBase) -> None:
         drug_vocab = "global_drug_vocab"
@@ -184,8 +177,13 @@ class Iris:
             raise RuntimeError("Prediction plan was not confirmed")
 
         dbase = DBase(project_id, root_dir=self.projects_root)
-        selector = IrisSelector(dbase, config=self.config)
-        return selector.predict(drug_ids, disease_id, endpoints=plan["endpoints"])
+        manager = DBaseManager(dbase)
+        disease_expert = DiseaseExpert(manager)
+        return disease_expert.predict(
+            drug_ids=drug_ids,
+            disease_id=disease_id,
+            endpoints=plan["endpoints"],
+        )
 
     def ensemble(
         self,

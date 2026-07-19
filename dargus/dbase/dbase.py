@@ -5,6 +5,7 @@ from pathlib import Path
 
 import scipy.sparse as sp
 
+from dargus.dbase.paths import global_dbase_root
 from dargus.dbase.record import TemplateRecord
 from dargus.dbase.template import TemplateSchema
 from dargus.dbase.vocabulary import VocabularyManager
@@ -220,3 +221,8 @@ class DBase:
 
     def list_records(self) -> list[TemplateRecord]:
         return list(self._records)
+
+    @classmethod
+    def global_instance(cls) -> "DBase":
+        """Return the singleton-like global D-Base for this installation."""
+        return cls(project_id="global", root_dir=global_dbase_root())

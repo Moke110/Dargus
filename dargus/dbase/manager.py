@@ -8,11 +8,40 @@ from dargus.dbase import DBase, TemplateRecord
 _UNIT_SUFFIXES = frozenset({"nm", "um", "mm", "mgml", "μm"})
 
 
-class TempRetriever:
-    """Maps raw inputs to D-Base TemplateRecords. Sole writer to D-Base."""
+class DBaseManager:
+    """Single read/write interface to D-Base."""
 
     def __init__(self, dbase: DBase):
         self.dbase = dbase
+
+    def read_records(
+        self,
+        template_id: str | None = None,
+        drug_id: str | None = None,
+        disease_id: str | None = None,
+    ) -> list[TemplateRecord]:
+        """Read records matching the provided filters."""
+        return self.dbase.query(
+            template_id=template_id,
+            drug_id=drug_id,
+            disease_id=disease_id,
+        )
+
+    def read_record(self, record_id: str) -> TemplateRecord | None:
+        """Read a single record by its id."""
+        for record in self.dbase.list_records():
+            if record.record_id == record_id:
+                return record
+        return None
+
+    def write_record(self, record: TemplateRecord) -> None:
+        """Write one complete TemplateRecord to D-Base.
+
+        This is the only sanctioned D-Base writer.
+        """
+        if not isinstance(record, TemplateRecord):
+            raise TypeError("DBaseManager.write_record() requires a TemplateRecord")
+        self.dbase.add_record(record)
 
     def fill_template(
         self,
@@ -20,6 +49,7 @@ class TempRetriever:
         source_metadata: dict[str, Any],
         suggested_template: str | None = None,
     ) -> TemplateRecord:
+        """Map a raw input dict to a complete TemplateRecord."""
         template_id = suggested_template or self._match_template(raw_input)
         schema = self.dbase.get_template(template_id)
 
@@ -134,6 +164,3 @@ class TempRetriever:
                 "skip_record",
             ],
         }
-
-    def write_record(self, record: TemplateRecord) -> None:
-        self.dbase.add_record(record)

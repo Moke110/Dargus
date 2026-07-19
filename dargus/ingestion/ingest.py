@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from dargus.dbase import DBase, TemplateSchema
+from dargus.dbase.manager import DBaseManager
 from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
 from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
-from dargus.temp_retriever import TempRetriever
 
 CONVERTERS: dict[str, callable] = {
     "tier1_admet_solubility": lambda: TdcAdmetConverter("solubility"),
@@ -41,7 +41,7 @@ def ingest_dataset(
     converter_factory = CONVERTERS[dataset_name]
     converter = converter_factory()
 
-    retriever = TempRetriever(dbase)
+    manager = DBaseManager(dbase)
     n_added = 0
     for path in Path(data_dir).glob("*"):
         if not path.is_file():
@@ -53,7 +53,7 @@ def ingest_dataset(
                     sort_keys=True,
                 ).encode("utf-8")
             ).hexdigest()[:16]
-            record = retriever.fill_template(
+            record = manager.fill_template(
                 raw,
                 source_metadata={
                     "type": "public_db",
@@ -66,7 +66,7 @@ def ingest_dataset(
             )
             # Ensure stable record_id
             record.record_id = f"{dataset_name}_{record_id}"
-            retriever.write_record(record)
+            manager.write_record(record)
             n_added += 1
 
     dbase.save()

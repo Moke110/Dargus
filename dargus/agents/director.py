@@ -189,7 +189,7 @@ class DirectorAgent(BaseAgent):
     ) -> dict[str, Any]:
         from dargus.agents.reader import ReaderAgent
         from dargus.agents.report_searcher import ReportSearcher
-        from dargus.temp_retriever import TempRetriever
+        from dargus.dbase.manager import DBaseManager
 
         task_type = task["type"]
         if task_type == "iris_predict":
@@ -227,13 +227,13 @@ class DirectorAgent(BaseAgent):
 
         if task_type == "temp_retriever_ingest":
             payload = task.get("payload", [])
-            retriever = TempRetriever(dbase)
+            manager = DBaseManager(dbase)
             for raw in payload:
-                record = retriever.fill_template(
+                record = manager.fill_template(
                     raw,
                     source_metadata=raw.get("source", {"type": "user_upload"}),
                 )
-                retriever.write_record(record)
+                manager.write_record(record)
             dbase.save()
             return {
                 "spawn": [

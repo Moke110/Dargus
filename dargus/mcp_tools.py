@@ -6,7 +6,7 @@ from typing import Any
 
 from dargus import DirectorAgent
 from dargus.dbase import DBase, TemplateSchema
-from dargus.temp_retriever import TempRetriever
+from dargus.dbase.manager import DBaseManager
 
 
 def _respond(success: bool, data: dict[str, Any] | None = None, error: str | None = None) -> dict:
@@ -53,13 +53,13 @@ def tool_ingest_data(
         for f in scan.get("data_files", []):
             instances.extend(reader.parse_data_file(f))
 
-        retriever = TempRetriever(dbase)
+        manager = DBaseManager(dbase)
         for raw in instances:
-            record = retriever.fill_template(
+            record = manager.fill_template(
                 raw,
                 source_metadata=raw.get("source", {"type": "user_upload"}),
             )
-            retriever.write_record(record)
+            manager.write_record(record)
         dbase.save()
 
         return _respond(

@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from dargus import DirectorAgent
+from dargus import Iris
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,15 +42,11 @@ def main(argv: list[str] | None = None) -> int:
             drug_list=args.drugs,
         )
         print(f"Project: {result['project_id']}")
-        print(f"Directory: {result['project_dir']}")
         print("Predictions:")
-        for endpoint, drugs in result["diris"]["result"]["predictions"].items():
-            print(f"  {endpoint}:")
-            for drug, pred in drugs.items():
-                print(
-                    f"    {drug}: {pred['normalized_effect_size']} "
-                    f"[{pred['ci_95_lower']}, {pred['ci_95_upper']}]"
-                )
+        for drug, endpoints in result["predictions"].items():
+            print(f"  {drug}:")
+            for endpoint, pred in endpoints.items():
+                print(f"    {endpoint}: [{pred['efficacy_low']}, {pred['efficacy_up']}]")
         return 0
     if args.command == "scan-v4":
         from dargus.workflows.target_efficacy_scan import run_v4
@@ -72,14 +68,11 @@ def main(argv: list[str] | None = None) -> int:
         for drug, endpoints in result["predictions"].items():
             print(f"  {drug}:")
             for endpoint, pred in endpoints.items():
-                print(
-                    f"    {endpoint}: {pred['normalized_effect_size']} "
-                    f"[{pred['ci95_lower']}, {pred['ci95_upper']}]"
-                )
+                print(f"    {endpoint}: [{pred['efficacy_low']}, {pred['efficacy_up']}]")
         return 0
     if args.command == "status":
-        director = DirectorAgent()
-        status = director.status(args.project_id)
+        iris = Iris()
+        status = iris.status(args.project_id)
         print(status)
         return 0
 

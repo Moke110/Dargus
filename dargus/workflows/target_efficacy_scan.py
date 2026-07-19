@@ -22,22 +22,17 @@ def run_v4(
     projects_root: str = "projects",
 ) -> dict:
     """Run the v4.0 target-disease efficacy scan workflow."""
-    from dargus.agents.director import DirectorAgent
-    from dargus.dbase import DBase
-    from dargus.iris.selector import IrisSelector
+    from dargus.iris.commander import Iris
 
-    director = DirectorAgent(config={"projects": {"root_dir": projects_root}})
-    project = director.start_project(disease=disease)
-    director.run_workflow_v4(
-        "target_efficacy_scan",
-        project["project_id"],
+    iris = Iris(config={"projects": {"root_dir": projects_root}})
+    project = iris.start_project(disease=disease)
+    if datadir:
+        iris.ingest_project(project["project_id"], datadir)
+    predictions = iris.predict(
+        project_id=project["project_id"],
         drug_ids=drugs,
         disease_id=disease,
-        datadir=datadir,
     )
-    dbase = DBase(project["project_id"], root_dir=projects_root)
-    selector = IrisSelector(dbase)
-    predictions = selector.predict(drugs, disease)
     return {"project_id": project["project_id"], "predictions": predictions}
 
 
@@ -51,12 +46,9 @@ if __name__ == "__main__":
     parser.add_argument("--endpoints", nargs="+")
     parser.add_argument("--drugs", nargs="+")
     args = parser.parse_args()
-    result = run(
-        target=args.target,
+    result = run_v4(
+        drugs=args.drugs,
         disease=args.disease,
-        clinical_endpoints=args.endpoints,
-        drug_list=args.drugs,
     )
     print(f"Workflow completed: {result['project_id']}")
-    print(f"Project directory: {result['project_dir']}")
-    print(f"Predictions: {result['diris']['result']['predictions']}")
+    print(f"Predictions: {result['predictions']}")

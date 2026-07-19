@@ -2,7 +2,7 @@
 
 __version__ = "0.1.0"
 
-from dargus.agents.director import DirectorAgent
 from dargus.dbase import DBase
+from dargus.iris.commander import Iris
 
-__all__ = ["DirectorAgent", "DBase", "__version__"]
+__all__ = ["Iris", "DBase", "__version__"]

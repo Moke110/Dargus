@@ -49,6 +49,10 @@ class DBaseManager:
         self.dbase.save()
         return True
 
+    def reset(self) -> None:
+        """Clear all records from D-Base. Templates and vocabulary are preserved."""
+        self.dbase.clear()
+
     def _is_duplicate(self, record: TemplateRecord) -> bool:
         key = self._record_dedup_key(record)
         for existing in self.dbase.list_records():

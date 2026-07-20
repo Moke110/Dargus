@@ -18,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     train_parser = subparsers.add_parser("train", help="ingest data into the global D-Base")
     train_parser.add_argument("--datadir", required=True)
     train_parser.add_argument("--reset", action="store_true", help="clear D-Base before training")
+    train_parser.add_argument("--disease-kb-dir", help="path to disease knowledge base directory")
 
     infer_parser = subparsers.add_parser("infer", help="predict efficacy for drugs/disease")
     infer_parser.add_argument("--drugs", required=True)
@@ -32,12 +33,18 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("clear", help="clear all records from the global D-Base")
 
+    ingest_report_parser = subparsers.add_parser(
+        "ingest-report", help="generate ingestion report without writing"
+    )
+    ingest_report_parser.add_argument("--datadir", required=True)
+    ingest_report_parser.add_argument("--disease-kb-dir")
+
     args = parser.parse_args(argv)
 
     if args.command == "train":
         from dargus.workflows.train import run as run_train
 
-        report = run_train(args.datadir, reset=args.reset)
+        report = run_train(args.datadir, reset=args.reset, disease_kb_dir=args.disease_kb_dir)
         print(f"Records added: {report.n_records}")
         print(f"Duplicates skipped: {report.n_skipped}")
         print(f"Global D-Base size: {report.dbase_size}")
@@ -84,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
         manager = DBaseManager(dbase)
         manager.reset()
         print("Global D-Base cleared.")
+        return 0
+
+    if args.command == "ingest-report":
+        from dargus.workflows.train import ingest_report
+
+        summary = ingest_report(args.datadir, disease_kb_dir=args.disease_kb_dir)
+        print(summary)
         return 0
 
     parser.print_help()

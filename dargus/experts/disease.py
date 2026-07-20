@@ -110,6 +110,9 @@ class DiseaseExpert:
         """
         raw_data_dir = Path(datadir)
 
+        if disease_kb_dir:
+            self._load_disease_kb(disease_kb_dir)
+
         reports: dict[str, ExtractionReport] = {}
         with ThreadPoolExecutor(max_workers=len(self.level_experts)) as executor:
             future_to_level = {
@@ -282,6 +285,32 @@ class DiseaseExpert:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _load_disease_kb(self, disease_kb_dir: str) -> None:
+        """Load disease knowledge documents into DiseaseRAG instances.
+
+        Each .md/.txt file becomes one DiseaseRAG instance keyed by its stem
+        (filename without extension). Instance is stored on self._disease_kbs
+        for use by level experts during extraction and analysis.
+        """
+        from dargus.diseaserag.kb import DiseaseRAG
+
+        kb_path = Path(disease_kb_dir)
+        if not kb_path.exists():
+            return
+
+        if not hasattr(self, "_disease_kbs"):
+            self._disease_kbs: dict[str, DiseaseRAG] = {}
+
+        for doc_path in kb_path.rglob("*"):
+            if not doc_path.is_file():
+                continue
+            if doc_path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            disease_id = doc_path.stem
+            if disease_id not in self._disease_kbs:
+                self._disease_kbs[disease_id] = DiseaseRAG(disease_id=disease_id)
+            self._disease_kbs[disease_id].add_documents([str(doc_path)])
 
     def _record_field(self, record: TemplateRecord, field_name: str) -> Any:
         schema = self.manager.dbase._templates.get(record.template_id)

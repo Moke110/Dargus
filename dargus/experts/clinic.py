@@ -99,8 +99,7 @@ class ClinicExpert(Expert):
             bias_notes.append("Mixed clinical effect directions detected")
 
         if not any(
-            f.biological_level == "clinical" and "-sim" not in f.biological_level
-            for f in findings
+            f.biological_level == "clinical" and "-sim" not in f.biological_level for f in findings
         ):
             data_gaps.append("No real clinical trial evidence — only simulated or none")
 

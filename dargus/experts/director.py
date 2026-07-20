@@ -130,19 +130,13 @@ class FourDExpert(Expert):
             per_expert_reports=all_reports,
         )
 
-    def generate_guidance(
-        self, reports: list[ExpertReport], round_num: int
-    ) -> str:
+    def generate_guidance(self, reports: list[ExpertReport], round_num: int) -> str:
         """Generate discussion guidance for the next round based on current reports."""
         gaps: list[str] = []
         for report in reports:
             gaps.extend(report.data_gaps)
 
-        sim_reports = [
-            r
-            for r in reports
-            if any("-sim" in f.biological_level for f in r.findings)
-        ]
+        sim_reports = [r for r in reports if any("-sim" in f.biological_level for f in r.findings)]
 
         parts: list[str] = []
         if gaps:

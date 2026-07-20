@@ -226,14 +226,13 @@ class DiseaseExpert:
         if endpoints is None:
             endpoints = ["primary_endpoint_change"]
 
-        from dargus.experts.biomed import BiomedExpert
         from dargus.experts.bioinfo import BioinfoExpert
+        from dargus.experts.biomed import BiomedExpert
         from dargus.experts.clinic import ClinicExpert
         from dargus.experts.director import FourDExpert
+        from dargus.experts.iris_expert import IrisExpert
         from dargus.experts.molecule import MoleculeExpert
         from dargus.experts.protocol import ExpertContext
-
-        from dargus.experts.iris_expert import IrisExpert
 
         iris = IrisExpert(
             molecule=MoleculeExpert(dbase=self.manager.dbase),

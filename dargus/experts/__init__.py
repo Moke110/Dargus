@@ -1,23 +1,14 @@
 """Dargus expert system."""
 
 from dargus.experts.base import Expert
-from dargus.experts.biomed import BiomedExpert
 from dargus.experts.bioinfo import BioinfoExpert
+from dargus.experts.biomed import BiomedExpert
 from dargus.experts.clinic import ClinicExpert
 from dargus.experts.director import FourDExpert
-from dargus.experts.iris_expert import IrisExpert
-from dargus.experts.molecule import MoleculeExpert
-from dargus.experts.protocol import (
-    ConfidenceInterval,
-    EvidenceAssessment,
-    ExpertContext,
-    ExpertReport,
-    FinalReport,
-    TaskDelegation,
-)
 
 # Backward-compatible re-exports
 from dargus.experts.disease import DiseaseExpert
+from dargus.experts.iris_expert import IrisExpert
 from dargus.experts.levels import (
     AnimalExpert,
     CellularExpert,
@@ -26,6 +17,15 @@ from dargus.experts.levels import (
     ExvivoExpert,
     LevelExpert,
     MolecularExpert,
+)
+from dargus.experts.molecule import MoleculeExpert
+from dargus.experts.protocol import (
+    ConfidenceInterval,
+    EvidenceAssessment,
+    ExpertContext,
+    ExpertReport,
+    FinalReport,
+    TaskDelegation,
 )
 from dargus.experts.types import (
     AnalysisReport,

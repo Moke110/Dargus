@@ -146,6 +146,4 @@ class BioinfoExpert(Expert):
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_bioinfo_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)
-        return ConfidenceInterval(
-            low=max(0.0, avg - 0.25), high=min(1.0, avg + 0.25), sources=[]
-        )
+        return ConfidenceInterval(low=max(0.0, avg - 0.25), high=min(1.0, avg + 0.25), sources=[])

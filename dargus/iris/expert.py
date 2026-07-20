@@ -16,6 +16,9 @@ class IrisExpert(IrisAgent):
 
     name = "Iris-expert"
 
+    def __init__(self, disease_expert=None):
+        self.disease_expert = disease_expert
+
     def predict(
         self,
         dbase: Any,
@@ -25,8 +28,20 @@ class IrisExpert(IrisAgent):
         embeddings: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> PredictionMatrix:
-        from dargus.experts.biomed import BiomedExpert
+        # Backward-compatible path: if constructed with a DiseaseExpert, delegate to it
+        if self.disease_expert is not None:
+            predictions = self.disease_expert.predict(
+                drug_ids=drug_ids,
+                disease_id=disease_id,
+                endpoints=endpoints,
+            )
+            for drug in predictions:
+                for endpoint in predictions[drug]:
+                    predictions[drug][endpoint]["reasoning_mode"] = self.name
+            return predictions
+
         from dargus.experts.bioinfo import BioinfoExpert
+        from dargus.experts.biomed import BiomedExpert
         from dargus.experts.clinic import ClinicExpert
         from dargus.experts.director import FourDExpert
         from dargus.experts.iris_expert import IrisExpert as IrisOrchestrator

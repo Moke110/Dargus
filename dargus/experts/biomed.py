@@ -64,9 +64,7 @@ class BiomedExpert(Expert):
 
             quality = self._assess_quality(record)
             if "-sim" in (level or ""):
-                bias_notes.append(
-                    f"Record {record.record_id}: simulation-derived data ({level})"
-                )
+                bias_notes.append(f"Record {record.record_id}: simulation-derived data ({level})")
                 quality = max(0.0, quality - 0.2)
 
             if level in ("animal", "animal-sim"):
@@ -85,9 +83,7 @@ class BiomedExpert(Expert):
             )
 
         if in_vivo_count == 0 and in_vitro_count > 0:
-            data_gaps.append(
-                "No in vivo evidence — efficacy may not translate to organism level"
-            )
+            data_gaps.append("No in vivo evidence — efficacy may not translate to organism level")
 
         confidence = self._compute_confidence(findings)
         return ExpertReport(
@@ -112,9 +108,7 @@ class BiomedExpert(Expert):
 
     def _compute_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
         if not findings:
-            return ConfidenceInterval(
-                low=0.0, high=1.0, sources=["no_preclinical_evidence"]
-            )
+            return ConfidenceInterval(low=0.0, high=1.0, sources=["no_preclinical_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)
         sources: list[str] = []
         sim = sum(1 for f in findings if "-sim" in f.biological_level)

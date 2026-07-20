@@ -48,9 +48,7 @@ class IrisExpert:
                 experts[name] = attr
         return experts
 
-    def run(
-        self, records: list[TemplateRecord], context: ExpertContext
-    ) -> FinalReport:
+    def run(self, records: list[TemplateRecord], context: ExpertContext) -> FinalReport:
         """Execute the multi-round dialog protocol until convergence.
 
         Args:
@@ -73,9 +71,7 @@ class IrisExpert:
             if self.director and round_num > 1:
                 prev_round_reports = []
                 for reports in all_reports.values():
-                    prev_round_reports.extend(
-                        [r for r in reports if r.round == round_num - 1]
-                    )
+                    prev_round_reports.extend([r for r in reports if r.round == round_num - 1])
                 context.guidance = self.director.generate_guidance(
                     prev_round_reports, round_num - 1
                 )
@@ -119,9 +115,7 @@ class IrisExpert:
                 all_seen.add((expert_name, rec.record_id))
         return reports
 
-    def _distribute(
-        self, records: list[TemplateRecord]
-    ) -> dict[str, list[TemplateRecord]]:
+    def _distribute(self, records: list[TemplateRecord]) -> dict[str, list[TemplateRecord]]:
         dist: dict[str, list[TemplateRecord]] = {}
         for rec in records:
             assigned = False

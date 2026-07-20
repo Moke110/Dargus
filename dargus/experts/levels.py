@@ -1,7 +1,16 @@
-"""Level-specific expert implementations."""
+"""DEPRECATED: Level-specific expert implementations.
+
+Replaced by v0.9.0 Expert system:
+- MolecularExpert → MoleculeExpert (dargus.experts.molecule)
+- CellularExpert, ExvivoExpert, AnimalExpert → BiomedExpert (dargus.experts.biomed)
+- ClinicalExpert, EpiExpert → ClinicExpert (dargus.experts.clinic)
+
+Kept for backward compatibility. Will be removed in a future version.
+"""
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -10,9 +19,14 @@ from dargus.experts.types import AnalysisReport, CurateResult, ExtractionReport
 
 
 class LevelExpert(ABC):
-    """Base class for biological-level experts."""
+    """DEPRECATED: Use dargus.experts.base.Expert instead."""
 
     def __init__(self, level_name: str | None = None, dbase: Any = None):
+        warnings.warn(
+            "LevelExpert is deprecated. Use dargus.experts.base.Expert instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.level_name = level_name or self._default_level_name()
         self.dbase = dbase
 

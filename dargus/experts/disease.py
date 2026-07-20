@@ -1,7 +1,11 @@
-"""DiseaseExpert — coordinates level experts for a disease."""
+"""DEPRECATED: DiseaseExpert — replaced by IrisExpert + FourDExpert in v0.9.0.
+
+Kept for backward compatibility. Will be removed in a future version.
+"""
 
 from __future__ import annotations
 
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -20,25 +24,32 @@ from dargus.experts.levels import (
     MolecularExpert,
 )
 from dargus.experts.types import (
-    AnalysisReport,
     ExtractionReport,
     IngestionResult,
     IngestionSummary,
     PlanProposal,
 )
-from dargus.iris.probability_utils import probability_interval_from_effect
 
 LEVEL_ORDER = ["molecular", "cellular", "exvivo", "animal", "clinical", "epi"]
 
 
 class DiseaseExpert:
-    """Reads D-Base, dispatches records to level experts, and synthesizes predictions."""
+    """DEPRECATED: Use IrisExpert + FourDExpert instead.
+
+    This shim maintains the original interface while delegating to the
+    v0.9.0 Expert system internally.
+    """
 
     def __init__(
         self,
         manager: DBaseManager,
         level_experts: dict[str, LevelExpert] | None = None,
     ):
+        warnings.warn(
+            "DiseaseExpert is deprecated. Use IrisExpert + FourDExpert instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.manager = manager
         self.level_experts = level_experts or self._default_level_experts(manager)
 
@@ -211,63 +222,44 @@ class DiseaseExpert:
         disease_id: str,
         endpoints: list[str] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Predict efficacy intervals per drug and endpoint."""
+        """Predict efficacy intervals. Delegates to IrisExpert v0.9.0."""
         if endpoints is None:
             endpoints = ["primary_endpoint_change"]
-        records = self.manager.read_records(disease_id=disease_id)
+
+        from dargus.experts.biomed import BiomedExpert
+        from dargus.experts.bioinfo import BioinfoExpert
+        from dargus.experts.clinic import ClinicExpert
+        from dargus.experts.director import FourDExpert
+        from dargus.experts.molecule import MoleculeExpert
+        from dargus.experts.protocol import ExpertContext
+
+        from dargus.experts.iris_expert import IrisExpert
+
+        iris = IrisExpert(
+            molecule=MoleculeExpert(dbase=self.manager.dbase),
+            biomed=BiomedExpert(dbase=self.manager.dbase),
+            bioinfo=BioinfoExpert(dbase=self.manager.dbase),
+            clinic=ClinicExpert(dbase=self.manager.dbase),
+            director=FourDExpert(dbase=self.manager.dbase),
+        )
+
         result: dict[str, dict[str, dict[str, Any]]] = {drug: {} for drug in drug_ids}
-
         for drug in drug_ids:
-            drug_records = [r for r in records if self._record_drug_id(r) == drug]
             for endpoint in endpoints:
-                endpoint_records = [r for r in drug_records if self._record_endpoint(r) == endpoint]
-                if not endpoint_records:
-                    result[drug][endpoint] = {
-                        "efficacy_low": 0.0,
-                        "efficacy_up": 1.0,
-                        "supporting_records": [],
-                        "reasoning_mode": "DiseaseExpert",
-                        "confidence_level": "insufficient_data",
-                        "level_reports": {},
-                    }
-                    continue
-
-                # Level curation/analysis for reporting
-                level_reports: dict[str, AnalysisReport] = {}
-                for level, expert in self.level_experts.items():
-                    curated = expert.curate(endpoint_records)
-                    if curated.records:
-                        level_reports[level] = expert.analyze(curated)
-
-                # Simple endpoint aggregation: mean effect with max CI range
-                effects = [self._record_value(r, "fold_change") for r in endpoint_records]
-                effects = [e for e in effects if e is not None]
-                mean_effect = sum(effects) / len(effects) if effects else 0.0
-                lowers = [self._record_value(r, "ci95_lower") for r in endpoint_records]
-                uppers = [self._record_value(r, "ci95_upper") for r in endpoint_records]
-                lowers = [lo for lo in lowers if lo is not None]
-                uppers = [up for up in uppers if up is not None]
-                ci_lower = min(lowers) if lowers else mean_effect - 0.5
-                ci_upper = max(uppers) if uppers else mean_effect + 0.5
-                efficacy_low, efficacy_up = probability_interval_from_effect(
-                    mean_effect, ci_lower, ci_upper
+                ctx = ExpertContext(
+                    drug_ids=[drug],
+                    disease_id=disease_id,
+                    endpoints=[endpoint],
                 )
-
-                confidence = "low"
-                if "clinical" in level_reports:
-                    confidence = "high"
-                elif level_reports:
-                    confidence = "moderate"
-
+                records = self.manager.read_records(disease_id=disease_id)
+                final = iris.run(records, ctx)
                 result[drug][endpoint] = {
-                    "efficacy_low": efficacy_low,
-                    "efficacy_up": efficacy_up,
-                    "supporting_records": [r.record_id for r in endpoint_records],
-                    "reasoning_mode": "DiseaseExpert",
-                    "confidence_level": confidence,
-                    "level_reports": {
-                        level: report.summary for level, report in level_reports.items()
-                    },
+                    "efficacy_low": final.efficacy_low,
+                    "efficacy_up": final.efficacy_up,
+                    "supporting_records": final.supporting_records,
+                    "reasoning_mode": "Iris-expert",
+                    "confidence_level": final.confidence_level,
+                    "level_reports": {},
                 }
         return result
 

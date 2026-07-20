@@ -119,6 +119,15 @@ class DBase:
         self._manifest.append(self._record_to_manifest_entry(record))
         self._dirty = True
 
+    def clear(self) -> None:
+        """Remove all records, manifest, and matrix. Templates and vocabularies are preserved."""
+        self._records.clear()
+        self._record_ids.clear()
+        self._manifest.clear()
+        self._matrix = None
+        self._dirty = True
+        self.save()
+
     def _record_to_manifest_entry(self, record: TemplateRecord) -> dict:
         return {
             "record_id": record.record_id,

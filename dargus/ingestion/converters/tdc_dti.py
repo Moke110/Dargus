@@ -18,6 +18,7 @@ class TdcDtiConverter(BaseConverter):
         for opts in [
             {"sep": "\t", "on_bad_lines": "skip"},
             {"sep": "\t", "on_bad_lines": "skip", "quoting": 3},
+            {"on_bad_lines": "skip"},
         ]:
             try:
                 df = pd.read_csv(path, **opts)
@@ -27,21 +28,35 @@ class TdcDtiConverter(BaseConverter):
         else:
             return []
 
-        drug_col = "Drug" if "Drug" in df.columns else "ID1"
-        target_col = "Target" if "Target" in df.columns else "ID2"
+        drug_col = self._find_column(df, ["Drug", "drug", "ID1", "compound", "ligand", "SMILES"])
+        target_col = self._find_column(df, ["Target", "target", "ID2", "protein", "gene"])
+        readout_col = self._find_column(
+            df, ["Y", "pKd", "pKi", "pIC50", "score", "Kd", "Ki", "IC50"]
+        )
 
         rows = []
         for _, row in df.iterrows():
-            drug = str(row.get(drug_col, ""))
-            target = str(row.get(target_col, ""))
+            drug = str(row.get(drug_col, "")) if drug_col else ""
+            target = str(row.get(target_col, "")) if target_col else ""
             if not drug or not target:
+                continue
+            try:
+                readout = float(row[readout_col]) if readout_col else 0.0
+            except (ValueError, TypeError):
                 continue
             rows.append(
                 {
                     "drug_id": drug,
                     "target_id": target,
                     "assay_type": self.assay_name,
-                    "readout": float(row["Y"]),
+                    "readout": readout,
                 }
             )
         return rows
+
+    @staticmethod
+    def _find_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
+        for candidate in candidates:
+            if candidate in df.columns:
+                return candidate
+        return None

@@ -41,11 +41,28 @@ class ConverterRegistry:
         if entry is None:
             return []
 
+        converter_cls = entry.get("converter")
+        if converter_cls is not None:
+            converter = converter_cls()
+            results = converter.convert(path)
+            instances: list[ExtractedInstance] = []
+            for row_idx, result in enumerate(results):
+                instances.append(
+                    ExtractedInstance(
+                        template_id=entry["template_id"],
+                        raw_fields=result,
+                        source_file=str(path),
+                        source_row=row_idx,
+                        extraction_confidence="high",
+                    )
+                )
+            return instances
+
         df = self._read(path)
         mapping = entry["field_mapping"]
         template_id = entry["template_id"]
         df_columns = set(df.columns)
-        instances: list[ExtractedInstance] = []
+        instances = []
         for row_idx, row in df.iterrows():
             raw_fields: dict[str, Any] = {}
             for target_field, source_col in mapping.items():

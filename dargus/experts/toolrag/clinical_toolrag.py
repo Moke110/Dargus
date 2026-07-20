@@ -13,5 +13,61 @@ class ClinicalToolRAG(ToolRAG):
         self._load_registry()
 
     def _load_registry(self) -> None:
-        """Register known converters (empty until Task 4)."""
-        pass
+        from dargus.ingestion.converters.top_clinical import TopClinicalConverter
+
+        self.registry.register(
+            name="top_clinical_trials",
+            template_id="clinical_trial_outcome_v1",
+            match={
+                "path_pattern": "*.csv",
+                "columns_required": ["diseases", "drugs", "label", "phase"],
+            },
+            field_mapping={
+                "drug_id": "drugs",
+                "disease_id": "diseases",
+                "endpoint": "trial_success",
+                "fold_change": "label",
+                "phase": "phase",
+                "biological_level": "clinical",
+            },
+            biological_level="clinical",
+            converter=TopClinicalConverter,
+        )
+
+        self.registry.register(
+            name="phase_clinical_trials",
+            template_id="clinical_trial_outcome_v1",
+            match={
+                "path_pattern": "phase_*.csv",
+                "columns_required": ["diseases", "drugs", "label", "phase"],
+            },
+            field_mapping={
+                "drug_id": "drugs",
+                "disease_id": "diseases",
+                "endpoint": "trial_success",
+                "fold_change": "label",
+                "phase": "phase",
+                "biological_level": "clinical",
+            },
+            biological_level="clinical",
+            converter=TopClinicalConverter,
+        )
+
+        self.registry.register(
+            name="raw_data_clinical",
+            template_id="clinical_trial_outcome_v1",
+            match={
+                "path_pattern": "raw_data*.csv",
+                "columns_required": ["diseases", "drugs", "label", "phase"],
+            },
+            field_mapping={
+                "drug_id": "drugs",
+                "disease_id": "diseases",
+                "endpoint": "trial_success",
+                "fold_change": "label",
+                "phase": "phase",
+                "biological_level": "clinical",
+            },
+            biological_level="clinical",
+            converter=TopClinicalConverter,
+        )

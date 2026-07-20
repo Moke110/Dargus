@@ -17,6 +17,7 @@ def main(argv: list[str] | None = None) -> int:
 
     train_parser = subparsers.add_parser("train", help="ingest data into the global D-Base")
     train_parser.add_argument("--datadir", required=True)
+    train_parser.add_argument("--reset", action="store_true", help="clear D-Base before training")
 
     infer_parser = subparsers.add_parser("infer", help="predict efficacy for drugs/disease")
     infer_parser.add_argument("--drugs", required=True)
@@ -29,12 +30,14 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("status", help="show global D-Base status")
 
+    subparsers.add_parser("clear", help="clear all records from the global D-Base")
+
     args = parser.parse_args(argv)
 
     if args.command == "train":
         from dargus.workflows.train import run as run_train
 
-        report = run_train(args.datadir)
+        report = run_train(args.datadir, reset=args.reset)
         print(f"Records added: {report.n_records}")
         print(f"Duplicates skipped: {report.n_skipped}")
         print(f"Global D-Base size: {report.dbase_size}")
@@ -71,6 +74,16 @@ def main(argv: list[str] | None = None) -> int:
         iris = Iris()
         status = iris.status()
         print(status)
+        return 0
+
+    if args.command == "clear":
+        from dargus.dbase import DBase
+        from dargus.dbase.manager import DBaseManager
+
+        dbase = DBase.global_instance()
+        manager = DBaseManager(dbase)
+        manager.reset()
+        print("Global D-Base cleared.")
         return 0
 
     parser.print_help()

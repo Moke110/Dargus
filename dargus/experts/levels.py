@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from dargus.dbase import TemplateRecord
-from dargus.experts.types import AnalysisReport, CurateResult
+from dargus.experts.types import AnalysisReport, CurateResult, ExtractionReport
 
 
 class LevelExpert(ABC):
@@ -27,6 +27,11 @@ class LevelExpert(ABC):
     @abstractmethod
     def analyze(self, curated: CurateResult) -> AnalysisReport:
         """Produce a level-specific analysis report."""
+        ...
+
+    @abstractmethod
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        """Scan raw data directory and extract instances for this biological level."""
         ...
 
     def _schema_for(self, record: TemplateRecord):
@@ -109,6 +114,12 @@ class MolecularExpert(LevelExpert):
             confidence="moderate" if readouts else "low",
         )
 
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.molecular_toolrag import MolecularToolRAG
+
+        toolrag = MolecularToolRAG()
+        return toolrag.extract(raw_data_dir)
+
 
 class CellularExpert(LevelExpert):
     def curate(self, records: list[TemplateRecord]) -> CurateResult:
@@ -116,6 +127,12 @@ class CellularExpert(LevelExpert):
 
     def analyze(self, curated: CurateResult) -> AnalysisReport:
         return MolecularExpert(level_name=self.level_name, dbase=self.dbase).analyze(curated)
+
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.cellular_toolrag import CellularToolRAG
+
+        toolrag = CellularToolRAG()
+        return toolrag.extract(raw_data_dir)
 
 
 class ExvivoExpert(LevelExpert):
@@ -125,6 +142,12 @@ class ExvivoExpert(LevelExpert):
     def analyze(self, curated: CurateResult) -> AnalysisReport:
         return MolecularExpert(level_name=self.level_name, dbase=self.dbase).analyze(curated)
 
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.exvivo_toolrag import ExvivoToolRAG
+
+        toolrag = ExvivoToolRAG()
+        return toolrag.extract(raw_data_dir)
+
 
 class AnimalExpert(LevelExpert):
     def curate(self, records: list[TemplateRecord]) -> CurateResult:
@@ -132,6 +155,12 @@ class AnimalExpert(LevelExpert):
 
     def analyze(self, curated: CurateResult) -> AnalysisReport:
         return MolecularExpert(level_name=self.level_name, dbase=self.dbase).analyze(curated)
+
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.animal_toolrag import AnimalToolRAG
+
+        toolrag = AnimalToolRAG()
+        return toolrag.extract(raw_data_dir)
 
 
 class ClinicalExpert(LevelExpert):
@@ -165,6 +194,12 @@ class ClinicalExpert(LevelExpert):
             confidence="high" if len(readouts) > 1 else "low",
         )
 
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.clinical_toolrag import ClinicalToolRAG
+
+        toolrag = ClinicalToolRAG()
+        return toolrag.extract(raw_data_dir)
+
 
 class EpiExpert(LevelExpert):
     def curate(self, records: list[TemplateRecord]) -> CurateResult:
@@ -172,3 +207,9 @@ class EpiExpert(LevelExpert):
 
     def analyze(self, curated: CurateResult) -> AnalysisReport:
         return MolecularExpert(level_name=self.level_name, dbase=self.dbase).analyze(curated)
+
+    def extract(self, raw_data_dir: str) -> ExtractionReport:
+        from dargus.experts.toolrag.epi_toolrag import EpiToolRAG
+
+        toolrag = EpiToolRAG()
+        return toolrag.extract(raw_data_dir)

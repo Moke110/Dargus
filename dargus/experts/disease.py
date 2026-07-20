@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,13 @@ from dargus.experts.levels import (
     LevelExpert,
     MolecularExpert,
 )
-from dargus.experts.types import AnalysisReport, IngestionResult, PlanProposal
+from dargus.experts.types import (
+    AnalysisReport,
+    ExtractionReport,
+    IngestionResult,
+    IngestionSummary,
+    PlanProposal,
+)
 from dargus.iris.probability_utils import probability_interval_from_effect
 
 LEVEL_ORDER = ["molecular", "cellular", "exvivo", "animal", "clinical", "epi"]
@@ -88,6 +95,68 @@ class DiseaseExpert:
             instance.update(row.dropna().to_dict())
             instances.append(instance)
         return instances
+
+    def ingest_from_dir(
+        self,
+        datadir: str,
+        disease_kb_dir: str | None = None,
+        auto_confirm: bool = False,
+    ) -> IngestionSummary:
+        """Extract instances from raw data directory using parallel level experts.
+
+        Each LevelExpert.extract() runs in its own thread. Results are aggregated
+        into an IngestionSummary. When ``auto_confirm`` is True, all extracted
+        instances are written to D-Base via ``DBaseManager.write_record()``.
+        """
+        raw_data_dir = Path(datadir)
+
+        reports: dict[str, ExtractionReport] = {}
+        with ThreadPoolExecutor(max_workers=len(self.level_experts)) as executor:
+            future_to_level = {
+                executor.submit(expert.extract, str(raw_data_dir)): level
+                for level, expert in self.level_experts.items()
+            }
+            for future in as_completed(future_to_level):
+                level = future_to_level[future]
+                try:
+                    reports[level] = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    reports[level] = ExtractionReport(
+                        level=level,
+                        files_considered=[],
+                        files_selected=[],
+                        source_types={},
+                        instances=[],
+                        notes=[f"Extraction failed: {exc}"],
+                    )
+
+        summary = IngestionSummary(per_level=reports)
+
+        if auto_confirm or self._confirm_with_user(summary):
+            self._write_instances(summary)
+
+        return summary
+
+    def _confirm_with_user(self, summary: IngestionSummary) -> bool:
+        """Placeholder for user confirmation via coding agent conversation."""
+        return True
+
+    def _write_instances(self, summary: IngestionSummary) -> None:
+        """Write all extracted instances from the summary to D-Base."""
+        for report in summary.per_level.values():
+            for inst in report.instances:
+                record = self.manager.fill_template(
+                    inst.raw_fields,
+                    source_metadata={
+                        "type": "auto_extract",
+                        "file": inst.source_file,
+                        "row": inst.source_row,
+                        "level": report.level,
+                    },
+                    suggested_template=inst.template_id,
+                )
+                self.manager.write_record(record)
+        self.manager.dbase.save()
 
     def plan(
         self,

@@ -145,17 +145,23 @@ class DiseaseExpert:
         """Write all extracted instances from the summary to D-Base."""
         for report in summary.per_level.values():
             for inst in report.instances:
-                record = self.manager.fill_template(
-                    inst.raw_fields,
-                    source_metadata={
-                        "type": "auto_extract",
-                        "file": inst.source_file,
-                        "row": inst.source_row,
-                        "level": report.level,
-                    },
-                    suggested_template=inst.template_id,
-                )
-                self.manager.write_record(record)
+                try:
+                    record = self.manager.fill_template(
+                        inst.raw_fields,
+                        source_metadata={
+                            "type": "auto_extract",
+                            "file": inst.source_file,
+                            "row": inst.source_row,
+                            "level": report.level,
+                        },
+                        suggested_template=inst.template_id,
+                    )
+                    self.manager.write_record(record)
+                except Exception:  # noqa: BLE001
+                    summary.warnings.append(
+                        f"Failed to write {inst.template_id} from "
+                        f"{inst.source_file}:{inst.source_row}"
+                    )
         self.manager.dbase.save()
 
     def plan(

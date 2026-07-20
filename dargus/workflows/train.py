@@ -12,7 +12,7 @@ from dargus.experts.disease import DiseaseExpert
 
 logger = logging.getLogger(__name__)
 
-DATA_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xls"}
+DATA_SUFFIXES = {".csv", ".tsv", ".xlsx", ".xls", ".tab"}
 
 
 @dataclass
@@ -25,16 +25,19 @@ class TrainingReport:
     errors: list[str] = field(default_factory=list)
 
 
-def run(datadir: str) -> TrainingReport:
+def run(datadir: str, reset: bool = False) -> TrainingReport:
     """Ingest data files into the global D-Base and return a TrainingReport."""
     dbase = DBase.global_instance()
     _ensure_default_templates(dbase)
     manager = DBaseManager(dbase)
     disease_expert = DiseaseExpert(manager)
 
+    if reset:
+        manager.reset()
+
     data_path = Path(datadir)
     data_files = [
-        str(p) for p in data_path.iterdir() if p.is_file() and p.suffix.lower() in DATA_SUFFIXES
+        str(p) for p in data_path.rglob("*") if p.is_file() and p.suffix.lower() in DATA_SUFFIXES
     ]
 
     initial_size = len(dbase.list_records())

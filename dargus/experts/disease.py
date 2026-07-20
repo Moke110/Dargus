@@ -80,6 +80,8 @@ class DiseaseExpert:
             df = pd.read_excel(path)
         elif suffix == ".tsv":
             df = pd.read_csv(path, sep="\t")
+        elif suffix == ".tab":
+            df = pd.read_csv(path, sep="\t")
         else:
             return []
         instances: list[dict[str, Any]] = []

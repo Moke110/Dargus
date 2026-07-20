@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
@@ -55,34 +56,11 @@ def ingest_report(datadir: str, disease_kb_dir: str | None = None) -> IngestionS
 
 
 def _ensure_default_templates(dbase: DBase) -> None:
-    drug_vocab = "global_drug_vocab"
-    disease_vocab = "global_disease_vocab"
-    endpoint_vocab = "global_endpoint_vocab"
-    if "clinical_trial_outcome_v1" not in dbase._templates:
-        from dargus.dbase import TemplateSchema
+    tmpl_dir = Path(__file__).resolve().parent.parent / "dbase" / "templates"
 
-        dbase.add_template(
-            TemplateSchema(
-                template_id="clinical_trial_outcome_v1",
-                fields=[
-                    {
-                        "name": "biological_level",
-                        "type": "factor",
-                        "vocabulary": [
-                            "molecular",
-                            "cellular",
-                            "exvivo",
-                            "animal",
-                            "clinical",
-                            "epi",
-                        ],
-                    },
-                    {"name": "drug_id", "type": "factor", "vocabulary_ref": drug_vocab},
-                    {"name": "disease_id", "type": "factor", "vocabulary_ref": disease_vocab},
-                    {"name": "endpoint", "type": "factor", "vocabulary_ref": endpoint_vocab},
-                    {"name": "fold_change", "type": "float"},
-                    {"name": "ci95_lower", "type": "float"},
-                    {"name": "ci95_upper", "type": "float"},
-                ],
-            )
-        )
+    from dargus.dbase import TemplateSchema
+
+    for yaml_path in tmpl_dir.glob("*.yaml"):
+        schema = TemplateSchema.from_yaml(yaml_path)
+        if schema.template_id not in dbase._templates:
+            dbase.add_template(schema)

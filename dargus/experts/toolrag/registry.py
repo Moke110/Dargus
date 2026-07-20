@@ -33,7 +33,9 @@ class ConverterRegistry:
                 return entry
         return None
 
-    def convert_file(self, path: Path, entry: dict[str, Any] | None = None) -> list[ExtractedInstance]:
+    def convert_file(
+        self, path: Path, entry: dict[str, Any] | None = None
+    ) -> list[ExtractedInstance]:
         if entry is None:
             entry = self.match(path)
         if entry is None:
@@ -42,14 +44,18 @@ class ConverterRegistry:
         df = self._read(path)
         mapping = entry["field_mapping"]
         template_id = entry["template_id"]
+        df_columns = set(df.columns)
         instances: list[ExtractedInstance] = []
         for row_idx, row in df.iterrows():
             raw_fields: dict[str, Any] = {}
             for target_field, source_col in mapping.items():
                 if target_field == "biological_level":
                     continue
-                if source_col in row and pd.notna(row[source_col]):
-                    raw_fields[target_field] = row[source_col]
+                if source_col in df_columns:
+                    if pd.notna(row[source_col]):
+                        raw_fields[target_field] = row[source_col]
+                else:
+                    raw_fields[target_field] = source_col
             instances.append(
                 ExtractedInstance(
                     template_id=template_id,

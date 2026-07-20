@@ -13,6 +13,23 @@ class MolecularToolRAG(ToolRAG):
         self._load_registry()
 
     def _load_registry(self) -> None:
+        # ADMET solubility
+        self.registry.register(
+            name="tdc_admet_solubility",
+            template_id="admet_assay_v1",
+            match={
+                "path_pattern": "solubility_*.tab",
+                "columns_required": ["Drug_ID", "Y"],
+            },
+            field_mapping={
+                "drug_id": "Drug_ID",
+                "readout": "Y",
+                "assay_type": "solubility",
+                "biological_level": "molecular",
+            },
+            biological_level="molecular",
+        )
+
         # BindingDB variants
         self.registry.register(
             name="tdc_dti_bindingdb",
@@ -52,7 +69,7 @@ class MolecularToolRAG(ToolRAG):
             name="tdc_dti_bindingdb_kd",
             template_id="dti_assay_v1",
             match={
-                "path_pattern": "bindingdb_kd*.csv",
+                "path_pattern": "bindingdb_kd*.tab",
                 "columns_required": ["Drug", "Target", "Y"],
             },
             field_mapping={
@@ -82,12 +99,12 @@ class MolecularToolRAG(ToolRAG):
             biological_level="molecular",
         )
 
-        # DAVIS kinase assay
+        # DAVIS kinase assay (tab-separated)
         self.registry.register(
             name="tdc_dti_davis",
             template_id="dti_assay_v1",
             match={
-                "path_pattern": "davis*.csv",
+                "path_pattern": "davis*.tab",
                 "columns_required": ["Drug", "Target", "Y"],
             },
             field_mapping={
@@ -100,12 +117,12 @@ class MolecularToolRAG(ToolRAG):
             biological_level="molecular",
         )
 
-        # KIBA score
+        # KIBA score (tab-separated)
         self.registry.register(
             name="tdc_dti_kiba",
             template_id="dti_assay_v1",
             match={
-                "path_pattern": "kiba*.csv",
+                "path_pattern": "kiba*.tab",
                 "columns_required": ["Drug", "Target", "Y"],
             },
             field_mapping={

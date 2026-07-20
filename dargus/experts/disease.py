@@ -141,8 +141,8 @@ class DiseaseExpert:
         return summary
 
     def _confirm_with_user(self, summary: IngestionSummary) -> bool:
-        """Placeholder for user confirmation via coding agent conversation."""
-        return True
+        """Placeholder: returns False by default. Override for interactive use."""
+        return False
 
     def _write_instances(self, summary: IngestionSummary) -> None:
         """Write all extracted instances from the summary to D-Base."""

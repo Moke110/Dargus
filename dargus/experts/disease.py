@@ -78,9 +78,7 @@ class DiseaseExpert:
             df = pd.read_csv(path)
         elif suffix in {".xlsx", ".xls"}:
             df = pd.read_excel(path)
-        elif suffix == ".tsv":
-            df = pd.read_csv(path, sep="\t")
-        elif suffix == ".tab":
+        elif suffix in {".tsv", ".tab"}:
             df = pd.read_csv(path, sep="\t")
         else:
             return []

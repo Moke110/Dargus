@@ -15,11 +15,12 @@ class ClinicalToolRAG(ToolRAG):
     def _load_registry(self) -> None:
         from dargus.ingestion.converters.top_clinical import TopClinicalConverter
 
+        # Register specific patterns first
         self.registry.register(
-            name="top_clinical_trials",
+            name="raw_data_clinical",
             template_id="clinical_trial_outcome_v1",
             match={
-                "path_pattern": "*.csv",
+                "path_pattern": "raw_data*.csv",
                 "columns_required": ["diseases", "drugs", "label", "phase"],
             },
             field_mapping={
@@ -53,11 +54,12 @@ class ClinicalToolRAG(ToolRAG):
             converter=TopClinicalConverter,
         )
 
+        # Generic catch-all last
         self.registry.register(
-            name="raw_data_clinical",
+            name="top_clinical_trials",
             template_id="clinical_trial_outcome_v1",
             match={
-                "path_pattern": "raw_data*.csv",
+                "path_pattern": "*.csv",
                 "columns_required": ["diseases", "drugs", "label", "phase"],
             },
             field_mapping={

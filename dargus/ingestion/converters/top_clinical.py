@@ -24,6 +24,10 @@ class TopClinicalConverter(BaseConverter):
             drugs = self._parse_list(row.get("drugs"))
             if not diseases or not drugs:
                 continue
+            try:
+                label_val = float(row["label"])
+            except (ValueError, TypeError):
+                continue
             phase = self._normalize_phase(str(row.get("phase", "")))
             for disease in diseases:
                 for drug in drugs:
@@ -33,7 +37,7 @@ class TopClinicalConverter(BaseConverter):
                             "drug_id": drug,
                             "disease_id": disease,
                             "endpoint": "trial_success",
-                            "fold_change": float(row["label"]),
+                            "fold_change": label_val,
                             "phase": phase,
                         }
                     )
@@ -45,17 +49,28 @@ class TopClinicalConverter(BaseConverter):
         try:
             parsed = ast.literal_eval(str(value))
             if isinstance(parsed, list):
-                return [str(x).strip() for x in parsed if x]
+                return [str(x).strip().strip('"').strip("'") for x in parsed if x]
         except (ValueError, SyntaxError):
             pass
-        return []
+        # Fallback: comma-separated bare string
+        parts = [p.strip().strip('"').strip("'") for p in str(value).split(",") if p.strip()]
+        return parts
 
     def _normalize_phase(self, phase: str) -> str:
-        lower = phase.lower()
-        if "phase 3" in lower or "phase iii" in lower:
-            return "III"
-        if "phase 2" in lower or "phase ii" in lower:
-            return "II"
-        if "phase 1" in lower or "phase i" in lower:
-            return "I"
+        lower = phase.lower().strip()
+        mapping = {
+            "1": "I",
+            "i": "I",
+            "2": "II",
+            "ii": "II",
+            "3": "III",
+            "iii": "III",
+            "4": "IV",
+            "iv": "IV",
+        }
+        for part in lower.split():
+            if part.startswith("phase"):
+                continue
+            if part in mapping:
+                return mapping[part]
         return ""

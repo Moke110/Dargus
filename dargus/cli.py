@@ -13,6 +13,35 @@ from dargus._env import load_dotenv
 from dargus.tui import run_app
 
 
+def _check_conda_env(config: dict | None = None) -> None:
+    """Warn if the active conda environment doesn't match the configured name."""
+    import os
+    import sys
+    from pathlib import Path
+
+    import yaml
+
+    if config is None:
+        config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+        if config_path.exists():
+            with config_path.open("r", encoding="utf-8") as fh:
+                config = yaml.safe_load(fh) or {}
+        else:
+            return
+
+    env_section = config.get("environment", {})
+    expected_env = env_section.get("conda_env")
+    if expected_env is None:
+        return
+
+    actual_env = os.environ.get("CONDA_DEFAULT_ENV")
+    if actual_env is not None and actual_env != expected_env:
+        print(
+            f"Warning: expected conda env '{expected_env}', running in '{actual_env}'",
+            file=sys.stderr,
+        )
+
+
 def _json_arg(raw: str) -> dict:
     """Parse a CLI JSON argument."""
     return _json.loads(raw)
@@ -21,6 +50,7 @@ def _json_arg(raw: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``dargus`` CLI."""
     load_dotenv()
+    _check_conda_env()
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(prog="dargus", description="Dargus efficacy prediction")
     subparsers = parser.add_subparsers(dest="command")

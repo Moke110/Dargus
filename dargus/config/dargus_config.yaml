@@ -58,3 +58,7 @@ logging:
 
 safety:
   disclaimer: "Dargus outputs are for research purposes only and do not constitute clinical advice."
+
+environment:
+  conda_env: "dargus_e1"
+  python: "3.11"

@@ -39,3 +39,43 @@ def load_dotenv(env_path: str | Path | None = None) -> None:
             key = key.strip()
             value = value.strip()
             os.environ.setdefault(key, value)
+
+
+def write_dotenv(key: str, value: str, env_path: str | Path | None = None) -> str:
+    """Write or update a KEY=VALUE line in a .env file.
+
+    Args:
+        key: the environment variable name
+        value: the value to assign
+        env_path: path to .env file. If None, writes to cwd/.env.
+
+    Returns:
+        The path to the .env file that was written.
+    """
+    if env_path is None:
+        env_path = Path.cwd() / ".env"
+    else:
+        env_path = Path(env_path)
+
+    lines: list[str] = []
+    found = False
+    prefix = f"{key}="
+
+    if env_path.exists():
+        with env_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
+                    lines.append(f"{prefix}{value}\n")
+                    found = True
+                else:
+                    lines.append(line)
+
+    if not found:
+        lines.append(f"{prefix}{value}\n")
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    with env_path.open("w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+
+    return str(env_path)

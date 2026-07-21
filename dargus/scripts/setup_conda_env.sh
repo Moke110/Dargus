@@ -73,12 +73,20 @@ echo ""
 echo "Verifying installation..."
 conda run -n "$CONDA_ENV" dargus-cli --help > /dev/null 2>&1
 
-# Install shell wrapper as 'dargus' in the conda env's bin
+# Install shell wrapper as 'dargus' in ~/.local/bin (always in PATH)
+mkdir -p "${HOME}/.local/bin"
 WRAPPER_SRC="${SCRIPT_DIR}/dargus_wrapper"
-WRAPPER_DST="$(conda run -n "${CONDA_ENV}" python -c 'import sys; print(sys.prefix)')/bin/dargus"
-echo "Installing dargus shell wrapper..."
+WRAPPER_DST="${HOME}/.local/bin/dargus"
+echo "Installing dargus shell wrapper to ${WRAPPER_DST}..."
 cp "${WRAPPER_SRC}" "${WRAPPER_DST}"
 chmod +x "${WRAPPER_DST}"
+
+# Remove stale Python entry-point from conda base if present
+STALE_PY="${HOME}/miniconda3/bin/dargus"
+if [ -f "${STALE_PY}" ] && head -1 "${STALE_PY}" | grep -q python; then
+    echo "Removing stale dargus Python entry-point from conda base..."
+    rm -f "${STALE_PY}"
+fi
 
 echo ""
 echo "Setup complete. Run 'dargus' from any shell — it auto-activates the conda environment."

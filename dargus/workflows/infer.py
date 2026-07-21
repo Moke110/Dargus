@@ -1,15 +1,24 @@
-"""Infer workflow: predict efficacy with a mandatory training-pre-confirmation gate."""
+"""Infer workflow: predict efficacy with a mandatory training-pre-confirmation gate.
+
+DEPRECATED: use ``dargus.workflows.predict`` instead.
+"""
 
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Any, Callable
 
 from dargus.iris.base import PredictionMatrix
-from dargus.iris.commander import Iris
-from dargus.workflows.train import run as run_train
+from dargus.workflows.predict import run as run_predict
 
 logger = logging.getLogger(__name__)
+
+warnings.warn(
+    "dargus.workflows.infer is deprecated, use dargus.workflows.predict instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def run(
@@ -19,37 +28,14 @@ def run(
     datadir: str | None = None,
     confirm_callback: Callable[[dict[str, Any]], bool] | None = None,
 ) -> PredictionMatrix | dict[str, Any]:
-    """Run the Infer workflow.
-
-    The first confirmation callback asks whether to train on ``datadir`` before
-    predicting. If the user rejects, inference continues on the existing global
-    D-Base. If the user accepts and ``datadir`` is provided, Train runs first.
-    """
-    if confirm_callback is None:
-        confirm_callback = _default_confirm
-
-    train_plan = {
-        "kind": "training_pre_confirmation",
-        "datadir": datadir,
-        "message": "Add new data for supplemental training before inference? [y/N]",
-    }
-    should_train = confirm_callback(train_plan)
-
-    if should_train and datadir is not None:
-        train_report = run_train(datadir)
-        logger.info("Training report: %s", train_report)
-    elif should_train and datadir is None:
-        logger.info("User wants to train but no datadir provided; continuing with inference only.")
-    # If user rejects, skip training and continue directly to inference
-
-    iris = Iris()
-    return iris.infer(
+    """Deprecated: use ``dargus.workflows.predict.run()`` instead."""
+    warnings.warn(
+        "workflows.infer.run() is deprecated, use workflows.predict.run() instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return run_predict(
         drug_ids=drug_ids,
         disease_id=disease_id,
-        endpoints=endpoints,
-        confirm_callback=confirm_callback,
+        endpoints=endpoints or [],
     )
-
-
-def _default_confirm(_plan: dict[str, Any]) -> bool:
-    return False

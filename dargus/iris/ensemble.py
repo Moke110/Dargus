@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -9,11 +10,19 @@ from dargus.iris.base import IrisAgent, PredictionMatrix
 
 
 class IrisEnsemble(IrisAgent):
-    """Aggregates predictions from multiple Iris-* agents."""
+    """DEPRECATED: Aggregates predictions from multiple Iris-* agents.
+
+    Will be removed in v0.11.0.
+    """
 
     name = "Iris-ensemble"
 
     def __init__(self, agents: list[IrisAgent] | None = None):
+        warnings.warn(
+            "dargus.iris.ensemble.IrisEnsemble is deprecated and will be removed in v0.11.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.agents = agents or []
 
     def predict(

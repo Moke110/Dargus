@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Any, Callable
 
 from dargus.dbase import DBase
@@ -49,6 +50,60 @@ class Iris:
         """Run the Train workflow on the global D-Base."""
         return run_train(datadir)
 
+    def predict(
+        self,
+        drug_ids: list[str],
+        disease_id: str,
+        endpoints: list[str],
+        max_rounds: int = 5,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """Run full Iris -> IrisExpert multi-round prediction.
+
+        This is the unified prediction path. It delegates to IrisExpert's
+        multi-round Expert dialog protocol (Molecule -> Biomed -> Bioinfo ->
+        Clinic -> FourDExpert).
+        """
+        from dargus.experts.bioinfo import BioinfoExpert
+        from dargus.experts.biomed import BiomedExpert
+        from dargus.experts.clinic import ClinicExpert
+        from dargus.experts.director import FourDExpert
+        from dargus.experts.iris_expert import IrisExpert as IrisOrchestrator
+        from dargus.experts.molecule import MoleculeExpert
+        from dargus.experts.protocol import ExpertContext
+
+        manager = self._global_manager()
+
+        result: dict[str, dict[str, dict[str, Any]]] = {}
+        for drug_id in drug_ids:
+            result[drug_id] = {disease_id: {}}
+            for endpoint in endpoints:
+                ctx = ExpertContext(
+                    drug_ids=[drug_id],
+                    disease_id=disease_id,
+                    endpoints=[endpoint],
+                )
+                records = manager.read_records(disease_id=disease_id)
+                orchestrator = IrisOrchestrator(
+                    molecule=MoleculeExpert(dbase=manager.dbase),
+                    biomed=BiomedExpert(dbase=manager.dbase),
+                    bioinfo=BioinfoExpert(dbase=manager.dbase),
+                    clinic=ClinicExpert(dbase=manager.dbase),
+                    director=FourDExpert(dbase=manager.dbase),
+                )
+                orchestrator.max_rounds = max_rounds
+                final = orchestrator.run(records, ctx)
+                result[drug_id][disease_id][endpoint] = {
+                    "efficacy_low": final.efficacy_low,
+                    "efficacy_up": final.efficacy_up,
+                    "confidence_level": final.confidence_level,
+                    "reasoning_mode": "Iris-expert",
+                    "supporting_records": final.supporting_records,
+                    "expert_consensus": final.expert_consensus,
+                    "contradictions": final.contradictions,
+                    "data_gaps": final.data_gaps,
+                }
+        return result
+
     def infer(
         self,
         drug_ids: list[str],
@@ -57,44 +112,25 @@ class Iris:
         datadir: str | None = None,
         confirm_callback: Callable[[dict[str, Any]], bool] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run the Infer workflow.
-
-        ``confirm_callback`` receives the ``PlanProposal`` for approval before
-        agents execute. If ``datadir`` is provided, training has already run by
-        the workflow layer; this method performs prediction only.
-        """
-        manager = self._global_manager()
-        disease_expert = DiseaseExpert(manager)
-
-        plan = disease_expert.plan(drug_ids, disease_id, endpoints)
-        if confirm_callback is not None and not confirm_callback(plan.to_dict()):
-            return {
-                "aborted": True,
-                "reason": "Prediction plan was not confirmed by user.",
-                "plan_suggestion": plan.to_dict(),
-            }
-
-        predictions: dict[str, dict[str, dict[str, Any]]] = {}
-        for agent_name in plan.agents:
-            try:
-                agent_predictions = self._run_agent(
-                    agent_name, manager, drug_ids, disease_id, plan.endpoints
-                )
-                if agent_predictions:
-                    predictions[agent_name] = agent_predictions
-            except Exception:
-                logger.warning(
-                    "Agent %s failed during prediction, skipping", agent_name, exc_info=True
-                )
-
-        if not predictions:
-            return {
-                drug: {endpoint: self._empty_pred() for endpoint in plan.endpoints}
-                for drug in drug_ids
-            }
-        if len(predictions) == 1:
-            return next(iter(predictions.values()))
-        return self.ensemble(predictions, plan.weights)
+        """Deprecated: use ``Iris.predict()`` instead."""
+        warnings.warn(
+            "Iris.infer() is deprecated, use Iris.predict() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        new_result = self.predict(
+            drug_ids=drug_ids,
+            disease_id=disease_id,
+            endpoints=endpoints or [],
+        )
+        # Flatten disease dimension for backward compat:
+        # {drug: {disease: {ep: ...}}} -> {drug: {ep: ...}}
+        old_result: dict[str, dict[str, dict[str, Any]]] = {}
+        for drug, diseases in new_result.items():
+            old_result[drug] = {}
+            for _disease, eps in diseases.items():
+                old_result[drug].update(eps)
+        return old_result
 
     def benchmark(self, config_path: str) -> dict[str, Any]:
         """Run the Benchmark workflow."""

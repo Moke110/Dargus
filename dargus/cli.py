@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import warnings
 
 from dargus import Iris
 
@@ -20,11 +21,19 @@ def main(argv: list[str] | None = None) -> int:
     train_parser.add_argument("--reset", action="store_true", help="clear D-Base before training")
     train_parser.add_argument("--disease-kb-dir", help="path to disease knowledge base directory")
 
-    infer_parser = subparsers.add_parser("infer", help="predict efficacy for drugs/disease")
+    infer_parser = subparsers.add_parser(
+        "infer", help="predict efficacy for drugs/disease (deprecated, use predict)"
+    )
     infer_parser.add_argument("--drugs", required=True)
     infer_parser.add_argument("--disease", required=True)
     infer_parser.add_argument("--endpoints", nargs="+")
     infer_parser.add_argument("--datadir")
+
+    predict_parser = subparsers.add_parser("predict", help="predict efficacy for drugs/disease")
+    predict_parser.add_argument("--drugs", required=True)
+    predict_parser.add_argument("--disease", required=True)
+    predict_parser.add_argument("--endpoints", nargs="+")
+    predict_parser.add_argument("--max-rounds", type=int, default=5)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="run a benchmark configuration")
     benchmark_parser.add_argument("--config", required=True)
@@ -32,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("status", help="show global D-Base status")
 
     subparsers.add_parser("clear", help="clear all records from the global D-Base")
+
+    subparsers.add_parser("serve-mcp", help="start Dargus MCP server (stdio transport)")
 
     ingest_report_parser = subparsers.add_parser(
         "ingest-report", help="generate ingestion report without writing"
@@ -51,23 +62,42 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "infer":
-        from dargus.workflows.infer import run as run_infer
+        warnings.warn(
+            "dargus infer is deprecated, use dargus predict instead",
+            DeprecationWarning,
+        )
+        from dargus.workflows.predict import run as run_predict
 
         drug_ids = [d.strip() for d in args.drugs.split(",") if d.strip()]
-        result = run_infer(
+        result = run_predict(
             drug_ids=drug_ids,
             disease_id=args.disease,
             endpoints=args.endpoints,
-            datadir=args.datadir,
-            confirm_callback=_cli_confirm,
         )
-        if isinstance(result, dict) and result.get("aborted"):
-            print("Inference aborted.")
-            return 1
         for drug, endpoints in result.items():
             print(f"{drug}:")
             for endpoint, pred in endpoints.items():
                 print(f"  {endpoint}: [{pred['efficacy_low']:.3f}, {pred['efficacy_up']:.3f}]")
+        return 0
+
+    if args.command == "predict":
+        from dargus.workflows.predict import run as run_predict
+
+        drug_ids = [d.strip() for d in args.drugs.split(",") if d.strip()]
+        result = run_predict(
+            drug_ids=drug_ids,
+            disease_id=args.disease,
+            endpoints=args.endpoints,
+            max_rounds=args.max_rounds,
+        )
+        for drug, disease_eps in result.items():
+            print(f"{drug}:")
+            for disease, endpoints_dict in disease_eps.items():
+                for endpoint, pred in endpoints_dict.items():
+                    print(
+                        f"  {disease}/{endpoint}: "
+                        f"[{pred['efficacy_low']:.3f}, {pred['efficacy_up']:.3f}]"
+                    )
         return 0
 
     if args.command == "benchmark":
@@ -91,6 +121,13 @@ def main(argv: list[str] | None = None) -> int:
         manager = DBaseManager(dbase)
         manager.reset()
         print("Global D-Base cleared.")
+        return 0
+
+    if args.command == "serve-mcp":
+        print("Starting Dargus MCP server on stdio...", file=sys.stderr)
+        from dargus.adapters.mcp.server import main as mcp_main
+
+        mcp_main()
         return 0
 
     if args.command == "ingest-report":

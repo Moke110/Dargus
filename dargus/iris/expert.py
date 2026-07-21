@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from dargus.dbase.manager import DBaseManager
@@ -7,16 +8,21 @@ from dargus.iris.base import IrisAgent, PredictionMatrix
 
 
 class IrisExpert(IrisAgent):
-    """Iris-* agent that wraps the v0.9.0 Expert system.
+    """DEPRECATED: Iris-* agent that wraps the v0.9.0 Expert system.
 
-    Delegates to the new IrisExpert orchestration layer (dargus.experts.iris_expert)
-    which manages MoleculeExpert, BiomedExpert, BioinfoExpert, ClinicExpert,
-    and FourDExpert through a round-based dialog protocol.
+    Use ``dargus.iris.commander.Iris.predict()`` instead.
+    Kept for backward compatibility. Will be removed in v0.11.0.
     """
 
     name = "Iris-expert"
 
     def __init__(self, disease_expert=None):
+        warnings.warn(
+            "dargus.iris.expert.IrisExpert is deprecated, "
+            "use dargus.iris.commander.Iris.predict() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.disease_expert = disease_expert
 
     def predict(

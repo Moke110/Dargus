@@ -31,9 +31,10 @@ def run_v4(
     iris = Iris()
     if datadir:
         iris.train(datadir)
-    predictions = iris.infer(
+    predictions = iris.predict(
         drug_ids=drugs,
         disease_id=disease,
+        endpoints=[],
     )
     return {"predictions": predictions}
 

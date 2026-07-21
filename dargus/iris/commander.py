@@ -203,6 +203,122 @@ class Iris:
                         entry["efficacy_up"] = sum(weighted_up) / denom
         return aggregated
 
+    def process_query(self, query: str) -> str:
+        """Parse a natural language query using LLM and route to the appropriate handler.
+
+        Returns a human-readable response string.
+        """
+        import json
+
+        from dargus.llm_backends import llm_backend_from_config
+
+        SYSTEM_PROMPT = """You are Iris, the clinical efficacy prediction assistant for Dargus.
+You help researchers predict drug efficacy for diseases using a multi-level
+evidence analysis system.
+
+Available actions:
+- "predict": Run efficacy prediction for one or more drugs against a disease
+- "status": Check the current state of the global evidence database (D-Base)
+- "clarify": Ask the user for more information if the query is ambiguous
+- "chat": Respond conversationally to general questions about Dargus capabilities
+
+When the user asks to predict drug efficacy, extract:
+- drugs: list of drug names/IDs mentioned
+- disease: the disease name/ID
+- endpoints: any specific clinical endpoints mentioned
+  (e.g., UPDRS-III, ADAS-Cog), or empty list for defaults
+
+Return ONLY valid JSON, no other text. Format:
+{"intent": "predict", "drugs": ["aspirin"], "disease": "headache", "endpoints": []}
+{"intent": "status"}
+{"intent": "clarify", "question": "Which disease are you interested in?"}
+{"intent": "chat", "message": "I can help you predict drug efficacy..."}"""
+
+        try:
+            backend = llm_backend_from_config(self.config)
+        except Exception:
+            backend = None
+
+        # Detect cases where no real LLM is configured
+        from dargus.llm_backends import MockLLMBackend
+
+        if backend is None or isinstance(backend, MockLLMBackend):
+            return (
+                "Iris: No LLM backend configured.\n\n"
+                "Set your API key with:\n"
+                "  dargus config set-api-key <provider> <key>\n\n"
+                "Or use CLI subcommands directly:\n"
+                "  dargus predict --drugs aspirin --disease headache\n"
+                "  dargus status\n"
+                "  dargus --help"
+            )
+
+        try:
+            raw = backend.complete(SYSTEM_PROMPT + "\n\nUser query: " + query)
+            parsed = json.loads(raw.strip())
+        except Exception:
+            return (
+                f"> {query}\n"
+                "Iris: I had trouble understanding that. Could you rephrase?\n\n"
+                "Examples:\n"
+                "  predict aspirin for migraine\n"
+                "  what's the evidence for metformin in type 2 diabetes?\n"
+                "  status"
+            )
+
+        intent = parsed.get("intent", "chat")
+
+        if intent == "predict":
+            drugs = parsed.get("drugs", [])
+            disease = parsed.get("disease", "")
+            endpoints = parsed.get("endpoints", [])
+
+            if not drugs or not disease:
+                question = parsed.get("question", "Which drug and disease are you interested in?")
+                return f"> {query}\nIris: {question}"
+
+            try:
+                result = self.predict(
+                    drug_ids=drugs,
+                    disease_id=disease,
+                    endpoints=endpoints or [],
+                )
+            except Exception as exc:
+                return f"> {query}\nIris: Prediction failed: {exc}"
+
+            lines = [f"> {query}", f"Iris: Prediction for {', '.join(drugs)} on {disease}:"]
+            for drug, diseases in result.items():
+                for disease_name, eps in diseases.items():
+                    for ep, pred in eps.items():
+                        ci = f"[{pred['efficacy_low']:.3f}, {pred['efficacy_up']:.3f}]"
+                        conf = pred.get("confidence_level", "unknown")
+                        lines.append(f"  {drug} / {disease_name} / {ep}: {ci} (confidence: {conf})")
+            return "\n".join(lines)
+
+        if intent == "status":
+            status = self.status()
+            return (
+                f"> {query}\n"
+                f"Iris: D-Base status:\n"
+                f"  Records:   {status['n_records']}\n"
+                f"  Templates: {status['n_templates']}\n"
+                f"  Location:  {status['dbase_dir']}"
+            )
+
+        if intent == "clarify":
+            question = parsed.get("question", "Can you provide more details?")
+            return f"> {query}\nIris: {question}"
+
+        # Default: chat
+        message = parsed.get(
+            "message",
+            (
+                "I'm here to help with drug efficacy prediction. "
+                "Try asking me to predict a drug's effect on a disease."
+            ),
+        )
+        return f"> {query}\nIris: {message}"
+
     def _ensure_default_templates(self, dbase: DBase) -> None:
         drug_vocab = "global_drug_vocab"
         disease_vocab = "global_disease_vocab"

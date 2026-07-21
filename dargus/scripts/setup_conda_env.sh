@@ -71,8 +71,15 @@ conda run -n "$CONDA_ENV" pip install -e "$WORKSPACE_ROOT[all]"
 
 echo ""
 echo "Verifying installation..."
-conda run -n "$CONDA_ENV" dargus --help > /dev/null 2>&1
+conda run -n "$CONDA_ENV" dargus-cli --help > /dev/null 2>&1
+
+# Install shell wrapper as 'dargus' in the conda env's bin
+WRAPPER_SRC="${SCRIPT_DIR}/dargus_wrapper"
+WRAPPER_DST="$(conda run -n "${CONDA_ENV}" python -c 'import sys; print(sys.prefix)')/bin/dargus"
+echo "Installing dargus shell wrapper..."
+cp "${WRAPPER_SRC}" "${WRAPPER_DST}"
+chmod +x "${WRAPPER_DST}"
 
 echo ""
-echo "Setup complete. Activate with: conda activate $CONDA_ENV"
-echo "Then run: dargus"
+echo "Setup complete. Run 'dargus' from any shell — it auto-activates the conda environment."
+echo "  conda activate $CONDA_ENV   # optional: for faster execution (skips conda overhead)"

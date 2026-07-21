@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 from rich.console import Console
 from rich.panel import Panel
@@ -40,10 +41,21 @@ def run_repl() -> None:
     iris = Iris()
 
     # ── intro block ───────────────────────────────────────────────────────────────
-    # Logo (boxed)
-    logo_lines = build_logo()
-    logo_text = Text("\n").join(logo_lines)
-    console.print(Panel(logo_text, border_style="white", padding=(0, 2)))
+    # Logo (boxed) — only when terminal is wide enough; text fallback otherwise
+    _LOGO_MIN_WIDTH = 74
+    term_w = shutil.get_terminal_size().columns
+    if term_w >= _LOGO_MIN_WIDTH:
+        logo_lines = build_logo()
+        logo_text = Text("\n").join(logo_lines)
+        console.print(Panel(logo_text, border_style="white", padding=(0, 2)))
+    else:
+        console.print(
+            Panel(
+                Text("DARGUS (Drug-Argus)", style=Style(color="white", bold=True)),
+                border_style="white",
+                padding=(0, 2),
+            )
+        )
 
     # Tagline
     console.print(Text(TAGLINE, style=Style(color="grey70", italic=True)))

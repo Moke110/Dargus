@@ -1,14 +1,10 @@
-"""Dargus TUI — Textual-based interactive terminal interface."""
+"""Dargus Rich REPL interface."""
 
 from __future__ import annotations
 
 
 def run_app() -> None:
-    """Launch the Dargus Textual TUI application."""
-    try:
-        from dargus.tui.app import DargusApp
-    except ImportError as exc:
-        raise ImportError(f"textual (TUI framework) — {exc}") from exc
+    """Launch the Dargus REPL. (Deprecated name — kept for compat.)"""
+    from dargus.repl import run_repl
 
-    app = DargusApp()
-    app.run()
+    run_repl()

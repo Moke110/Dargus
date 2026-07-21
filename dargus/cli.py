@@ -207,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
 
             env_path = write_dotenv("DARGUS_LLM_API_KEY", args.key)
             print(f"API key for '{args.provider}' saved to {env_path}")
-            print("Run 'dargus' to start the TUI.")
+            print("Run 'dargus' to start the REPL.")
             return 0
 
         elif args.config_command == "show":

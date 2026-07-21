@@ -117,16 +117,16 @@ class BenchmarkRunner:
         endpoints = test_df["endpoint"].unique().tolist()
         predictions: dict[str, dict[str, dict[str, Any]]] = {}
         for disease_id in diseases:
-            preds = iris.infer(
+            preds = iris.predict(
                 drug_ids=drug_ids,
                 disease_id=disease_id,
                 endpoints=endpoints,
-                confirm_callback=lambda plan: True,
             )
-            for drug, eps in preds.items():
+            for drug, diseases in preds.items():
                 if drug not in predictions:
                     predictions[drug] = {}
-                predictions[drug].update(eps)
+                for _disease, eps in diseases.items():
+                    predictions[drug].update(eps)
         return {"Iris": predictions}
 
     def _discard_bench(self) -> None:

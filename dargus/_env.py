@@ -75,9 +75,7 @@ def write_dotenv(key: str, value: str, env_path: str | Path | None = None) -> st
         lines.append(f"{prefix}{value}\n")
 
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(
-        env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
-    )
+    fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.writelines(lines)
 

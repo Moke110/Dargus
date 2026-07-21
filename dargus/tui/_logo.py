@@ -139,10 +139,16 @@ def build_logo() -> list[Text]:
     lines: list[Text] = []
     for i in range(15):
         line = Text()
-        line.append(D[i], style=STYLE_D)
+        line.append(D[i].ljust(17), style=STYLE_D)
         if i < 6:  # "RUG", top-aligned with D
             line.append(GAP + rug[i], style=STYLE_RUG)
         else:  # "ARGUS", bottom-aligned with D
             line.append(GAP + INDENT + argus[i - 6], style=STYLE_ARGUS)
         lines.append(line)
+    # Pad all lines to uniform width
+    max_w = max(len(line.plain) for line in lines)
+    for line in lines:
+        pad = max_w - len(line.plain)
+        if pad:
+            line.append(" " * pad)
     return lines

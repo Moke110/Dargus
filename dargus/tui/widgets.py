@@ -26,7 +26,7 @@ class HeaderWidget(Static):
     def __init__(self, *args, **kwargs):
         logo_lines = build_logo()
         tagline_text = Text(TAGLINE, Style(color="grey70", italic=True))
-        self._inner_rich = Text.assemble(*logo_lines, Text("\n\n"), tagline_text)
+        self._inner_rich = Text.assemble(Text("\n").join(logo_lines), Text("\n\n"), tagline_text)
         super().__init__(self._inner_rich, *args, **kwargs)
 
     def render(self):

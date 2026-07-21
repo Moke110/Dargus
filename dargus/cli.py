@@ -10,6 +10,7 @@ import warnings
 
 from dargus import Iris
 from dargus._env import load_dotenv
+from dargus.tui import run_app
 
 
 def _json_arg(raw: str) -> dict:
@@ -189,8 +190,8 @@ def main(argv: list[str] | None = None) -> int:
         print(summary)
         return 0
 
-    parser.print_help()
-    return 1
+    run_app()
+    return 0
 
 
 def _cli_confirm(plan: dict) -> bool:

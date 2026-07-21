@@ -77,6 +77,17 @@ def main(argv: list[str] | None = None) -> int:
     ingest_report_parser.add_argument("--datadir", required=True)
     ingest_report_parser.add_argument("--disease-kb-dir")
 
+    config_parser = subparsers.add_parser("config", help="configure Dargus settings")
+    config_subs = config_parser.add_subparsers(dest="config_command")
+
+    set_key_parser = config_subs.add_parser(
+        "set-api-key", help="set your LLM API key for any provider"
+    )
+    set_key_parser.add_argument("provider", help="provider name, e.g. openai, anthropic, deepseek")
+    set_key_parser.add_argument("key", help="your API key")
+
+    config_subs.add_parser("show", help="show current LLM configuration")
+
     args = parser.parse_args(argv)
 
     if args.command == "train":
@@ -189,6 +200,49 @@ def main(argv: list[str] | None = None) -> int:
         summary = ingest_report(args.datadir, disease_kb_dir=args.disease_kb_dir)
         print(summary)
         return 0
+
+    if args.command == "config":
+        if args.config_command == "set-api-key":
+            from dargus._env import write_dotenv
+
+            env_path = write_dotenv("DARGUS_LLM_API_KEY", args.key)
+            print(f"API key for '{args.provider}' saved to {env_path}")
+            print("Run 'dargus' to start the TUI.")
+            return 0
+
+        elif args.config_command == "show":
+            import os
+            from pathlib import Path
+
+            import yaml
+
+            config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+            with config_path.open("r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            llm_cfg = cfg.get("llm", {})
+
+            print("LLM Configuration:")
+            print(f"  provider:    {llm_cfg.get('provider', 'litellm')}")
+            print(f"  model:       {llm_cfg.get('model', 'not set')}")
+            base_url = llm_cfg.get("base_url", "")
+            if base_url:
+                print(f"  base_url:    {base_url}")
+            print(f"  temperature: {llm_cfg.get('temperature', 0.0)}")
+            print(f"  max_tokens:  {llm_cfg.get('max_tokens', 2048)}")
+
+            api_key = os.environ.get("DARGUS_LLM_API_KEY")
+            if api_key:
+                print("  api_key:     [from .env]  ********")
+            else:
+                print("  api_key:     not set")
+                print()
+                print("  No API key found. Set one with:")
+                print("    dargus config set-api-key <provider> <key>")
+            return 0
+
+        else:
+            config_parser.print_help()
+            return 1
 
     try:
         run_app()

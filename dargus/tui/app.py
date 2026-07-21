@@ -1,42 +1,50 @@
-"""Dargus Textual TUI application with REPL interface."""
+"""Dargus Textual TUI application with conversation-style interface."""
 
 from __future__ import annotations
 
 import os
 
+from rich.style import Style
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Input, Static
+from textual.widgets import Input, RichLog
 
 from dargus import __version__
 from dargus.iris.commander import Iris
-from dargus.tui.widgets import AgentResponse, HeaderWidget
+from dargus.tui._logo import build_logo, TAGLINE
+
+
+_GREETING = """Hi, I'm Iris, the director agent of Project Dargus.
+
+Dargus is a clinical efficacy prediction system for drug-development
+researchers. I coordinate multi-level evidence analysis across molecular,
+biomedical, bioinformatics, and clinical domains to predict drug efficacy
+with confidence intervals.
+
+You can ask me things like:
+  • predict aspirin for migraine
+  • what's the evidence for metformin in type 2 diabetes?
+  • status"""
+
+_NO_KEY_MESSAGE = """No API key configured. Set one with:
+  dargus config set-api-key <provider> <key>"""
+
+_READY_MESSAGE = "How can I help with your research?"
 
 
 class DargusApp(App):
     """Interactive TUI for clinical efficacy prediction."""
 
     CSS = """
-    Screen {
-        align: center middle;
-    }
-
-    #header {
-        height: auto;
-        margin: 0 0 1 0;
+    #conversation {
+        height: 1fr;
+        border: solid white;
     }
 
     #input-bar {
         dock: bottom;
         margin: 1 0 0 0;
-    }
-
-    #status-bar {
-        dock: bottom;
-        height: 1;
-        background: $panel;
-        color: $text-muted;
-        padding: 0 1;
     }
     """
 
@@ -50,40 +58,46 @@ class DargusApp(App):
         self.iris = Iris()
 
     def compose(self) -> ComposeResult:
-        yield HeaderWidget(id="header")
-        yield AgentResponse(id="response")
+        yield RichLog(id="conversation", highlight=True, markup=True)
         yield Input(placeholder=">  ", id="input-bar")
-        yield Static(f"v{__version__}  ·  /help  /quit", id="status-bar")
 
     def on_mount(self) -> None:
-        """Show initial greeting after the UI is ready."""
-        response: AgentResponse = self.query_one("#response", AgentResponse)
+        """Write logo and greeting into the conversation log."""
+        log = self.query_one("#conversation", RichLog)
+
+        # Logo
+        for line in build_logo():
+            log.write(line)
+
+        # Tagline
+        log.write(Text(TAGLINE, style=Style(color="grey70", italic=True)))
+
+        # Blank line then greeting
+        log.write("")
+        log.write(Text(_GREETING, style=Style(color="white")))
+        log.write(Text(f"\n\nv{__version__}  ·  /help  /quit", style=Style(color="grey50")))
+        log.write("")
+
+        # API key status
         if os.environ.get("DARGUS_LLM_API_KEY"):
-            response.add_response("Iris: Ready. How can I help with your research?")
+            log.write(Text(_READY_MESSAGE, style=Style(color="green")))
         else:
-            response.add_response(
-                "Iris: No API key configured.\n\n"
-                "Set one with:\n"
-                "  dargus config set-api-key <provider> <key>\n\n"
-                "Examples:\n"
-                "  dargus config set-api-key openai sk-...\n"
-                "  dargus config set-api-key anthropic sk-ant-..."
-            )
+            log.write(Text(_NO_KEY_MESSAGE, style=Style(color="yellow")))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         value = event.value.strip()
         if not value:
             return
 
-        response: AgentResponse = self.query_one("#response", AgentResponse)
+        log = self.query_one("#conversation", RichLog)
 
         if value == "/quit":
             self.exit()
             return
 
         if value == "/help":
-            response.add_response(
-                "> /help\n"
+            log.write(Text("> /help", style=Style(color="grey50")))
+            log.write(
                 "Iris: Available commands:\n"
                 "  /help  — show this message\n"
                 "  /quit  — exit the TUI\n"
@@ -95,8 +109,9 @@ class DargusApp(App):
                 "  benchmark full stack"
             )
         else:
+            log.write(Text(f"> {value}", style=Style(color="grey50")))
             result = self.iris.process_query(value)
-            response.add_response(result)
+            log.write(result)
 
         self.query_one("#input-bar", Input).value = ""
 

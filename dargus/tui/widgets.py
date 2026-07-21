@@ -18,7 +18,7 @@ class HeaderWidget(Static):
         height: auto;
         margin: 0 0 1 0;
         content-align: center middle;
-        border: solid blue;
+        border: solid white;
         padding: 0 2;
     }
     """
@@ -42,7 +42,7 @@ class AgentResponse(VerticalScroll):
     DEFAULT_CSS = """
     AgentResponse {
         height: 1fr;
-        border: solid $primary;
+        border: solid white;
         padding: 0 1;
     }
     """

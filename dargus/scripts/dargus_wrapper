@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Dargus shell wrapper — auto-activates the configured conda environment.
+# Override with: DARGUS_CONDA_ENV=my_env dargus ...
+
+CONDA_ENV="${DARGUS_CONDA_ENV:-dargus_e1}"
+
+# If already in the target env — run directly (avoids conda overhead)
+if [ "${CONDA_DEFAULT_ENV:-}" = "$CONDA_ENV" ]; then
+    exec dargus-cli "$@"
+fi
+
+# Otherwise, delegate to conda run
+exec conda run -n "$CONDA_ENV" dargus-cli "$@"

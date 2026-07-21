@@ -86,22 +86,22 @@ def status() -> dict[str, Any]:
 
 
 def benchmark(
-    config_path: str | None = None,
-    config: dict[str, Any] | None = None,
+    strip: dict[str, Any],
+    split: dict[str, Any] | None = None,
+    output_dir: str | None = None,
 ) -> dict[str, Any]:
-    """Run a benchmark configuration.
+    """Run a bench-full-stack benchmark.
 
     Args:
-        config_path: Path to a YAML benchmark config file.
-        config: Inline benchmark config dict (alternative to config_path).
+        strip: Filter dict for extracting matching records from the global D-Base.
+        split: Optional split config, e.g. ``{"test_size": 0.2, "random_state": 42}``.
+        output_dir: Optional output directory for reports.
 
     Returns:
-        Dict with benchmark metrics.
+        Dict with keys ``metrics``, ``predictions``, ``conditions``.
     """
     iris = Iris()
-    if config_path is not None:
-        return iris.benchmark(config_path)
-    raise NotImplementedError("inline config dict not yet supported — use config_path")
+    return iris.benchmark(strip=strip, split=split, output_dir=output_dir)
 
 
 def predict_single_agent(

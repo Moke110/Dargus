@@ -132,11 +132,16 @@ class Iris:
                 old_result[drug].update(eps)
         return old_result
 
-    def benchmark(self, config_path: str) -> dict[str, Any]:
-        """Run the Benchmark workflow."""
-        from dargus.workflows.benchmark import run as run_benchmark
+    def benchmark(
+        self,
+        strip: dict[str, Any],
+        split: dict[str, Any] | None = None,
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the bench-full-stack workflow."""
+        from dargus.workflows.bench_full_stack import run as run_bench_full_stack
 
-        return run_benchmark(config_path)
+        return run_bench_full_stack(strip=strip, split=split, output_dir=output_dir)
 
     def _run_agent(
         self,

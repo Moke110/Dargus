@@ -1,8 +1,8 @@
 llm:
   provider: "openai_compatible"
-  model: "openai/deepseek-v4-pro"
+  model: "deepseek-chat"
   api_key: "$DARGUS_LLM_API_KEY"
-  base_url: "$DARGUS_LLM_BASE_URL"
+  base_url: "https://api.deepseek.com/v1"
   temperature: 0.0
   max_tokens: 2048
   extra: {}

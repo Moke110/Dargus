@@ -313,7 +313,7 @@ def _run_model_wizard() -> int:
         print(f"  Model: {result['model']} │ Connected OK ({result['latency_ms']}ms)")
     else:
         print(f"  Error: Connection failed — {result['error']}")
-        print("  Check base_url and API key.")
+        _print_troubleshooting(result, new_base_url)
 
     # Step 5: Confirm save
     print()
@@ -337,6 +337,31 @@ def _run_model_wizard() -> int:
 
     print("  Configuration saved.")
     return 0
+
+
+def _print_troubleshooting(result: dict, base_url: str) -> None:
+    """Print targeted troubleshooting hints based on the connection error."""
+    error = result.get("error", "")
+
+    if "404" in error:
+        print()
+        print("  Troubleshooting: HTTP 404 — endpoint not found.")
+        print("  DargusLLM POSTs to:  <base_url>/chat/completions")
+        print(f"  Full URL attempted:   {base_url}/chat/completions")
+        print("  Make sure base_url points to an OpenAI-compatible API root.")
+        print("  Examples:")
+        print("    DeepSeek:     https://api.deepseek.com/v1")
+        print("    OpenAI:       https://api.openai.com/v1")
+        print("    Ollama (loc): http://localhost:11434/v1")
+        print("    vLLM  (loc):  http://localhost:8000/v1")
+    elif "401" in error or "403" in error:
+        print()
+        print("  Troubleshooting: Authentication failed.")
+        print("  Check that your API key is valid and not expired.")
+    elif "Connection" in error or "Name or service not known" in error:
+        print()
+        print("  Troubleshooting: Cannot reach server.")
+        print("  Check that the base_url hostname is correct and reachable.")
 
 
 def _resolve_config_value(value: str) -> str:

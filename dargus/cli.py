@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json as _json
 import logging
 import sys
 import warnings
+
+
+def _json_arg(raw: str) -> dict:
+    """Parse a CLI JSON argument."""
+    return _json.loads(raw)
 
 from dargus import Iris
 from dargus._env import load_dotenv
@@ -37,8 +43,24 @@ def main(argv: list[str] | None = None) -> int:
     predict_parser.add_argument("--endpoints", nargs="+")
     predict_parser.add_argument("--max-rounds", type=int, default=5)
 
-    benchmark_parser = subparsers.add_parser("benchmark", help="run a benchmark configuration")
-    benchmark_parser.add_argument("--config", required=True)
+    # bench group with subcommands
+    bench_parser = subparsers.add_parser("bench", help="benchmark and test workflows")
+    bench_subs = bench_parser.add_subparsers(dest="bench_command")
+
+    fs_parser = bench_subs.add_parser("full-stack", help="run full benchmark pipeline")
+    fs_parser.add_argument(
+        "--strip", required=True, type=_json_arg,
+        help='JSON filter for global D-Base records, e.g. \'{"source.type":"benchmark"}\'',
+    )
+    fs_parser.add_argument("--split", type=_json_arg, help="JSON split config")
+    fs_parser.add_argument("--output-dir", help="output directory for reports")
+
+    di_parser = bench_subs.add_parser("data-ingest", help="test ingestion pipeline")
+    di_parser.add_argument("--fixture-dir", required=True, help="path to fixture directory")
+    di_parser.add_argument(
+        "--expected-min", type=int, default=1, help="minimum expected records (default: 1)"
+    )
+    di_parser.add_argument("--output-dir", help="output directory for report")
 
     subparsers.add_parser("status", help="show global D-Base status")
 
@@ -102,12 +124,38 @@ def main(argv: list[str] | None = None) -> int:
                     )
         return 0
 
-    if args.command == "benchmark":
-        from dargus.workflows.benchmark import run as run_benchmark
+    if args.command == "bench":
+        if args.bench_command == "full-stack":
+            from dargus.workflows.bench_full_stack import run as run_full_stack
 
-        report = run_benchmark(args.config)
-        print(f"Benchmark complete: {report['metrics']}")
-        return 0
+            result = run_full_stack(
+                strip=args.strip,
+                split=args.split,
+                output_dir=args.output_dir,
+            )
+            print(f"Benchmark complete: {result['metrics']}")
+            return 0
+
+        elif args.bench_command == "data-ingest":
+            from dargus.workflows.bench_data_ingest import run as run_data_ingest
+
+            result = run_data_ingest(
+                fixture_dir=args.fixture_dir,
+                expected_min=args.expected_min,
+                output_dir=args.output_dir,
+            )
+            print(
+                f"Ingest test complete: {result['total_records']} records from "
+                f"{len(result['record_counts_by_source'])} sources"
+            )
+            if result["warnings"]:
+                for w in result["warnings"]:
+                    print(f"  WARNING: {w}", file=sys.stderr)
+            return 0
+
+        else:
+            bench_parser.print_help()
+            return 1
 
     if args.command == "status":
         iris = Iris()

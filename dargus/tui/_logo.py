@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Dargus - Clinical Efficacy Prediction System ASCII logo.
 
 15-line hand-built block logo rendered with rich.

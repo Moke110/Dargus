@@ -1,7 +1,6 @@
 """MCP tool implementations — 14 tools in L1/L2/L3 layers.
 
-All tools import ONLY from ``dargus.api`` where possible. L2 tools that need
-individual Iris agent access import from ``dargus.iris.*`` as necessary.
+All tools import ONLY from ``dargus.api``.
 """
 
 from __future__ import annotations
@@ -86,26 +85,25 @@ def tool_dbase_status() -> dict:
 # ── L2: Iris-* primitives (single-shot, read-only) ───────────────
 
 
+def _run_iris_agent_tool(agent_name: str, drug_ids, disease_id) -> dict:
+    """Common helper for L2 Iris-* agent tools."""
+    try:
+        result = dargus.predict_single_agent(
+            agent_name=agent_name,
+            drug_ids=drug_ids or [],
+            disease_id=disease_id or "",
+        )
+        return _respond(True, data={"predictions": result})
+    except Exception as exc:
+        return _respond(False, error=_safe_error(f"tool_iris_{agent_name.split('-')[1]}", exc))
+
+
 def tool_iris_search(
     drug_ids: list[str] | None = None,
     disease_id: str | None = None,
 ) -> dict:
     """Run Iris-search only (literature/evidence search)."""
-    try:
-        from dargus.dbase import DBase
-        from dargus.iris.search import IrisSearch
-
-        dbase = DBase.global_instance()
-        agent = IrisSearch()
-        result = agent.predict(
-            dbase,
-            drug_ids or [],
-            disease_id or "",
-            [],
-        )
-        return _respond(True, data={"predictions": result})
-    except Exception as exc:
-        return _respond(False, error=_safe_error("tool_iris_search", exc))
+    return _run_iris_agent_tool("iris-search", drug_ids, disease_id)
 
 
 def tool_iris_llm(
@@ -113,21 +111,7 @@ def tool_iris_llm(
     disease_id: str | None = None,
 ) -> dict:
     """Run Iris-llm only (LLM-based reasoning)."""
-    try:
-        from dargus.dbase import DBase
-        from dargus.iris.llm import IrisLlm
-
-        dbase = DBase.global_instance()
-        agent = IrisLlm()
-        result = agent.predict(
-            dbase,
-            drug_ids or [],
-            disease_id or "",
-            [],
-        )
-        return _respond(True, data={"predictions": result})
-    except Exception as exc:
-        return _respond(False, error=_safe_error("tool_iris_llm", exc))
+    return _run_iris_agent_tool("iris-llm", drug_ids, disease_id)
 
 
 def tool_iris_analog(
@@ -135,21 +119,7 @@ def tool_iris_analog(
     disease_id: str | None = None,
 ) -> dict:
     """Run Iris-analog only (analog-based reasoning)."""
-    try:
-        from dargus.dbase import DBase
-        from dargus.iris.analog import IrisAnalog
-
-        dbase = DBase.global_instance()
-        agent = IrisAnalog()
-        result = agent.predict(
-            dbase,
-            drug_ids or [],
-            disease_id or "",
-            [],
-        )
-        return _respond(True, data={"predictions": result})
-    except Exception as exc:
-        return _respond(False, error=_safe_error("tool_iris_analog", exc))
+    return _run_iris_agent_tool("iris-analog", drug_ids, disease_id)
 
 
 def tool_iris_bayes(
@@ -157,21 +127,7 @@ def tool_iris_bayes(
     disease_id: str | None = None,
 ) -> dict:
     """Run Iris-bayes only (Bayesian modeling)."""
-    try:
-        from dargus.dbase import DBase
-        from dargus.iris.bayes import IrisBayes
-
-        dbase = DBase.global_instance()
-        agent = IrisBayes()
-        result = agent.predict(
-            dbase,
-            drug_ids or [],
-            disease_id or "",
-            [],
-        )
-        return _respond(True, data={"predictions": result})
-    except Exception as exc:
-        return _respond(False, error=_safe_error("tool_iris_bayes", exc))
+    return _run_iris_agent_tool("iris-bayes", drug_ids, disease_id)
 
 
 def tool_iris_gnn(
@@ -179,38 +135,19 @@ def tool_iris_gnn(
     disease_id: str | None = None,
 ) -> dict:
     """Run Iris-gnn only (graph neural network prediction)."""
-    try:
-        from dargus.dbase import DBase
-        from dargus.iris.gnn import IrisGnn
-
-        dbase = DBase.global_instance()
-        agent = IrisGnn()
-        result = agent.predict(
-            dbase,
-            drug_ids or [],
-            disease_id or "",
-            [],
-        )
-        return _respond(True, data={"predictions": result})
-    except Exception as exc:
-        return _respond(False, error=_safe_error("tool_iris_gnn", exc))
+    return _run_iris_agent_tool("iris-gnn", drug_ids, disease_id)
 
 
 # ── L2: Single Expert assessment (single-shot, read-only) ────────
 
 
 def _run_single_expert(expert_name: str) -> dict:
-    """Run a single Expert assessment. Returns a stub result since
-    individual Experts require IrisExpert orchestration context."""
-    return _respond(
-        True,
-        data={
-            "expert": expert_name,
-            "note": (
-                "Single Expert assessment — full context requires " "IrisExpert multi-round dialog"
-            ),
-        },
-    )
+    """Run a single Expert assessment via dargus.api."""
+    try:
+        result = dargus.query_expert(expert_name)
+        return _respond(True, data=result)
+    except Exception as exc:
+        return _respond(False, error=_safe_error(f"tool_expert_{expert_name.lower()}", exc))
 
 
 def tool_expert_molecule() -> dict:

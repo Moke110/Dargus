@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dargus"
-version = "0.10.0"
+version = "0.11.0"
 description = "Clinical efficacy prediction system for drug-development researchers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,8 @@ dependencies = [
     "matplotlib>=3.7",
     "seaborn>=0.12",
     "PyYAML>=6.0",
+    "rich>=13.0",
+    "textual>=0.60",
     "pydantic>=2.0",
     "PyMuPDF>=1.23",
     "biopython>=1.81",

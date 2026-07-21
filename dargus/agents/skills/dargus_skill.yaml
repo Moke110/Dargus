@@ -6,7 +6,7 @@ version: "0.1.0"
 entrypoint:
   mcp:
     command: python
-    args: ["-m", "dargus.mcp_server"]
+    args: ["-m", "dargus.adapters.mcp.server"]
 commands:
   scan-v4:
     description: Run a target-disease efficacy scan using D-Base + Iris.

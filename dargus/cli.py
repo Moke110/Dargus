@@ -220,7 +220,12 @@ def main(argv: list[str] | None = None) -> int:
         print(summary)
         return 0
 
-    run_app()
+    try:
+        run_app()
+    except ImportError as exc:
+        print(f"Error: Cannot launch TUI — missing dependency: {exc}", file=sys.stderr)
+        print("Install with: pip install textual>=0.60", file=sys.stderr)
+        return 1
     return 0
 
 

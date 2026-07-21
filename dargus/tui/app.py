@@ -38,7 +38,6 @@ class DargusApp(App):
     CSS = """
     #conversation {
         height: 1fr;
-        border: solid white;
     }
 
     #input-bar {

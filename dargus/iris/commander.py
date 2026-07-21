@@ -213,7 +213,7 @@ class Iris:
 
         import yaml
 
-        from dargus.llm_backends import LiteLLMBackend, MockLLMBackend, llm_backend_from_config
+        from dargus.llm import llm_from_config
 
         # Load config from file if not already populated
         config = self.config
@@ -245,16 +245,9 @@ Return ONLY valid JSON, no other text. Format:
 {"intent": "clarify", "question": "Which disease are you interested in?"}
 {"intent": "chat", "message": "I can help you predict drug efficacy..."}"""
 
-        try:
-            backend = llm_backend_from_config(config)
-        except Exception:
-            backend = None
+        backend = llm_from_config(config)
 
-        if (
-            backend is None
-            or isinstance(backend, MockLLMBackend)
-            or (isinstance(backend, LiteLLMBackend) and not backend.api_key)
-        ):
+        if backend is None:
             return (
                 "Iris: No LLM backend configured.\n\n"
                 "Set your API key with:\n"

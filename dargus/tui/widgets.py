@@ -11,14 +11,14 @@ from dargus.tui._logo import LOGO_LINES, TAGLINE
 
 
 class HeaderWidget(Static):
-    """Displays the Dargus ASCII logo and tagline, framed in a Rich Panel."""
+    """Displays the Dargus ASCII logo and tagline, with a dim blue CSS border."""
 
     DEFAULT_CSS = """
     HeaderWidget {
         height: auto;
         margin: 0 0 1 0;
         content-align: center middle;
-        border: solid dim blue;
+        border: solid blue;
         padding: 0 2;
     }
     """
@@ -33,7 +33,7 @@ class HeaderWidget(Static):
         tagline_text = Text(TAGLINE, Style(color="grey70", italic=True))
 
         self._inner_rich = Text.assemble(logo_text, "\n\n", tagline_text)
-        super().__init__(self._inner_rich)
+        super().__init__(self._inner_rich, *args, **kwargs)
 
     def render(self):
         """Return the logo/header text (unwrapped for direct inspection)."""

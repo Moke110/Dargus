@@ -47,7 +47,9 @@ def run_repl() -> None:
     if term_w >= _LOGO_MIN_WIDTH:
         logo_lines = build_logo()
         logo_text = Text("\n").join(logo_lines)
-        console.print(Panel(logo_text, border_style="white", padding=(0, 2)))
+        version_text = Text(f"v{__version__}", style=Style(color="grey50"))
+        combined = Text.assemble(logo_text, Text("\n"), version_text, Text("  "))
+        console.print(Panel(combined, border_style="white", padding=(0, 2)))
     else:
         console.print(
             Panel(

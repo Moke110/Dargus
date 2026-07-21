@@ -92,9 +92,7 @@ def _discard_dbase(dbase: DBase) -> None:
     shutil.rmtree(root, ignore_errors=True)
 
 
-def _extract_and_write(
-    fixture_path: Path, dbase: DBase
-) -> tuple[dict[str, int], list[str]]:
+def _extract_and_write(fixture_path: Path, dbase: DBase) -> tuple[dict[str, int], list[str]]:
     """Scan fixture subdirectories, extract + write records, return counts and warnings."""
     manager = DBaseManager(dbase)
     counts: dict[str, int] = {}

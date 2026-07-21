@@ -8,13 +8,13 @@ import logging
 import sys
 import warnings
 
+from dargus import Iris
+from dargus._env import load_dotenv
+
 
 def _json_arg(raw: str) -> dict:
     """Parse a CLI JSON argument."""
     return _json.loads(raw)
-
-from dargus import Iris
-from dargus._env import load_dotenv
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
 
     fs_parser = bench_subs.add_parser("full-stack", help="run full benchmark pipeline")
     fs_parser.add_argument(
-        "--strip", required=True, type=_json_arg,
+        "--strip",
+        required=True,
+        type=_json_arg,
         help='JSON filter for global D-Base records, e.g. \'{"source.type":"benchmark"}\'',
     )
     fs_parser.add_argument("--split", type=_json_arg, help="JSON split config")

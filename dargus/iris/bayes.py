@@ -5,8 +5,6 @@ from typing import Any
 from dargus.dbase import DBase
 from dargus.iris.base import IrisAgent, PredictionMatrix
 from dargus.iris.probability_utils import probability_interval_from_effect
-from dargus.reasoning.bayesian.model import HierarchicalBayesianModel
-from dargus.reasoning.bayesian.records_adapter import LEVEL_ORDER, RecordsAdapter
 
 
 class IrisBayes(IrisAgent):
@@ -26,6 +24,9 @@ class IrisBayes(IrisAgent):
         embeddings: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> PredictionMatrix:
+        from dargus.reasoning.bayesian.model import HierarchicalBayesianModel
+        from dargus.reasoning.bayesian.records_adapter import LEVEL_ORDER, RecordsAdapter
+
         adapter = RecordsAdapter(dbase)
         result: PredictionMatrix = {}
         for drug_id in drug_ids:

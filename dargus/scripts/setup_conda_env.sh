@@ -14,6 +14,15 @@ fi
 CONDA_ENV=$(grep 'conda_env:' "$CONFIG_FILE" | head -1 | sed 's/.*conda_env: *"\(.*\)"/\1/')
 PYTHON_VER=$(grep 'python:' "$CONFIG_FILE" | head -1 | sed 's/.*python: *"\(.*\)"/\1/')
 
+if [ -z "$CONDA_ENV" ]; then
+    echo "ERROR: could not parse conda_env from $CONFIG_FILE" >&2
+    exit 1
+fi
+if [ -z "$PYTHON_VER" ]; then
+    echo "ERROR: could not parse python version from $CONFIG_FILE" >&2
+    exit 1
+fi
+
 SKIP_CREATE=0
 RECREATE=0
 
@@ -33,6 +42,11 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$RECREATE" -eq 1 ] && [ "$SKIP_CREATE" -eq 1 ]; then
+    echo "ERROR: --recreate and --skip-create are mutually exclusive" >&2
+    exit 1
+fi
 
 if [ "$RECREATE" -eq 1 ]; then
     echo "Removing existing conda env '$CONDA_ENV'..."

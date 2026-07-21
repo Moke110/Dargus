@@ -7,7 +7,7 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.widgets import Static
 
-from dargus.tui._logo import LOGO_LINES, TAGLINE
+from dargus.tui._logo import TAGLINE, build_logo
 
 
 class HeaderWidget(Static):
@@ -24,15 +24,9 @@ class HeaderWidget(Static):
     """
 
     def __init__(self, *args, **kwargs):
-        logo_text = Text()
-        for i, line in enumerate(LOGO_LINES):
-            if i > 0:
-                logo_text.append("\n")
-            logo_text.append(line, Style(color="white", bold=True))
-
+        logo_lines = build_logo()
         tagline_text = Text(TAGLINE, Style(color="grey70", italic=True))
-
-        self._inner_rich = Text.assemble(logo_text, "\n\n", tagline_text)
+        self._inner_rich = Text.assemble(*logo_lines, Text("\n\n"), tagline_text)
         super().__init__(self._inner_rich, *args, **kwargs)
 
     def render(self):

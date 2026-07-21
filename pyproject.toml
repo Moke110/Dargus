@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dargus"
-version = "0.13.0"
+version = "0.14.0"
 description = "Clinical efficacy prediction system for drug-development researchers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -44,7 +44,7 @@ docking = ["vina>=1.2"]
 admet = ["admet-ai"]
 singlecell = ["scanpy>=1.9", "scvi-tools>=1.0"]
 genetics = ["coloc", "ldsc"]
-llm = ["litellm>=1.0"]
+llm = ["httpx>=0.27"]
 dev = ["pytest>=7.4", "pytest-asyncio>=0.21", "black>=23.0", "ruff>=0.1.0", "mypy>=1.6"]
 all = ["dargus[docking,admet,singlecell,genetics,llm,dev]"]
 

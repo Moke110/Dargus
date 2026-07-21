@@ -102,3 +102,56 @@ def benchmark(
     if config_path is not None:
         return iris.benchmark(config_path)
     raise NotImplementedError("inline config dict not yet supported — use config_path")
+
+
+def predict_single_agent(
+    agent_name: str,
+    drug_ids: list[str],
+    disease_id: str,
+) -> dict:
+    """Run a single Iris-* agent standalone (search, llm, analog, bayes, or gnn).
+
+    Args:
+        agent_name: One of ``"iris-search"``, ``"iris-llm"``, ``"iris-analog"``,
+                    ``"iris-bayes"``, ``"iris-gnn"``.
+        drug_ids: Drug identifiers to predict for.
+        disease_id: Target disease identifier.
+
+    Returns:
+        PredictionMatrix for the single agent's output.
+    """
+    from dargus.dbase import DBase
+    from dargus.iris.analog import IrisAnalog
+    from dargus.iris.bayes import IrisBayes
+    from dargus.iris.gnn import IrisGnn
+    from dargus.iris.llm import IrisLlm
+    from dargus.iris.search import IrisSearch
+
+    name = agent_name.lower()
+    mapping: dict[str, Any] = {
+        "iris-search": IrisSearch,
+        "iris-llm": IrisLlm,
+        "iris-analog": IrisAnalog,
+        "iris-bayes": IrisBayes,
+        "iris-gnn": IrisGnn,
+    }
+    agent_cls = mapping.get(name)
+    if agent_cls is None:
+        valid = sorted(mapping.keys())
+        raise ValueError(f"Unknown agent: {agent_name!r}. Valid: {valid}")
+
+    dbase = DBase.global_instance()
+    agent = agent_cls()
+    return agent.predict(dbase, drug_ids or [], disease_id or "", [])
+
+
+def query_expert(expert_name: str) -> dict:
+    """Run a single Expert assessment.
+
+    Note: Full Expert context requires IrisExpert multi-round dialog.
+    Individual Expert calls return a stub result.
+    """
+    return {
+        "expert": expert_name,
+        "note": "Single Expert assessment — full context requires IrisExpert multi-round dialog",
+    }

@@ -209,8 +209,19 @@ class Iris:
         Returns a human-readable response string.
         """
         import json
+        from pathlib import Path
 
-        from dargus.llm_backends import llm_backend_from_config
+        import yaml
+
+        from dargus.llm_backends import LiteLLMBackend, MockLLMBackend, llm_backend_from_config
+
+        # Load config from file if not already populated
+        config = self.config
+        if not config:
+            config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
+            if config_path.exists():
+                with config_path.open("r", encoding="utf-8") as fh:
+                    config = yaml.safe_load(fh) or {}
 
         SYSTEM_PROMPT = """You are Iris, the clinical efficacy prediction assistant for Dargus.
 You help researchers predict drug efficacy for diseases using a multi-level
@@ -235,14 +246,15 @@ Return ONLY valid JSON, no other text. Format:
 {"intent": "chat", "message": "I can help you predict drug efficacy..."}"""
 
         try:
-            backend = llm_backend_from_config(self.config)
+            backend = llm_backend_from_config(config)
         except Exception:
             backend = None
 
-        # Detect cases where no real LLM is configured
-        from dargus.llm_backends import MockLLMBackend
-
-        if backend is None or isinstance(backend, MockLLMBackend):
+        if (
+            backend is None
+            or isinstance(backend, MockLLMBackend)
+            or (isinstance(backend, LiteLLMBackend) and not backend.api_key)
+        ):
             return (
                 "Iris: No LLM backend configured.\n\n"
                 "Set your API key with:\n"

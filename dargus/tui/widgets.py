@@ -11,7 +11,7 @@ from dargus.tui._logo import STYLE_TAGLINE, TAGLINE, build_logo
 
 
 class HeaderWidget(Static):
-    """Displays the Dargus ASCII logo and tagline, with a dim blue CSS border."""
+    """Displays the Dargus ASCII logo and tagline."""
 
     DEFAULT_CSS = """
     HeaderWidget {

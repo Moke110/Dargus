@@ -7,13 +7,23 @@ individual Iris agent access import from ``dargus.iris.*`` as necessary.
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any
 
 import dargus
 
+logger = logging.getLogger(__name__)
+
 
 def _respond(success: bool, data: dict[str, Any] | None = None, error: str | None = None) -> dict:
     return {"success": success, "data": data or {}, "error": error}
+
+
+def _safe_error(tool_name: str, exc: Exception) -> str:
+    """Log the real error server-side, return a generic message to the client."""
+    logger.exception("%s failed", tool_name)
+    return f"Internal error: {tool_name} failed"
 
 
 # ── L1: D-Base CRUD ──────────────────────────────────────────────
@@ -38,8 +48,8 @@ def tool_dbase_query(
                 "records": [json.loads(r.model_dump_json()) for r in records],
             },
         )
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_dbase_query", exc))
 
 
 def tool_dbase_ingest(
@@ -48,7 +58,10 @@ def tool_dbase_ingest(
 ) -> dict:
     """Ingest data into the global D-Base (via DBaseManager)."""
     try:
-        report = dargus.train(datadir=datadir, reset=reset)
+        real_path = os.path.realpath(datadir)
+        if not os.path.isdir(real_path):
+            return _respond(False, error=f"Not a directory: {datadir}")
+        report = dargus.train(datadir=real_path, reset=reset)
         return _respond(
             True,
             data={
@@ -57,8 +70,8 @@ def tool_dbase_ingest(
                 "dbase_size": report.dbase_size,
             },
         )
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_dbase_ingest", exc))
 
 
 def tool_dbase_status() -> dict:
@@ -66,8 +79,8 @@ def tool_dbase_status() -> dict:
     try:
         status = dargus.status()
         return _respond(True, data=status)
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_dbase_status", exc))
 
 
 # ── L2: Iris-* primitives (single-shot, read-only) ───────────────
@@ -91,8 +104,8 @@ def tool_iris_search(
             [],
         )
         return _respond(True, data={"predictions": result})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_iris_search", exc))
 
 
 def tool_iris_llm(
@@ -113,8 +126,8 @@ def tool_iris_llm(
             [],
         )
         return _respond(True, data={"predictions": result})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_iris_llm", exc))
 
 
 def tool_iris_analog(
@@ -135,8 +148,8 @@ def tool_iris_analog(
             [],
         )
         return _respond(True, data={"predictions": result})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_iris_analog", exc))
 
 
 def tool_iris_bayes(
@@ -157,8 +170,8 @@ def tool_iris_bayes(
             [],
         )
         return _respond(True, data={"predictions": result})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_iris_bayes", exc))
 
 
 def tool_iris_gnn(
@@ -179,8 +192,8 @@ def tool_iris_gnn(
             [],
         )
         return _respond(True, data={"predictions": result})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_iris_gnn", exc))
 
 
 # ── L2: Single Expert assessment (single-shot, read-only) ────────
@@ -243,8 +256,8 @@ def tool_predict(
             max_rounds=max_rounds,
         )
         return _respond(True, data={"predictions": predictions})
-    except Exception as exc:  # noqa: BLE001
-        return _respond(False, error=str(exc))
+    except Exception as exc:
+        return _respond(False, error=_safe_error("tool_predict", exc))
 
 
 # ── Tool registry ─────────────────────────────────────────────────

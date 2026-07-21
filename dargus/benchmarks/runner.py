@@ -67,15 +67,20 @@ class BenchmarkRunner:
         rows = []
         for r in records:
             manager = DBaseManager(DBase.global_instance())
+            fc = manager._record_field(r, "fold_change")
+            if fc is None:
+                continue
             rows.append(
                 {
                     "drug_id": manager._record_field(r, "drug_id"),
                     "disease_id": manager._record_field(r, "disease_id"),
                     "endpoint": manager._record_field(r, "endpoint"),
-                    "label": 1 if float(manager._record_field(r, "fold_change")) > 0 else 0,
+                    "label": 1 if float(fc) > 0 else 0,
                 }
             )
         df = pd.DataFrame(rows)
+        if df.empty:
+            return df, df
         test_size = split_cfg.get("test_size", 0.2)
         random_state = split_cfg.get("random_state", 42)
         return StratifiedDrugDiseaseEndpointSplitter(
@@ -126,7 +131,7 @@ class BenchmarkRunner:
 
     def _discard_bench(self) -> None:
         if self.bench_dir.exists():
-            shutil.rmtree(self.bench_dir)
+            shutil.rmtree(self.bench_dir, ignore_errors=True)
 
     def _flatten_metrics(
         self, all_metrics: dict[str, dict[str, dict[str, float]]]

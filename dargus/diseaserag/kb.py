@@ -97,8 +97,8 @@ class DiseaseRAG:
         valid = norms > 0
         similarities = np.zeros(len(self._chunks))
         if valid.any():
-            similarities[valid] = (
-                (self._embeddings[valid] @ query_vec) / (norms[valid] * query_norm)
+            similarities[valid] = (self._embeddings[valid] @ query_vec) / (
+                norms[valid] * query_norm
             )
 
         top_indices = np.argsort(similarities)[::-1][:top_k]

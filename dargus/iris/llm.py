@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from dargus.iris.base import IrisAgent, PredictionMatrix, normalize_prediction_entry
-from dargus.llm_backends import LLMBackend, llm_backend_from_config
+from dargus.llm import DargusLLM, llm_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +17,10 @@ class IrisLlm(IrisAgent):
 
     def __init__(
         self,
-        backend: LLMBackend | None = None,
+        backend: DargusLLM | None = None,
         config: dict[str, Any] | None = None,
     ):
-        self.backend = backend or llm_backend_from_config(config)
+        self.backend = backend or llm_from_config(config)
 
     def predict(
         self,

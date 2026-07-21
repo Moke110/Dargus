@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
             llm_cfg = cfg.get("llm", {})
 
             print("LLM Configuration:")
-            print(f"  provider:    {llm_cfg.get('provider', 'litellm')}")
+            print(f"  provider:    {llm_cfg.get('provider', 'openai_compatible')}")
             print(f"  model:       {llm_cfg.get('model', 'not set')}")
             base_url = llm_cfg.get("base_url", "")
             if base_url:

@@ -1,5 +1,5 @@
 llm:
-  provider: "litellm"
+  provider: "openai_compatible"
   model: "openai/deepseek-v4-pro"
   api_key: "$DARGUS_LLM_API_KEY"
   base_url: "$DARGUS_LLM_BASE_URL"

@@ -98,7 +98,7 @@ def llm_from_config(config: dict[str, Any] | None = None) -> DargusLLM | None:
     api_key = _resolve(llm_cfg.get("api_key"))
     base_url = _resolve(llm_cfg.get("base_url", ""))
     if not base_url:
-        raise ValueError("llm.base_url is required")
+        return None
 
     return DargusLLM(
         model=model,

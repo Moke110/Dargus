@@ -12,8 +12,7 @@ from textual.widgets import Input, RichLog
 
 from dargus import __version__
 from dargus.iris.commander import Iris
-from dargus.tui._logo import build_logo, TAGLINE
-
+from dargus.tui._logo import TAGLINE, build_logo
 
 _GREETING = """Hi, I'm Iris, the director agent of Project Dargus.
 

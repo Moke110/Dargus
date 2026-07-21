@@ -1,0 +1,98 @@
+"""Dargus Rich REPL — interactive clinical efficacy prediction."""
+
+from __future__ import annotations
+
+import os
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.style import Style
+from rich.text import Text
+
+from dargus import __version__
+from dargus.iris.commander import Iris
+from dargus.tui._logo import TAGLINE, build_logo
+
+_GREETING = """\
+Hi, I'm Iris, the director agent of Project Dargus.
+
+Dargus is a clinical efficacy prediction system for drug-development
+researchers. I coordinate multi-level evidence analysis across molecular,
+biomedical, bioinformatics, and clinical domains to predict drug efficacy
+with confidence intervals.
+
+You can ask me things like:
+  • predict aspirin for migraine
+  • what's the evidence for metformin in type 2 diabetes?
+  • status"""
+
+_HELP = """\
+Available commands:
+  /help  — show this message
+  /quit  — exit
+
+Type any natural language query to get started."""
+
+
+def run_repl() -> None:
+    """Launch the Dargus Rich REPL."""
+    console = Console()
+    iris = Iris()
+
+    # ── intro block ───────────────────────────────────────────────────────────────
+    # Logo (boxed)
+    logo_lines = build_logo()
+    logo_text = Text("\n").join(logo_lines)
+    console.print(Panel(logo_text, border_style="white", padding=(0, 2)))
+
+    # Tagline
+    console.print(Text(TAGLINE, style=Style(color="grey70", italic=True)))
+
+    console.print()
+    console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))
+
+    console.print()
+    console.print(
+        Text(f"v{__version__}  ·  /help  /quit", style=Style(color="grey50"))
+    )
+
+    # API key status
+    if os.environ.get("DARGUS_LLM_API_KEY"):
+        console.print(
+            Text("How can I help with your research?", style=Style(color="green"))
+        )
+    else:
+        console.print(
+            Text(
+                "No API key configured. Set one with: "
+                "dargus config set-api-key <provider> <key>",
+                style=Style(color="yellow"),
+            )
+        )
+
+    console.print()
+
+    # ── REPL loop ───────────────────────────────────────────────────────────────
+    while True:
+        try:
+            cmd = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            console.print("Goodbye.", style=Style(color="grey50"))
+            break
+
+        if not cmd:
+            continue
+        if cmd == "/quit":
+            console.print("Goodbye.", style=Style(color="grey50"))
+            break
+        if cmd == "/help":
+            console.print(Panel(_HELP, border_style="white", padding=(0, 2)))
+            console.print()
+            continue
+
+        # Route to Iris agent
+        console.print()  # blank line before response
+        result = iris.process_query(cmd)
+        console.print(result)
+        console.print()

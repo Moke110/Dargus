@@ -52,15 +52,11 @@ def run_repl() -> None:
     console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))
 
     console.print()
-    console.print(
-        Text(f"v{__version__}  ·  /help  /quit", style=Style(color="grey50"))
-    )
+    console.print(Text(f"v{__version__}  ·  /help  /quit", style=Style(color="grey50")))
 
     # API key status
     if os.environ.get("DARGUS_LLM_API_KEY"):
-        console.print(
-            Text("How can I help with your research?", style=Style(color="green"))
-        )
+        console.print(Text("How can I help with your research?", style=Style(color="green")))
     else:
         console.print(
             Text(

@@ -13,6 +13,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from dargus._env import load_dotenv
 from dargus.adapters.mcp.tools import TOOL_DISPATCH, TOOLS
 
 app = Server("dargus")
@@ -47,6 +48,7 @@ async def run_server() -> None:
 
 
 def main() -> None:
+    load_dotenv()
     asyncio.run(run_server())
 
 

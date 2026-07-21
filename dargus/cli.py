@@ -8,10 +8,12 @@ import sys
 import warnings
 
 from dargus import Iris
+from dargus._env import load_dotenv
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``dargus`` CLI."""
+    load_dotenv()
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(prog="dargus", description="Dargus efficacy prediction")
     subparsers = parser.add_subparsers(dest="command")

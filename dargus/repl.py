@@ -42,7 +42,7 @@ def run_repl() -> None:
 
     # ── intro block ───────────────────────────────────────────────────────────────
     # Logo (boxed) — only when terminal is wide enough; text fallback otherwise
-    _LOGO_MIN_WIDTH = 74
+    _LOGO_MIN_WIDTH = 56
     term_w = shutil.get_terminal_size().columns
     if term_w >= _LOGO_MIN_WIDTH:
         logo_lines = build_logo()

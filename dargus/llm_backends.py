@@ -91,13 +91,18 @@ def llm_backend_from_config(config: dict[str, Any] | None = None) -> LLMBackend:
         model = llm_cfg.get("model")
         if not model:
             raise ValueError("llm.model is required when provider='litellm'")
-        api_key = llm_cfg.get("api_key")
-        if isinstance(api_key, str) and api_key.startswith("$"):
-            api_key = os.environ.get(api_key[1:])
+
+        def _resolve(value):
+            if isinstance(value, str) and value.startswith("$"):
+                return os.environ.get(value[1:])
+            return value
+
+        api_key = _resolve(llm_cfg.get("api_key"))
+        base_url = _resolve(llm_cfg.get("base_url"))
         return LiteLLMBackend(
             model=model,
             api_key=api_key,
-            base_url=llm_cfg.get("base_url"),
+            base_url=base_url,
             temperature=float(llm_cfg.get("temperature", 0.0)),
             max_tokens=int(llm_cfg.get("max_tokens", 2048)),
             extra=llm_cfg.get("extra", {}),

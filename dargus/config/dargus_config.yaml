@@ -1,8 +1,8 @@
 llm:
-  provider: "mock"          # Options: mock, litellm
-  model: "gpt-4o-mini"      # Required when provider=litellm
-  api_key: null             # Or "$OPENAI_API_KEY" to read from env
-  base_url: null
+  provider: "litellm"
+  model: "openai/deepseek-v4-pro"
+  api_key: "$DARGUS_LLM_API_KEY"
+  base_url: "$DARGUS_LLM_BASE_URL"
   temperature: 0.0
   max_tokens: 2048
   extra: {}

@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
 
     config_subs.add_parser("show", help="show current LLM configuration")
 
+    subparsers.add_parser("model", help="interactive LLM configuration wizard")
+
     args = parser.parse_args(argv)
 
     if args.command == "train":
@@ -244,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
             config_parser.print_help()
             return 1
 
+    if args.command == "model":
+        return _run_model_wizard()
+
     try:
         run_app()
     except ImportError as exc:
@@ -251,6 +256,96 @@ def main(argv: list[str] | None = None) -> int:
         print("Run: pip install -e .[dev]", file=sys.stderr)
         return 1
     return 0
+
+
+def _run_model_wizard() -> int:
+    """Interactive LLM configuration wizard for CLI and REPL."""
+    import os
+    from pathlib import Path
+
+    import yaml
+
+    from dargus._env import write_dotenv
+    from dargus.llm import DargusLLM, check_llm_connection
+
+    # Load current config
+    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    with config_path.open("r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+    llm_cfg = cfg.get("llm", {})
+
+    cur_base_url = _resolve_config_value(llm_cfg.get("base_url", ""))
+    cur_model = llm_cfg.get("model", "")
+    cur_key = os.environ.get("DARGUS_LLM_API_KEY", "")
+
+    key_display = "********" if cur_key else "(not set)"
+
+    print()
+    print("  Configure LLM connection")
+    print("  ────────────────────────────────")
+    print()
+
+    # Step 1: Base URL
+    prompt = f"  Base URL [{cur_base_url}]: "
+    new_base_url = input(prompt).strip()
+    if not new_base_url:
+        new_base_url = cur_base_url
+
+    # Step 2: Model
+    prompt = f"  Model [{cur_model}]: "
+    new_model = input(prompt).strip()
+    if not new_model:
+        new_model = cur_model
+
+    # Step 3: API Key
+    prompt = f"  API Key [{key_display}]: "
+    new_key = input(prompt).strip()
+    if not new_key:
+        new_key = cur_key
+
+    # Step 4: Test connection
+    print()
+    print("  Testing connection...")
+    print(f"  POST {new_base_url}/chat/completions")
+    llm = DargusLLM(model=new_model, base_url=new_base_url, api_key=new_key or None)
+    result = check_llm_connection(llm)
+    if result["ok"]:
+        print(f"  Model: {result['model']} │ Connected OK ({result['latency_ms']}ms)")
+    else:
+        print(f"  Error: Connection failed — {result['error']}")
+        print("  Check base_url and API key.")
+
+    # Step 5: Confirm save
+    print()
+    choice = input("  Save configuration? [y/N]: ").strip().lower()
+    if choice not in {"y", "yes"}:
+        print("  Discarded.")
+        return 0
+
+    # Write model and base_url to YAML
+    cfg.setdefault("llm", {})
+    cfg["llm"]["model"] = new_model
+    cfg["llm"]["base_url"] = new_base_url
+    cfg["llm"]["provider"] = "openai_compatible"
+    with config_path.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(cfg, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    # Write API key to .env
+    if new_key:
+        write_dotenv("DARGUS_LLM_API_KEY", new_key)
+        os.environ["DARGUS_LLM_API_KEY"] = new_key
+
+    print("  Configuration saved.")
+    return 0
+
+
+def _resolve_config_value(value: str) -> str:
+    """Resolve $ENV_VAR references in config values."""
+    import os
+
+    if isinstance(value, str) and value.startswith("$"):
+        return os.environ.get(value[1:], value)
+    return value
 
 
 def _cli_confirm(plan: dict) -> bool:

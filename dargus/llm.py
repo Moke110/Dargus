@@ -66,6 +66,24 @@ class DargusLLM:
         return self.chat([{"role": "user", "content": prompt}])
 
 
+def check_llm_connection(llm: DargusLLM) -> dict[str, Any]:
+    """Send a minimal test request to verify LLM connectivity.
+
+    Returns:
+        {"ok": True, "model": "...", "latency_ms": 237}
+        {"ok": False, "model": "...", "error": "..."}
+    """
+    import time
+
+    t0 = time.monotonic()
+    try:
+        response = llm.chat([{"role": "user", "content": "Reply with just: OK"}])
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": True, "model": llm.model, "latency_ms": elapsed_ms}
+    except Exception as exc:
+        return {"ok": False, "model": llm.model, "error": str(exc)}
+
+
 def llm_from_config(config: dict[str, Any] | None = None) -> DargusLLM | None:
     """Build a DargusLLM from a Dargus config dict.
 

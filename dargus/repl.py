@@ -98,6 +98,12 @@ def run_repl() -> None:
             console.print(Panel(_HELP, border_style="white", padding=(0, 2)))
             console.print()
             continue
+        if cmd == "/model":
+            from dargus.cli import _run_model_wizard
+
+            _run_model_wizard()
+            console.print()
+            continue
 
         # Route to Iris agent
         console.print()  # blank line before response

@@ -112,7 +112,6 @@ class DBaseManager:
         try:
             from dargus.dbase.nlp import DBaseNLP
 
-            nlp = DBaseNLP()
             text = DBaseNLP.record_to_text(record)
             similar = self.read_records_semantic(
                 text,
@@ -263,6 +262,27 @@ class DBaseManager:
     def reset(self) -> None:
         """Clear all records from D-Base."""
         self.dbase.clear()
+
+    def _record_field(self, record: dict, field_name: str) -> Any:
+        """Extract a field from an evidence dict.
+
+        Handles v0.15.0 evidence dict structure:
+        - Direct dict access for most fields
+        - ``drug_id`` resolved from interventions[0].entity_id
+        - ``endpoint`` resolved from readout_type
+        - ``fold_change`` resolved from readout_value
+        """
+        if field_name in record:
+            return record[field_name]
+        if field_name == "drug_id":
+            for iv in record.get("interventions", []):
+                if iv.get("role") == "primary":
+                    return iv.get("entity_id")
+        if field_name == "endpoint":
+            return record.get("readout_type")
+        if field_name == "fold_change":
+            return record.get("readout_value")
+        return None
 
 
 def _primary_intervention_id(record: dict) -> str | None:

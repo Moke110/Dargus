@@ -38,7 +38,6 @@ class Iris:
         """Report global D-Base status."""
         dbase = DBase.global_instance()
         records = dbase.read_shards()
-        manifest = dbase.read_manifest()
         return {
             "dargus_home": str(default_dargus_home()),
             "dbase_dir": str(dbase.dbase_dir),

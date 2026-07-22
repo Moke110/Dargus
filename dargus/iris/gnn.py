@@ -94,4 +94,12 @@ class IrisGnn(IrisAgent):
         }
 
     def _supporting_records(self, dbase: DBase, drug_id: str) -> list[str]:
-        return [r.record_id for r in dbase.query(drug_id=drug_id)][:10]
+        eids: list[str] = []
+        for rec in dbase.read_shards():
+            for iv in rec.get("interventions", []):
+                if iv.get("entity_id") == drug_id:
+                    eid = rec.get("evidence_id", "")
+                    if eid:
+                        eids.append(eid)
+                    break
+        return eids[:10]

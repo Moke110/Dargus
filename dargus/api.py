@@ -68,10 +68,12 @@ def query_dbase(
         List of matching D-Base records.
     """
     dbase = DBase.global_instance()
-    return dbase.query(
+    from dargus.dbase.manager import DBaseManager
+
+    mgr = DBaseManager(dbase)
+    return mgr.read_records(
         disease_id=disease_id,
         drug_id=drug_ids[0] if drug_ids and len(drug_ids) == 1 else None,
-        template_id=None,
     )
 
 

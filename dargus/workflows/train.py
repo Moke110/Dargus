@@ -67,7 +67,6 @@ def run(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) ->
 def ingest_report(datadir: str, disease_kb_dir: str | None = None) -> IngestionSummary:
     """Generate an ingestion report without writing to D-Base."""
     dbase = DBase.global_instance()
-    manager = DBaseManager(dbase)
     records_before = len(dbase.read_shards())
     # Dry-run: just count what would be ingested
     datadir_path = Path(datadir)

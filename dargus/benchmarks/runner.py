@@ -102,10 +102,12 @@ class BenchmarkRunner:
                     "biological_level": "rct",
                     "drug_id": row["drug_id"],
                     "disease_id": row["disease_id"],
-                    "endpoint": row["endpoint"],
-                    "fold_change": 0.5 if row["label"] == 1 else -0.5,
+                    "readout_type": row.get("endpoint", "PFS"),
+                    "readout_category": "clinic_efficacy_primary",
+                    "readout_value": 0.5 if row["label"] == 1 else -0.5,
+                    "readout_unit": "ratio",
                 },
-                source_metadata={"type": "benchmark_backfill"},
+                source_metadata={"type": "db_accession", "id": "benchmark:backfill"},
             )
             manager.write_record(record, dedup=False)
 

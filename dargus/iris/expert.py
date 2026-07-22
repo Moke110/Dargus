@@ -45,11 +45,13 @@ class IrisExpert(IrisAgent):
                 disease_id=disease_id,
                 endpoints=endpoints,
             )
-            for epid, pred in preds.get(drug_id, {}).items():
-                result[drug_id][epid] = {
-                    "efficacy_low": pred.get("efficacy_low", 0.0),
-                    "efficacy_up": pred.get("efficacy_up", 1.0),
-                    "confidence_level": pred.get("confidence_level", "unknown"),
+            # preds: {drug: {disease: {endpoint: {...}}}}
+            for _disease, eps in preds.get(drug_id, {}).items():
+                for epid, pred in eps.items():
+                    result[drug_id][epid] = {
+                        "efficacy_low": pred.get("efficacy_low", 0.0),
+                        "efficacy_up": pred.get("efficacy_up", 1.0),
+                        "confidence_level": pred.get("confidence_level", "unknown"),
                     "reasoning_mode": self.name,
                     "supporting_records": pred.get("supporting_records", []),
                 }

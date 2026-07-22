@@ -91,8 +91,8 @@ def _extract_and_write(fixture_path: Path, dbase: DBase) -> tuple[dict[str, int]
                                     if not (isinstance(v, float) and pd.isna(v))
                                 },
                                 source_metadata={
-                                    "type": "bench_ingest_test",
-                                    "source": f"{subdir}/{path.name}",
+                                    "type": "file_path",
+                                    "id": f"{subdir}/{path.name}",
                                 },
                             )
                             manager.write_record(record)

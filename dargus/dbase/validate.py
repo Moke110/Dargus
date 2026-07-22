@@ -37,7 +37,7 @@ BIOLOGICAL_LEVELS = frozenset(
 )
 
 CLINICAL_LEVELS = frozenset({"rct", "epi", "rct-sim"})
-SIM_LEVELS = frozenset({l for l in BIOLOGICAL_LEVELS if l.endswith("-sim")})
+SIM_LEVELS = frozenset({level for level in BIOLOGICAL_LEVELS if level.endswith("-sim")})
 NON_CLINICAL_LEVELS = BIOLOGICAL_LEVELS - CLINICAL_LEVELS
 
 READOUT_CATEGORIES = frozenset(
@@ -429,7 +429,7 @@ def _rule_readout(evidence: dict, result: ValidationResult) -> None:
     if not has_readout_value and not is_qual:
         if not (is_two_arm and arm_complete):
             result.hard_errors.append(
-                "readout_value missing and neither complete arm_stats nor qualitative triple present (I6)"
+                "readout_value missing, no complete arm_stats or qualitative triple (I6)"
             )
 
     if has_readout_value and not has_readout_unit:
@@ -469,6 +469,9 @@ def _rule_curies(evidence: dict, result: ValidationResult) -> None:
     def _scan(obj, path=""):
         if isinstance(obj, dict):
             for k, v in obj.items():
+                # evidence_id is an internal content-addressed hash, not a CURIE
+                if k == "evidence_id":
+                    continue
                 if k.endswith("_id") and isinstance(v, str) and v:
                     _validate_curie(v, f"{path}.{k}" if path else k)
                 elif isinstance(v, (dict, list)):

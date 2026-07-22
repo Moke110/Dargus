@@ -54,7 +54,6 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("model", help="interactive LLM configuration wizard")
 
     subparsers.add_parser("test", help="run internal test suite")
-    subparsers.add_parser("test-dbase", help="write evidence to a test D-Base")
 
     args = parser.parse_args(argv)
 
@@ -142,9 +141,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "model":
         return _run_model_wizard()
 
-    if args.command == "test-dbase":
-        return _run_test_dbase()
-
     if args.command == "test":
         return _run_test_suite()
 
@@ -178,33 +174,46 @@ def _clear_dbase() -> int:
 
 
 def _run_test_suite() -> int:
-    """Run the internal Dargus test suite."""
-    import sys
+    """Run the internal Dargus test suite (arrow-key menu)."""
     from pathlib import Path
 
-    import pytest
-
     test_dir = Path(__file__).resolve().parent / "tests"
-    args = ["-q", str(test_dir)]
-    # Forward any additional CLI args for module selection
-    if len(sys.argv) > 2:
-        extra = sys.argv[2:]
-        if extra[0].startswith("--"):
-            mod = extra[0][2:]
-            if mod == "list":
-                modules = sorted(
-                    p.name
-                    for p in test_dir.iterdir()
-                    if p.is_dir() and (p / "__init__.py").exists()
-                )
-                print("Test modules:")
-                for m in modules:
-                    print(f"  {m}")
-                return 0
-            test_path = test_dir / mod
-            if test_path.is_dir():
-                args.append(str(test_path))
-    return pytest.main(args)
+    modules = sorted(
+        p.name for p in test_dir.iterdir() if p.is_dir() and (p / "__init__.py").exists()
+    )
+
+    options = [
+        f"Run All Tests ({_count_tests(test_dir)} tests)",
+        "DB Input — write single evidence to test D-Base",
+    ]
+    for mod in modules:
+        options.append(f"{mod} ({_count_tests(test_dir / mod)} tests)")
+    options.append("Exit")
+
+    while True:
+        idx = _arrow_menu(options)
+        if idx == len(options) - 1:  # Exit
+            print("  Exiting test suite.")
+            return 0
+        if idx == 0:  # Run All
+            import pytest
+
+            pytest.main(["-q", str(test_dir)])
+        elif idx == 1:  # DB Input
+            _run_test_dbase()
+        else:  # specific module
+            import pytest
+
+            mod = modules[idx - 2]
+            pytest.main(["-q", str(test_dir / mod)])
+        print()
+        input("Press ENTER to return to menu...")
+    return 0
+
+
+def _count_tests(path) -> int:
+    """Count test files in a directory (path is a Path object)."""
+    return len(list(path.glob("test_*.py")))
 
 
 def _run_test_dbase() -> int:

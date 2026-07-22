@@ -34,6 +34,7 @@ Available commands:
   /quit         — exit
   /model        — interactive LLM configuration wizard
   /clear-dbase  — clear all records from the global D-Base
+  /test         — run internal test suite
 
 Type any natural language query to get started."""
 
@@ -129,6 +130,12 @@ def run_repl() -> None:
             from dargus.cli import _clear_dbase
 
             _clear_dbase()
+            console.print()
+            continue
+        if cmd == "/test":
+            from dargus.cli import _run_test_suite
+
+            _run_test_suite()
             console.print()
             continue
 

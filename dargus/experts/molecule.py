@@ -16,6 +16,11 @@ class MoleculeExpert(Expert):
     """Assesses drug physicochemical properties, drug-target relationships,
     medicinal chemistry, and formulation evidence at the molecular level."""
 
+    name = "MoleculeExpert"
+    PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
+    PERMITTED_KNOWLEDGE = ["dbase"]
+    SUPPORTED_SKILLS = ["dti_prediction", "admet_assessment", "molecular_similarity"]
+
     SUPPORTED_LEVELS = ("molecular", "molecular-sim")
     DELEGATION_RULES = {
         "cellular": "BiomedExpert",

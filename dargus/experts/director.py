@@ -19,6 +19,11 @@ class FourDExpert(Expert):
     discussion guidance between rounds.
     """
 
+    name = "FourDExpert"
+    PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
+    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
+    SUPPORTED_SKILLS = []
+
     SUPPORTED_LEVELS = (
         "molecular",
         "molecular-sim",

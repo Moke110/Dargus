@@ -16,6 +16,11 @@ class BiomedExpert(Expert):
     """Assesses preclinical wet-lab evidence: cell assays, organoids,
     organ-on-chip, ex-vivo tissue, and animal studies."""
 
+    name = "BiomedExpert"
+    PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
+    PERMITTED_KNOWLEDGE = ["dbase"]
+    SUPPORTED_SKILLS = []
+
     SUPPORTED_LEVELS = (
         "cellular",
         "cellular-sim",

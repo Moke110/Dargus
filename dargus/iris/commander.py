@@ -1,4 +1,4 @@
-"""Iris commander — orchestrates global D-Base workflows."""
+"""Iris — orchestrates Expert assessment via BaseAgent Harness (v0.16.0)."""
 
 from __future__ import annotations
 
@@ -6,29 +6,35 @@ import logging
 import warnings
 from typing import Any, Callable
 
+from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home, working_dbase
-from dargus.iris.analog import IrisAnalog
-from dargus.iris.bayes import IrisBayes
 from dargus.iris.ensemble import IrisEnsemble
-from dargus.iris.expert import IrisExpert
-from dargus.iris.gnn import IrisGnn
-from dargus.iris.llm import IrisLlm
-from dargus.iris.search import IrisSearch
 from dargus.workflows.train import TrainingReport
 from dargus.workflows.train import run as run_train
 
 logger = logging.getLogger(__name__)
 
 
-class Iris:
-    """Coordinates D-Base, expert system, and Iris-* agents."""
+class Iris(BaseAgent):
+    """Coordinates D-Base, Expert system, and Iris prediction agents via Harness."""
 
     name = "Iris"
+    PERMITTED_TOOLS = [
+        "dbase_query",
+        "pubmed_search",
+        "iris_search",
+        "iris_analog",
+        "iris_bayes",
+        "iris_gnn",
+        "iris_llm",
+    ]
+    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
+    SUPPORTED_SKILLS = []  # Iris orchestrates; doesn't execute skills directly
 
     def __init__(self, config: dict[str, Any] | None = None):
-        self.config = config or {}
+        super().__init__(config=config)
 
     def _global_manager(self) -> DBaseManager:
         dbase = DBase.global_instance()
@@ -56,10 +62,7 @@ class Iris:
         endpoints: list[str],
         max_rounds: int = 5,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run full Iris Expert multi-round prediction (v0.15.0).
-
-        Molecule -> Biomed -> Bioinfo -> Clinic -> FourDExpert.
-        """
+        """Run full multi-Expert assessment."""
         from dargus.experts.bioinfo import BioinfoExpert
         from dargus.experts.biomed import BiomedExpert
         from dargus.experts.clinic import ClinicExpert
@@ -85,13 +88,11 @@ class Iris:
                 clinic = ClinicExpert(dbase=manager.dbase)
                 director = FourDExpert(dbase=manager.dbase)
 
-                # Round 1: each domain Expert assesses
                 mol_report = molecule.assess(records, ctx)
                 bio_report = biomed.assess(records, ctx)
                 bioinfo_report = bioinfo.assess(records, ctx)
                 clinic_report = clinic.assess(records, ctx)
 
-                # Director synthesizes
                 all_reports: dict[str, list] = {
                     "MoleculeExpert": [mol_report],
                     "BiomedExpert": [bio_report],
@@ -119,7 +120,7 @@ class Iris:
         datadir: str | None = None,
         confirm_callback: Callable[[dict[str, Any]], bool] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Deprecated: use ``Iris.predict()`` instead."""
+        """Deprecated: use Iris.predict() instead."""
         warnings.warn(
             "Iris.infer() is deprecated, use Iris.predict() instead",
             DeprecationWarning,
@@ -130,8 +131,6 @@ class Iris:
             disease_id=disease_id,
             endpoints=endpoints or [],
         )
-        # Flatten disease dimension for backward compat:
-        # {drug: {disease: {ep: ...}}} -> {drug: {ep: ...}}
         old_result: dict[str, dict[str, dict[str, Any]]] = {}
         for drug, diseases in new_result.items():
             old_result[drug] = {}
@@ -151,31 +150,6 @@ class Iris:
             "Use 'dargus test-dbase' for single-evidence testing."
         )
 
-    def _run_agent(
-        self,
-        name: str,
-        manager: DBaseManager,
-        drug_ids: list[str],
-        disease_id: str,
-        endpoints: list[str],
-    ) -> dict[str, dict[str, dict[str, Any]]] | None:
-        dbase = manager.dbase
-        if name == "Iris-expert":
-            agent = IrisExpert()
-            return agent.predict(dbase, drug_ids, disease_id, endpoints)
-        if name == "Iris-search":
-            return IrisSearch().predict(dbase, drug_ids, disease_id, endpoints)
-        if name == "Iris-analog":
-            return IrisAnalog().predict(dbase, drug_ids, disease_id, endpoints)
-        if name == "Iris-bayes":
-            return IrisBayes().predict(dbase, drug_ids, disease_id, endpoints)
-        if name == "Iris-gnn":
-            return IrisGnn().predict(dbase, drug_ids, disease_id, endpoints)
-        if name == "Iris-llm":
-            config = self.config if self.config else None
-            return IrisLlm(config=config).predict(dbase, drug_ids, disease_id, endpoints)
-        return None
-
     def _empty_pred(self) -> dict[str, Any]:
         return {
             "efficacy_low": 0.0,
@@ -191,8 +165,8 @@ class Iris:
         weights: dict[str, float] | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
         """Aggregate predictions from multiple Iris-* agents."""
-        ensemble = IrisEnsemble()
-        aggregated = ensemble.aggregate(predictions)
+        ensembler = IrisEnsemble()
+        aggregated = ensembler.aggregate(predictions)
         if weights:
             for drug in aggregated:
                 for endpoint in aggregated[drug]:
@@ -212,10 +186,7 @@ class Iris:
         return aggregated
 
     def process_query(self, query: str) -> str:
-        """Parse a natural language query using LLM and route to the appropriate handler.
-
-        Returns a human-readable response string.
-        """
+        """Parse NL query via LLM and route to predict/status."""
         import json
         from pathlib import Path
 
@@ -223,7 +194,6 @@ class Iris:
 
         from dargus.llm import llm_from_config
 
-        # Load config from file if not already populated
         config = self.config
         if not config:
             config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
@@ -232,29 +202,14 @@ class Iris:
                     config = yaml.safe_load(fh) or {}
 
         SYSTEM_PROMPT = """You are Iris, the clinical efficacy prediction assistant for Dargus.
-You help researchers predict drug efficacy for diseases using a multi-level
-evidence analysis system.
-
-Available actions:
-- "predict": Run efficacy prediction for one or more drugs against a disease
-- "status": Check the current state of the global evidence database (D-Base)
-- "clarify": Ask the user for more information if the query is ambiguous
-- "chat": Respond conversationally to general questions about Dargus capabilities
-
-When the user asks to predict drug efficacy, extract:
-- drugs: list of drug names/IDs mentioned
-- disease: the disease name/ID
-- endpoints: any specific clinical endpoints mentioned
-  (e.g., UPDRS-III, ADAS-Cog), or empty list for defaults
-
-Return ONLY valid JSON, no other text. Format:
+Available actions: "predict", "status", "clarify", "chat".
+Return ONLY valid JSON:
 {"intent": "predict", "drugs": ["aspirin"], "disease": "headache", "endpoints": []}
 {"intent": "status"}
 {"intent": "clarify", "question": "Which disease are you interested in?"}
 {"intent": "chat", "message": "I can help you predict drug efficacy..."}"""
 
         backend = llm_from_config(config)
-
         if backend is None:
             return (
                 "Iris: No LLM backend configured.\n\n"
@@ -284,17 +239,12 @@ Return ONLY valid JSON, no other text. Format:
             drugs = parsed.get("drugs", [])
             disease = parsed.get("disease", "")
             endpoints = parsed.get("endpoints", [])
-
             if not drugs or not disease:
                 question = parsed.get("question", "Which drug and disease are you interested in?")
                 return f"Iris: {question}"
 
             try:
-                result = self.predict(
-                    drug_ids=drugs,
-                    disease_id=disease,
-                    endpoints=endpoints or [],
-                )
+                result = self.predict(drug_ids=drugs, disease_id=disease, endpoints=endpoints or [])
             except Exception as exc:
                 return f"Iris: Prediction failed: {exc}"
 
@@ -317,15 +267,6 @@ Return ONLY valid JSON, no other text. Format:
             )
 
         if intent == "clarify":
-            question = parsed.get("question", "Can you provide more details?")
-            return f"Iris: {question}"
+            return f"Iris: {parsed.get('question', 'Can you provide more details?')}"
 
-        # Default: chat
-        message = parsed.get(
-            "message",
-            (
-                "I'm here to help with drug efficacy prediction. "
-                "Try asking me to predict a drug's effect on a disease."
-            ),
-        )
-        return f"Iris: {message}"
+        return f"Iris: {parsed.get('message', 'I help with drug efficacy prediction.')}"

@@ -1,7 +1,5 @@
-"""Iris prediction agents."""
+"""Iris prediction agent — inherits BaseAgent Harness (v0.16.0)."""
 
-from dargus.iris.base import IrisAgent, PredictionMatrix
-from dargus.iris.llm import IrisLlm
-from dargus.iris.search import IrisSearch
+from dargus.iris.commander import Iris
 
-__all__ = ["IrisAgent", "PredictionMatrix", "IrisSearch", "IrisLlm"]
+__all__ = ["Iris"]

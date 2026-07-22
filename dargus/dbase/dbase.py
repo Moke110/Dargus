@@ -150,6 +150,7 @@ class DBase:
         intervention_id: str | None = None,
         disease_id: str | None = None,
         biological_level: str | None = None,
+        evidence_design: str | None = None,
     ) -> list[dict]:
         """Query via Parquet view. Falls back to shard scan if parquet unavailable."""
         try:
@@ -161,6 +162,7 @@ class DBase:
                 intervention_id,
                 disease_id,
                 biological_level,
+                evidence_design,
             )
 
         if not self.parquet_path.exists():
@@ -187,6 +189,8 @@ class DBase:
             df = df[df["disease_id"] == disease_id]
         if biological_level:
             df = df[df["biological_level"] == biological_level]
+        if evidence_design:
+            df = df[df["evidence_design"] == evidence_design]
         return df.to_dict(orient="records")
 
     def _query_shards(
@@ -196,6 +200,7 @@ class DBase:
         intervention_id: str | None = None,
         disease_id: str | None = None,
         biological_level: str | None = None,
+        evidence_design: str | None = None,
     ) -> list[dict]:
         results = self.read_shards()
         if readout_type:
@@ -214,6 +219,8 @@ class DBase:
             results = [r for r in results if r.get("disease_id") == disease_id]
         if biological_level:
             results = [r for r in results if r.get("biological_level") == biological_level]
+        if evidence_design:
+            results = [r for r in results if r.get("evidence_design") == evidence_design]
         return results
 
     def clear(self) -> None:

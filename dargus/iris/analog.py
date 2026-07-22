@@ -59,9 +59,11 @@ class IrisAnalog(IrisAgent):
             primary = next((i for i in interventions if i.get("role") == "primary"), None)
             rec_drug = (primary or {}).get("entity_id", "")
             rec_disease = rec.get("disease_id", "")
-            if rec_drug == drug_id or drug_id in rec_drug:
+            if rec_drug == drug_id:
                 if rec_disease == disease_id:
-                    val = rec.get("readout_value") or rec.get("fold_change")
+                    val = rec.get("readout_value")
+                    if val is None:
+                        val = rec.get("fold_change")
                     if val is not None:
                         analogs.append(
                             {

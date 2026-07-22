@@ -33,8 +33,11 @@ class BenchmarkExtractor:
         }
         all_records = DBase.global_instance().read_shards()
         kept = [r for r in all_records if r.get("evidence_id") not in match_ids]
+        from dargus.dbase.manager import DBaseManager
+
+        blank_mgr = DBaseManager(blank)
         for r in kept:
-            blank.append_shard(r)
+            blank_mgr.write_record(r, dedup=False)
         blank.mark_view_stale()
         return blank
 

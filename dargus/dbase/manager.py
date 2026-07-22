@@ -58,6 +58,7 @@ class DBaseManager:
             intervention_id=iid,
             disease_id=disease_id,
             biological_level=biological_level,
+            evidence_design=evidence_design,
         )
 
     def read_record(self, evidence_id: str) -> dict | None:

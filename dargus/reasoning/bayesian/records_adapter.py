@@ -45,7 +45,9 @@ class RecordsAdapter:
                     continue
 
             # Readout value
-            value = rec.get("readout_value") or rec.get("fold_change")
+            value = rec.get("readout_value")
+            if value is None:
+                value = rec.get("fold_change")
             if value is None:
                 continue
 

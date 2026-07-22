@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 
@@ -54,6 +55,8 @@ def run_repl() -> None:
     console = Console()
     iris = Iris()
 
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     # ── intro block ───────────────────────────────────────────────────────────────
     # Logo (boxed) — only when terminal is wide enough; text fallback otherwise
     _LOGO_MIN_WIDTH = 56
@@ -61,8 +64,11 @@ def run_repl() -> None:
     if term_w >= _LOGO_MIN_WIDTH:
         logo_lines = build_logo()
         logo_text = Text("\n").join(logo_lines)
+        tagline_text = Text(TAGLINE, style=Style(color="grey70", italic=True))
         version_text = Text(f"v{__version__}", style=Style(color="grey50"))
-        combined = Text.assemble(logo_text, Text("\n"), version_text, Text("  "))
+        combined = Text.assemble(
+            logo_text, Text("\n"), tagline_text, Text("\n\n"), version_text, Text("  ")
+        )
         console.print(Panel(combined, border_style="white", padding=(0, 2)))
     else:
         console.print(
@@ -72,9 +78,6 @@ def run_repl() -> None:
                 padding=(0, 2),
             )
         )
-
-    # Tagline
-    console.print(Text(TAGLINE, style=Style(color="grey70", italic=True)))
 
     console.print()
     console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))

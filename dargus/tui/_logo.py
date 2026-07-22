@@ -83,7 +83,7 @@ S = [
     "╚█████╝",
 ]
 
-TAGLINE = " Full-stack Biomedicine Database and Clinical Efficacy Prediction System"
+TAGLINE = " Data-driven Analysis & Reasoning Grounded in Unified Science"
 
 
 # ---------------------------------------------------------------- assembly

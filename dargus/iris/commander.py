@@ -263,7 +263,6 @@ Return ONLY valid JSON, no other text. Format:
             parsed = json.loads(raw.strip())
         except Exception:
             return (
-                f"> {query}\n"
                 "Iris: I had trouble understanding that. Could you rephrase?\n\n"
                 "Examples:\n"
                 "  predict aspirin for migraine\n"
@@ -280,7 +279,7 @@ Return ONLY valid JSON, no other text. Format:
 
             if not drugs or not disease:
                 question = parsed.get("question", "Which drug and disease are you interested in?")
-                return f"> {query}\nIris: {question}"
+                return f"Iris: {question}"
 
             try:
                 result = self.predict(
@@ -289,9 +288,9 @@ Return ONLY valid JSON, no other text. Format:
                     endpoints=endpoints or [],
                 )
             except Exception as exc:
-                return f"> {query}\nIris: Prediction failed: {exc}"
+                return f"Iris: Prediction failed: {exc}"
 
-            lines = [f"> {query}", f"Iris: Prediction for {', '.join(drugs)} on {disease}:"]
+            lines = [f"Iris: Prediction for {', '.join(drugs)} on {disease}:"]
             for drug, diseases in result.items():
                 for disease_name, eps in diseases.items():
                     for ep, pred in eps.items():
@@ -303,7 +302,6 @@ Return ONLY valid JSON, no other text. Format:
         if intent == "status":
             status = self.status()
             return (
-                f"> {query}\n"
                 f"Iris: D-Base status:\n"
                 f"  Records:   {status['n_records']}\n"
                 f"  Templates: {status['n_templates']}\n"
@@ -312,7 +310,7 @@ Return ONLY valid JSON, no other text. Format:
 
         if intent == "clarify":
             question = parsed.get("question", "Can you provide more details?")
-            return f"> {query}\nIris: {question}"
+            return f"Iris: {question}"
 
         # Default: chat
         message = parsed.get(
@@ -322,7 +320,7 @@ Return ONLY valid JSON, no other text. Format:
                 "Try asking me to predict a drug's effect on a disease."
             ),
         )
-        return f"> {query}\nIris: {message}"
+        return f"Iris: {message}"
 
     def _ensure_default_templates(self, dbase: DBase) -> None:
         drug_vocab = "global_drug_vocab"

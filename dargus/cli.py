@@ -184,7 +184,7 @@ def _arrow_menu(options: list[str]) -> int:
         for i, opt in enumerate(options):
             out.write(f"  > {opt}\n" if i == idx else f"    {opt}\n")
         out.write("\n")
-        out.write("  Use ↑/↓ to navigate, ENTER to select\n")
+        out.write("Use ↑/↓ to navigate, ENTER to select\n")
         out.flush()
 
     fd = sys.stdin.fileno()

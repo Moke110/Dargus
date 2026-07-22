@@ -1,0 +1,92 @@
+"""Tests for DBase v0.15.0 — shard JSONL evidence store."""
+
+import tempfile
+
+from dargus.dbase import DBase
+from dargus.dbase.validate import compute_evidence_id, validate_evidence
+
+
+def _make_evidence(**overrides):
+    e = {
+        "biological_level": "molecular",
+        "evidence_design": "single_arm",
+        "readout_type": "ic50",
+        "readout_category": "binding",
+        "readout_value": 5.0,
+        "readout_unit": "nM",
+        "interventions": [
+            {"role": "primary", "entity_type": "small_molecule", "entity_id": "chembl:CHEMBL25"}
+        ],
+        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+    }
+    e.update(overrides)
+    return e
+
+
+def test_dbase_append_and_read_shards():
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        e = _make_evidence(evidence_id="ev_test123", schema_version="v0.15.0")
+        dbase.append_shard(e)
+        records = dbase.read_shards()
+        assert len(records) == 1
+        assert records[0]["evidence_id"] == "ev_test123"
+
+
+def test_dbase_evidence_id_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        e = _make_evidence(evidence_id="ev_real", schema_version="v0.15.0")
+        dbase.append_shard(e)
+        assert dbase.evidence_id_exists("ev_real")
+        assert not dbase.evidence_id_exists("ev_nonexistent")
+
+
+def test_dbase_clear():
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        dbase.append_shard(_make_evidence(evidence_id="ev_1"))
+        assert len(dbase.read_shards()) == 1
+        dbase.clear()
+        assert len(dbase.read_shards()) == 0
+
+
+def test_validate_evidence_ok():
+    result = validate_evidence(_make_evidence())
+    assert result.ok
+
+
+def test_validate_evidence_rejects_empty_sources():
+    result = validate_evidence(_make_evidence(sources=[]))
+    assert not result.ok
+
+
+def test_validate_evidence_rejects_old_clinical_level():
+    result = validate_evidence(
+        _make_evidence(
+            biological_level="clinical",
+            evidence_design="two_arm_comparison",
+        )
+    )
+    assert not result.ok
+
+
+def test_evidence_id_stable():
+    e = {
+        "biological_level": "rct",
+        "evidence_design": "two_arm_comparison",
+        "disease_id": "mondo:0005180",
+        "readout_type": "updrs_iii_change",
+        "readout_category": "clinic_efficacy_primary",
+        "interventions": [
+            {"role": "primary", "entity_type": "small_molecule", "entity_id": "chembl:CHEMBL25"}
+        ],
+        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+    }
+    assert compute_evidence_id(e) == compute_evidence_id(e)
+    assert compute_evidence_id(e).startswith("ev_")
+
+
+def test_dbase_global_instance():
+    dbase = DBase.global_instance()
+    assert dbase.project_id == "global"

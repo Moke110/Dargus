@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("model", help="interactive LLM configuration wizard")
 
+    subparsers.add_parser("test", help="run internal test suite")
     subparsers.add_parser("test-dbase", help="write evidence to a test D-Base")
 
     args = parser.parse_args(argv)
@@ -144,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "test-dbase":
         return _run_test_dbase()
 
+    if args.command == "test":
+        return _run_test_suite()
+
     try:
         run_app()
     except ImportError as exc:
@@ -171,6 +175,36 @@ def _clear_dbase() -> int:
     manager.reset()
     print("Global D-Base cleared.")
     return 0
+
+
+def _run_test_suite() -> int:
+    """Run the internal Dargus test suite."""
+    import sys
+    from pathlib import Path
+
+    import pytest
+
+    test_dir = Path(__file__).resolve().parent / "tests"
+    args = ["-q", str(test_dir)]
+    # Forward any additional CLI args for module selection
+    if len(sys.argv) > 2:
+        extra = sys.argv[2:]
+        if extra[0].startswith("--"):
+            mod = extra[0][2:]
+            if mod == "list":
+                modules = sorted(
+                    p.name
+                    for p in test_dir.iterdir()
+                    if p.is_dir() and (p / "__init__.py").exists()
+                )
+                print("Test modules:")
+                for m in modules:
+                    print(f"  {m}")
+                return 0
+            test_path = test_dir / mod
+            if test_path.is_dir():
+                args.append(str(test_path))
+    return pytest.main(args)
 
 
 def _run_test_dbase() -> int:

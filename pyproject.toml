@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dargus"
-version = "0.15.2"
+version = "0.15.3"
 description = "Clinical efficacy prediction system for drug-development researchers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -76,3 +76,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+testpaths = ["dargus/tests"]

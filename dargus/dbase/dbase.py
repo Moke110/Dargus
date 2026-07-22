@@ -8,17 +8,21 @@ import os
 import uuid
 from pathlib import Path
 
-from dargus.dbase.paths import global_dbase_root
+from dargus.dbase.paths import dbase_root
 from dargus.dbase.vocabulary import VocabularyManager
 
 
 class DBase:
     """Evidence store: shard JSONL (authoritative) + Parquet view (derived)."""
 
-    def __init__(self, project_id: str, root_dir: str | Path):
+    def __init__(self, project_id: str, root_dir: str | Path | None = None):
         self.project_id = project_id
-        self.root = Path(root_dir)
-        self.dbase_dir = self.root / "dbase"
+        if root_dir is None:
+            self.root = dbase_root().parent
+            self.dbase_dir = dbase_root()
+        else:
+            self.root = Path(root_dir)
+            self.dbase_dir = self.root / "dbase"
         self.data_dir = self.dbase_dir / "data"
         self.views_dir = self.dbase_dir / "views"
         self.vocab_path = self.dbase_dir / "vocabularies.json"
@@ -234,4 +238,5 @@ class DBase:
 
     @classmethod
     def global_instance(cls) -> "DBase":
-        return cls(project_id="global", root_dir=global_dbase_root())
+        """Return the singleton-like global D-Base, respecting WORKING_DBASE."""
+        return cls(project_id="global")

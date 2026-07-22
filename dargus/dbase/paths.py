@@ -1,3 +1,5 @@
+"""D-Base path utilities — v0.15.2."""
+
 from __future__ import annotations
 
 import os
@@ -9,6 +11,11 @@ def default_dargus_home() -> Path:
     return Path(os.environ.get("DARGUS_HOME", Path.home() / ".dargus"))
 
 
-def global_dbase_root() -> Path:
-    """Return the root directory under which the global D-Base ``dbase/`` lives."""
-    return default_dargus_home()
+def working_dbase() -> str:
+    """Return the active D-Base subdirectory name."""
+    return os.environ.get("WORKING_DBASE", "dbase")
+
+
+def dbase_root() -> Path:
+    """Full path: {DARGUS_HOME}/{WORKING_DBASE}."""
+    return default_dargus_home() / working_dbase()

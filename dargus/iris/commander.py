@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
-from dargus.dbase.paths import default_dargus_home
+from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.iris.analog import IrisAnalog
 from dargus.iris.bayes import IrisBayes
 from dargus.iris.ensemble import IrisEnsemble
@@ -40,9 +40,9 @@ class Iris:
         records = dbase.read_shards()
         return {
             "dargus_home": str(default_dargus_home()),
+            "working_dbase": working_dbase(),
             "dbase_dir": str(dbase.dbase_dir),
             "n_records": len(records),
-            "n_templates": 0,  # templates removed in v0.15.0
         }
 
     def train(self, datadir: str) -> TrainingReport:
@@ -145,10 +145,11 @@ class Iris:
         split: dict[str, Any] | None = None,
         output_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Run the bench-full-stack workflow."""
-        from dargus.workflows.bench_full_stack import run as run_bench_full_stack
-
-        return run_bench_full_stack(strip=strip, split=split, output_dir=output_dir)
+        """Run the bench-full-stack workflow (deprecated in v0.15.2)."""
+        raise NotImplementedError(
+            "bench-full-stack workflow removed in v0.15.2. "
+            "Use 'dargus test-dbase' for single-evidence testing."
+        )
 
     def _run_agent(
         self,
@@ -311,7 +312,7 @@ Return ONLY valid JSON, no other text. Format:
             return (
                 f"Iris: D-Base status:\n"
                 f"  Records:   {status['n_records']}\n"
-                f"  Templates: {status['n_templates']}\n"
+                f"  Working:   {status['working_dbase']}\n"
                 f"  Location:  {status['dbase_dir']}"
             )
 

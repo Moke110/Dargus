@@ -1,6 +1,6 @@
 """Dargus — clinical efficacy prediction system."""
 
-__version__ = "0.15.0"
+__version__ = "0.15.2"
 
 from dargus.api import (
     benchmark,

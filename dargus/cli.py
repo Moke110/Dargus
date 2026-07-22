@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
 
     subparsers.add_parser("model", help="interactive LLM configuration wizard")
 
+    subparsers.add_parser("test-dbase", help="write evidence to a test D-Base")
+
     args = parser.parse_args(argv)
 
     if args.command == "train":
@@ -139,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "model":
         return _run_model_wizard()
 
+    if args.command == "test-dbase":
+        return _run_test_dbase()
+
     try:
         run_app()
     except ImportError as exc:
@@ -168,8 +173,98 @@ def _clear_dbase() -> int:
     return 0
 
 
+def _run_test_dbase() -> int:
+    """Write a single evidence record to a test D-Base (DARGUS_HOME/dbase-test)."""
+    import json
+    import os
+    from pathlib import Path
+
+    import yaml
+
+    from dargus.dbase import DBase
+    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.paths import default_dargus_home
+
+    test_root = default_dargus_home()
+    test_dbase_dir = test_root / "dbase-test"
+    data_dir = test_dbase_dir / "data"
+
+    # Step 1: check/create test D-Base
+    if data_dir.exists():
+        records = []
+        for shard in sorted(data_dir.glob("shard-*.jsonl")):
+            with shard.open("r", encoding="utf-8") as fh:
+                records.extend(json.loads(line) for line in fh if line.strip())
+        print(f"Test D-Base found ({len(records)} records).")
+        choice = input("Clear existing data? [y/N]: ").strip().lower()
+        if choice in ("y", "yes"):
+            import shutil
+
+            shutil.rmtree(test_dbase_dir)
+            test_dbase_dir.mkdir(parents=True)
+            (test_dbase_dir / "data").mkdir()
+            (test_dbase_dir / "views").mkdir()
+            print("Cleared.")
+    else:
+        test_dbase_dir.mkdir(parents=True)
+        data_dir.mkdir()
+        (test_dbase_dir / "views").mkdir()
+        print(f"Test D-Base created at {test_dbase_dir}")
+
+    # Step 2: switch to test database
+    old_working = os.environ.get("WORKING_DBASE")
+    os.environ["WORKING_DBASE"] = "dbase-test"
+
+    try:
+        # Step 3: get input
+        raw_input = input("Paste evidence JSON or path to file (.yaml/.json): ").strip()
+
+        # Step 4: parse input
+        if raw_input.startswith("{") or raw_input.startswith("["):
+            raw_data = json.loads(raw_input)
+        else:
+            input_path = Path(raw_input).expanduser()
+            if not input_path.exists():
+                print(f"File not found: {input_path}")
+                return 1
+            content = input_path.read_text(encoding="utf-8")
+            if input_path.suffix in (".yaml", ".yml"):
+                raw_data = yaml.safe_load(content) or {}
+            else:
+                raw_data = json.loads(content)
+
+        # Step 5: build + write
+        dbase = DBase.global_instance()
+        manager = DBaseManager(dbase)
+        evidence = manager.build_evidence(
+            raw_data,
+            source_metadata={"type": "file_path", "id": "test-dbase:cli"},
+        )
+
+        wrote = manager.write_record(evidence)
+        status = "added" if wrote is True else "duplicate — skipped"
+
+        # Step 6: report
+        print()
+        print("  Instance written.")
+        print("  ────────────────────────────────")
+        print(f"  Evidence ID:     {evidence['evidence_id']}")
+        print(f"  Biological level: {evidence.get('biological_level', '?')}")
+        print(f"  Readout type:     {evidence.get('readout_type', '?')}")
+        print(f"  Status:           {status}")
+
+    finally:
+        # Step 7: restore default D-Base
+        if old_working is not None:
+            os.environ["WORKING_DBASE"] = old_working
+        else:
+            os.environ.pop("WORKING_DBASE", None)
+        print(f"  Working D-Base restored to default ({default_dargus_home() / 'dbase'}).")
+
+    return 0
+
+
 def _arrow_menu(options: list[str]) -> int:
-    """Display an arrow-key navigable menu. Returns selected index (0-based)."""
     import sys
     import termios
     import tty

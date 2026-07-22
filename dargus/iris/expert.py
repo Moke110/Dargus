@@ -52,7 +52,7 @@ class IrisExpert(IrisAgent):
                         "efficacy_low": pred.get("efficacy_low", 0.0),
                         "efficacy_up": pred.get("efficacy_up", 1.0),
                         "confidence_level": pred.get("confidence_level", "unknown"),
-                    "reasoning_mode": self.name,
-                    "supporting_records": pred.get("supporting_records", []),
-                }
+                        "reasoning_mode": self.name,
+                        "supporting_records": pred.get("supporting_records", []),
+                    }
         return result

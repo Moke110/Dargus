@@ -3,6 +3,8 @@
 Single-row "DARGUS" wordmark rendered with rich.
   D:     8 lines x 10 cols, thick filled, white bold
   ARGUS: 6 lines x 7 cols each, thick filled, white bold, baseline-aligned with D
+Every letter carries a hollow ring pupil (○, the eye of Argus),
+each at a different relative position inside its letter.
 """
 
 from rich.style import Style
@@ -17,12 +19,12 @@ GAP = "  "  # gap between D and A (same as letter spacing)
 SPACING = "  "  # letter spacing inside "ARGUS"
 
 # ------------------------------------------------------- D: 8 lines x 10 cols, thick filled
-# straight left edge, rounded right corners
+# straight left edge, rounded right corners; pupil: upper-left of the counter
 D = [
     "█████╗    ",
     "████████╗ ",
     "██╔════██╗",
-    "██║    ██║",
+    "██║○   ██║",
     "██║    ██║",
     "██╚════██║",
     "████████╝ ",
@@ -30,10 +32,16 @@ D = [
 ]
 
 # ------------------------------------------------- "ARGUS": 6 lines x 7 cols, thick filled
+# pupil positions:
+#   A: bottom-right of the enclosed counter (above the crossbar)
+#   R: upper-right of the bowl counter
+#   G: interior whitespace, upper-left
+#   U: interior whitespace, left side, vertically centered
+#   S: interior whitespace of the lower half, upper-right
 A = [
     " █████ ",
     "██   ██",
-    "██ ● ██",  # the pupil - Argus, the hundred-eyed giant
+    "██  ○██",
     "███████",
     "██   ██",
     "██   ██",
@@ -41,7 +49,7 @@ A = [
 
 R = [
     "█████╗ ",
-    "██   ██",
+    "██  ○██",
     "██   ██",
     "██████╝",
     "██  ██ ",
@@ -51,7 +59,7 @@ R = [
 G = [
     " █████╗",
     "██   ═╝",
-    "██     ",
+    "██○    ",
     "██  ███",
     "██   ██",
     " █████╝",
@@ -62,7 +70,7 @@ U = [
     "██   ██",
     "██   ██",
     "██   ██",
-    "██   ██",
+    "██○  ██",
     "╚█████╝",
 ]
 
@@ -70,12 +78,12 @@ S = [
     " █████╗",
     "██     ",
     "╚█████╗",
-    "     ██",
+    "    ○██",
     "██   ██",
     "╚█████╝",
 ]
 
-TAGLINE = " Clinical Efficacy Prediction System"
+TAGLINE = " Full-stack Biomedicine Database and Clinical Efficacy Prediction System"
 
 
 # ---------------------------------------------------------------- assembly

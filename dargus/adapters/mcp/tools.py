@@ -184,7 +184,7 @@ def tool_predict(
     endpoints: list[str] | None = None,
     max_rounds: int = 5,
 ) -> dict:
-    """Run full Iris -> IrisExpert multi-round prediction."""
+    """Run full Iris -> Iris multi-round prediction."""
     try:
         predictions = dargus.predict(
             drug_ids=drug_ids,
@@ -316,7 +316,7 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "dargus_predict",
         "description": (
-            "Run full Iris -> IrisExpert multi-round prediction for drugs against a disease."
+            "Run full Iris -> Iris multi-round prediction for drugs against a disease."
         ),
         "inputSchema": {
             "type": "object",

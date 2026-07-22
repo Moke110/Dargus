@@ -90,7 +90,10 @@ class ReportSearcher(BaseAgent):
         ]
 
     def run(self, task_spec: dict[str, Any]) -> dict[str, Any]:
-        """Execute a literature/data search task."""
+        """Execute a literature/data search task.
+
+        Returns dict for backward compat. For AgentReport use run_harness().
+        """
         result = self.search(
             drug_ids=task_spec.get("drug_ids", []),
             disease_id=task_spec.get("disease_id", ""),

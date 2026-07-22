@@ -18,7 +18,7 @@ def predict(
     endpoints: list[str],
     max_rounds: int = 5,
 ) -> dict[str, dict[str, dict[str, Any]]]:
-    """Run a full Iris -> IrisExpert multi-round prediction.
+    """Run a full Iris -> Iris multi-round prediction.
 
     Args:
         drug_ids: Drug identifiers to predict for.
@@ -150,10 +150,10 @@ def predict_single_agent(
 def query_expert(expert_name: str) -> dict:
     """Run a single Expert assessment.
 
-    Note: Full Expert context requires IrisExpert multi-round dialog.
+    Note: Full Expert context requires Iris multi-round dialog.
     Individual Expert calls return a stub result.
     """
     return {
         "expert": expert_name,
-        "note": "Single Expert assessment — full context requires IrisExpert multi-round dialog",
+        "note": "Single Expert assessment — full context requires Iris multi-round dialog",
     }

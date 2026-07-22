@@ -185,6 +185,7 @@ def _run_test_suite() -> int:
     options = [
         f"Run All Tests ({_count_tests(test_dir)} tests)",
         "DB Input — write single evidence to test D-Base",
+        "Bulk Input — bulk write evidence instances from db-input-instances/",
     ]
     for mod in modules:
         options.append(f"{mod} ({_count_tests(test_dir / mod)} tests)")
@@ -201,10 +202,12 @@ def _run_test_suite() -> int:
             pytest.main(["-q", str(test_dir)])
         elif idx == 1:  # DB Input
             _run_test_dbase()
+        elif idx == 2:  # Bulk Input
+            _run_test_bulk_input()
         else:  # specific module
             import pytest
 
-            mod = modules[idx - 2]
+            mod = modules[idx - 3]
             pytest.main(["-q", str(test_dir / mod)])
         print()
         input("Press ENTER to return to menu...")
@@ -307,6 +310,233 @@ def _run_test_dbase() -> int:
     return 0
 
 
+def _run_test_bulk_input() -> int:
+    """Bulk-write evidence .json files from a configurable directory to the test D-Base."""
+    import json
+    import os
+    import shutil
+    import time
+    from pathlib import Path
+
+    import yaml
+
+    from dargus.dbase import DBase
+    from dargus.dbase.manager import DBaseManager, DuplicateReviewRequest
+    from dargus.dbase.paths import default_dargus_home
+
+    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+
+    # Load current config
+    with config_path.open("r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+
+    # Resolve saved bulk_input_dir with ~ expansion
+    saved_dir = cfg.get("test", {}).get("bulk_input_dir", "")
+    default_dir = "~/dargus-dev/tests/db-input-instances"
+    current_dir = Path(saved_dir).expanduser() if saved_dir else Path(default_dir).expanduser()
+
+    # Show current dir and ask for change
+    print(f"\n  Bulk Input directory: {current_dir}")
+    choice = input("  Change directory? Enter new path or ENTER to keep: ").strip()
+    if choice:
+        new_dir = Path(choice).expanduser()
+        if not new_dir.is_dir():
+            print(f"  Directory not found: {new_dir}")
+            return 1
+        current_dir = new_dir
+        # Persist to config
+        cfg.setdefault("test", {})["bulk_input_dir"] = str(new_dir)
+        with config_path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(cfg, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        print("  Saved to config.")
+
+    if not current_dir.is_dir():
+        print(f"  Instance directory not found: {current_dir}")
+        print("  Run Biomni prompt_2 first to generate evidence .json files.")
+        return 1
+
+    json_files = sorted(current_dir.glob("*.json"))
+    if not json_files:
+        print(f"  No .json files found in {current_dir}")
+        return 1
+
+    # Step 1: check/create test D-Base
+    test_root = default_dargus_home()
+    test_dbase_dir = test_root / "dbase-test"
+    data_dir = test_dbase_dir / "data"
+
+    if data_dir.exists():
+        records = []
+        for shard in sorted(data_dir.glob("shard-*.jsonl")):
+            with shard.open("r", encoding="utf-8") as fh:
+                records.extend(json.loads(line) for line in fh if line.strip())
+        print(f"  Test D-Base found ({len(records)} records).")
+        choice = input("  Clear existing data? [y/N]: ").strip().lower()
+        if choice in ("y", "yes"):
+            shutil.rmtree(test_dbase_dir)
+            test_dbase_dir.mkdir(parents=True)
+            (test_dbase_dir / "data").mkdir()
+            (test_dbase_dir / "views").mkdir()
+            print("  Cleared.")
+    else:
+        test_dbase_dir.mkdir(parents=True)
+        data_dir.mkdir()
+        (test_dbase_dir / "views").mkdir()
+        print(f"  Test D-Base created at {test_dbase_dir}")
+
+    # Step 2: switch to test database
+    old_working = os.environ.get("WORKING_DBASE")
+    os.environ["WORKING_DBASE"] = "dbase-test"
+
+    dbase = DBase.global_instance()
+    manager = DBaseManager(dbase)
+
+    added = 0
+    duplicates = 0
+    hard_rejects = 0
+    errors = 0
+    error_details: list[str] = []
+    total = len(json_files)
+    t0 = time.perf_counter()
+    bar_width = 30
+
+    try:
+        print()
+
+        for i, jf in enumerate(json_files):
+            # Parse
+            try:
+                raw_data = json.loads(jf.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                hard_rejects += 1
+                error_details.append(f"{jf.name}: JSON parse error — {exc}")
+                _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+                continue
+
+            # Build
+            try:
+                evidence = manager.build_evidence(
+                    raw_data,
+                    source_metadata={"type": "file_path", "id": f"test-dbase:bulk:{jf.name}"},
+                )
+            except ValueError as exc:
+                hard_rejects += 1
+                raw_msg = str(exc)
+                # Trim validation error list for display
+                msg = raw_msg[:120] + ("..." if len(raw_msg) > 120 else "")
+                error_details.append(f"{jf.name}: {msg}")
+                _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+                continue
+            except Exception as exc:
+                errors += 1
+                error_details.append(f"{jf.name}: build_evidence failed — {exc}")
+                _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+                continue
+
+            # Write
+            try:
+                result = manager.write_record(evidence)
+            except ValueError as exc:
+                hard_rejects += 1
+                raw_msg = str(exc)
+                msg = raw_msg[:120] + ("..." if len(raw_msg) > 120 else "")
+                error_details.append(f"{jf.name}: {msg}")
+                _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+                continue
+            except Exception as exc:
+                errors += 1
+                error_details.append(f"{jf.name}: write_record failed — {exc}")
+                _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+                continue
+
+            if result is True:
+                added += 1
+            elif isinstance(result, DuplicateReviewRequest):
+                duplicates += 1
+            else:
+                duplicates += 1
+
+            _draw_progress(i + 1, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+
+        # final newline after progress bar
+        print()
+
+    finally:
+        # Step 7: restore default D-Base
+        if old_working is not None:
+            os.environ["WORKING_DBASE"] = old_working
+        else:
+            os.environ.pop("WORKING_DBASE", None)
+
+    elapsed = time.perf_counter() - t0
+    rate = total / elapsed if elapsed > 0 else 0
+
+    # Rebuild view for queryability (best-effort; parquet engine may be absent)
+    try:
+        dbase.rebuild_view()
+    except Exception:
+        pass
+
+    # Step 6: report
+    print()
+    print("  Bulk input complete.")
+    print("  ────────────────────────────────")
+    print(f"  Directory:        {current_dir}")
+    print(f"  Files processed:  {total}")
+    print(f"  Added:            {added}")
+    print(f"  Duplicates:       {duplicates}")
+    print(f"  Hard rejects:     {hard_rejects}")
+    print(f"  Errors:           {errors}")
+    print(f"  Time:             {elapsed:.1f}s ({rate:.0f} files/s)")
+    if error_details:
+        print("\n  Details (first 10):")
+        for detail in error_details[:10]:
+            print(f"    - {detail}")
+        if len(error_details) > 10:
+            print(f"    ... and {len(error_details) - 10} more")
+    print(f"\n  Working D-Base restored to default ({default_dargus_home() / 'dbase'}).")
+
+    return 0
+
+
+def _draw_progress(
+    done: int,
+    total: int,
+    bar_width: int,
+    added: int,
+    dup: int,
+    rejects: int,
+    errs: int,
+    t0: float,
+) -> None:
+    """Draw a single-line progress bar, overwriting in-place.
+
+    Never emits a newline. Pads to COLUMNS (or 80) with spaces so a shorter
+    successor always fully overwrites a longer predecessor, even after terminal
+    resize.
+    """
+    import shutil
+    import sys
+    import time
+
+    frac = done / total if total > 0 else 0
+    filled = int(bar_width * frac)
+    bar = "█" * filled + "░" * (bar_width - filled)
+    elapsed = time.perf_counter() - t0
+    rate = done / elapsed if elapsed > 0 else 0
+    remain = (total - done) / rate if rate > 0 else 0
+
+    col = shutil.get_terminal_size((80, 24)).columns
+    line = (
+        f"  [{bar}] {done}/{total}  "
+        f"added={added}  dup={dup}  reject={rejects}  err={errs}  "
+        f"{rate:.0f} f/s  ETA {remain:.0f}s"
+    )
+    line = line[: col - 1]  # never wrap
+    sys.stdout.write("\r" + line.ljust(col - 1, " ") + "\r")
+    sys.stdout.flush()
+
+
 def _arrow_menu(options: list[str]) -> int:
     import sys
     import termios
@@ -314,22 +544,29 @@ def _arrow_menu(options: list[str]) -> int:
 
     idx = 0
     n = len(options)
+    # total lines drawn: blank line + options + blank + help
+    total_lines = n + 3
+    _first = True
 
     def _draw():
+        nonlocal _first
         out = sys.stdout
-        out.write("\033[u\033[J")  # restore cursor + clear to end of screen
-        out.write("\n")
+        if not _first:
+            out.write(f"\r\033[{total_lines}A")  # return to col 0, move up
+        _first = False
+        out.write("\r\033[J")  # CR + clear to end of screen
+        out.write("\r\n")
         for i, opt in enumerate(options):
-            out.write(f"  > {opt}\n" if i == idx else f"    {opt}\n")
-        out.write("\n")
-        out.write("Use ↑/↓ to navigate, ENTER to select\n")
+            prefix = "  > " if i == idx else "    "
+            out.write(f"\r{prefix}{opt}\r\n")
+        out.write("\r\n")
+        out.write("\rUse ↑/↓ to navigate, ENTER to select\r\n")
         out.flush()
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        sys.stdout.write("\033[s")  # save cursor position
         _draw()
         while True:
             ch = sys.stdin.read(1)

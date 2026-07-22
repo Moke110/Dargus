@@ -14,7 +14,7 @@ class FourDExpert(Expert):
     """Disease & Drug Development Director.
 
     Holds broad-but-shallow knowledge across the full drug development
-    stack. Does NOT perform technical orchestration (that's IrisExpert's job).
+    stack. Does NOT perform technical orchestration (that's Iris's job).
     Synthesizes multi-Expert findings into a final conclusion and provides
     discussion guidance between rounds.
     """

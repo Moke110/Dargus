@@ -64,9 +64,7 @@ def test_validate_evidence_rejects_empty_sources():
 
 
 def test_validate_evidence_rejects_invalid_level():
-    result = validate_evidence(
-        _make_evidence(biological_level="clinical")
-    )
+    result = validate_evidence(_make_evidence(biological_level="clinical"))
     assert not result.ok
 
 
@@ -135,9 +133,7 @@ def test_validate_xy_count_mismatch():
 
 def test_validate_y_category_invalid():
     result = validate_evidence(
-        _make_evidence(
-            y={"type": "test", "category": "not_a_real_category", "value": [1.0]}
-        )
+        _make_evidence(y={"type": "test", "category": "not_a_real_category", "value": [1.0]})
     )
     assert not result.ok
 

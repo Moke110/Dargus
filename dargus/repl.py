@@ -37,6 +37,18 @@ Available commands:
 Type any natural language query to get started."""
 
 
+def _get_current_model() -> str:
+    """Read the current LLM model name from dargus_config.yaml."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    with config_path.open("r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+    return cfg.get("llm", {}).get("model", "?") or "?"
+
+
 def run_repl() -> None:
     """Launch the Dargus Rich REPL."""
     console = Console()
@@ -87,6 +99,8 @@ def run_repl() -> None:
     # ── REPL loop ───────────────────────────────────────────────────────────────
     while True:
         try:
+            model_name = _get_current_model()
+            console.rule(f"[grey50]{model_name}[/]", align="right", style=Style(color="grey50"))
             cmd = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()

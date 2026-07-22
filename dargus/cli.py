@@ -179,6 +179,7 @@ def _arrow_menu(options: list[str]) -> int:
 
     def _draw():
         out = sys.stdout
+        out.write("\033[u\033[J")  # restore cursor + clear to end of screen
         out.write("\n")
         for i, opt in enumerate(options):
             out.write(f"  > {opt}\n" if i == idx else f"    {opt}\n")
@@ -190,6 +191,7 @@ def _arrow_menu(options: list[str]) -> int:
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
+        sys.stdout.write("\033[s")  # save cursor position
         _draw()
         while True:
             ch = sys.stdin.read(1)
@@ -201,7 +203,6 @@ def _arrow_menu(options: list[str]) -> int:
                     idx = (idx - 1) % n
                 elif nxt == "[B":
                     idx = (idx + 1) % n
-                sys.stdout.write(f"\033[{n + 3}A\033[J")
                 _draw()
             elif ch == "\x03":
                 raise KeyboardInterrupt

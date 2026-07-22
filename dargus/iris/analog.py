@@ -1,3 +1,5 @@
+"""IrisAnalog v0.15.0 — evidence dict API."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -35,7 +37,6 @@ class IrisAnalog(IrisAgent):
                         "confidence_level": "insufficient_data",
                     }
                     continue
-
                 values = [r["value"] for r in analog_records]
                 mean = float(np.mean(values))
                 std = float(np.std(values)) if len(values) > 1 else 1.0
@@ -45,7 +46,7 @@ class IrisAnalog(IrisAgent):
                 result[drug_id][endpoint] = {
                     "efficacy_low": efficacy_low,
                     "efficacy_up": efficacy_up,
-                    "supporting_records": [r["record_id"] for r in analog_records[:10]],
+                    "supporting_records": [r["evidence_id"] for r in analog_records[:10]],
                     "reasoning_mode": self.name,
                     "confidence_level": "analogical_evidence",
                 }
@@ -53,41 +54,19 @@ class IrisAnalog(IrisAgent):
 
     def _find_analogs(self, dbase: DBase, drug_id: str, disease_id: str) -> list[dict]:
         analogs = []
-        target_records = dbase.query()
-        for rec in target_records:
-            schema = dbase._templates.get(rec.template_id)
-            if schema is None:
-                continue
-            rec_drug = self._factor_value(dbase, rec, schema, "drug_id")
-            rec_disease = self._factor_value(dbase, rec, schema, "disease_id")
-            if rec_drug == drug_id and rec_disease == disease_id:
-                val = self._read_value(dbase, rec, schema)
-                if val is not None:
-                    analogs.append({"record_id": rec.record_id, "value": val})
+        for rec in dbase.read_shards():
+            interventions = rec.get("interventions", [])
+            primary = next((i for i in interventions if i.get("role") == "primary"), None)
+            rec_drug = (primary or {}).get("entity_id", "")
+            rec_disease = rec.get("disease_id", "")
+            if rec_drug == drug_id or drug_id in rec_drug:
+                if rec_disease == disease_id:
+                    val = rec.get("readout_value") or rec.get("fold_change")
+                    if val is not None:
+                        analogs.append(
+                            {
+                                "evidence_id": rec.get("evidence_id", ""),
+                                "value": float(val),
+                            }
+                        )
         return analogs
-
-    def _factor_value(self, dbase: DBase, rec, schema, field_name: str) -> str | None:
-        try:
-            idx = schema.field_index(field_name)
-        except KeyError:
-            return None
-        indices = rec.sparse_vector.get("indices", [])
-        values = rec.sparse_vector.get("values", [])
-        if idx not in indices:
-            return None
-        val = int(values[indices.index(idx)])
-        field = schema.field_def(field_name)
-        vocab_ref = field.vocabulary_ref or field_name
-        return dbase.vocab.reverse_lookup(vocab_ref, val)
-
-    def _read_value(self, dbase: DBase, rec, schema) -> float | None:
-        for field_name in ["fold_change", "readout"]:
-            try:
-                idx = schema.field_index(field_name)
-            except KeyError:
-                continue
-            indices = rec.sparse_vector.get("indices", [])
-            values = rec.sparse_vector.get("values", [])
-            if idx in indices:
-                return float(values[indices.index(idx)])
-        return None

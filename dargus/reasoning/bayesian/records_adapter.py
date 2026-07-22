@@ -1,10 +1,12 @@
+"""D-Base record adapter v0.15.0 — evidence dict API."""
+
 from __future__ import annotations
 
 import numpy as np
 
 from dargus.dbase import DBase
 
-LEVEL_ORDER = ["molecular", "cellular", "exvivo", "animal", "clinical"]
+LEVEL_ORDER = ["molecular", "cellular", "exvivo", "animal", "rct", "epi"]
 
 
 class RecordsAdapter:
@@ -22,62 +24,39 @@ class RecordsAdapter:
         group_list: list[int] = []
         record_ids: list[str] = []
 
-        records = self.dbase.query(disease_id=disease_id)
+        records = self.dbase.read_shards()
         group_counter = 0
         for rec in records:
-            if rec.template_id not in self.dbase._templates:
+            # Drug match via interventions
+            interventions = rec.get("interventions", [])
+            primary = next((i for i in interventions if i.get("role") == "primary"), None)
+            rec_drug = (primary or {}).get("entity_id", "")
+            if rec_drug not in drug_ids:
                 continue
-            schema = self.dbase._templates[rec.template_id]
 
-            # Check drug match
-            try:
-                drug_idx = schema.field_index("drug_id")
-            except KeyError:
-                continue
-            indices = rec.sparse_vector.get("indices", [])
-            values = rec.sparse_vector.get("values", [])
-            if drug_idx not in indices:
-                continue
-            drug_val = values[indices.index(drug_idx)]
-            drug_term = self.dbase.vocab.reverse_lookup(
-                schema.field_def("drug_id").vocabulary_ref or "drug_id", int(drug_val)
-            )
-            if drug_term not in drug_ids:
+            # Disease match
+            if rec.get("disease_id") != disease_id:
                 continue
 
             # Endpoint filter
             if endpoints:
-                try:
-                    endpoint_idx = schema.field_index("endpoint")
-                    if endpoint_idx in indices:
-                        endpoint_val = values[indices.index(endpoint_idx)]
-                        endpoint_term = self.dbase.vocab.reverse_lookup(
-                            schema.field_def("endpoint").vocabulary_ref or "endpoint",
-                            int(endpoint_val),
-                        )
-                        if endpoint_term not in endpoints:
-                            continue
-                except KeyError:
-                    pass
-
-            # Read fold_change if present, else readout
-            value = None
-            for field_name in ["fold_change", "readout"]:
-                try:
-                    idx = schema.field_index(field_name)
-                    if idx in indices:
-                        value = float(values[indices.index(idx)])
-                        break
-                except KeyError:
+                rec_ep = rec.get("readout_type", "") or rec.get("endpoint", "")
+                if rec_ep not in endpoints:
                     continue
+
+            # Readout value
+            value = rec.get("readout_value") or rec.get("fold_change")
             if value is None:
                 continue
 
-            level = self._level_for_record(rec)
-            y_list.append(value)
-            level_list.append(LEVEL_ORDER.index(level))
+            # Level
+            level = rec.get("biological_level", "molecular")
+            level_idx = LEVEL_ORDER.index(level) if level in LEVEL_ORDER else 0
+
+            y_list.append(float(value))
+            level_list.append(level_idx)
             group_list.append(group_counter)
-            record_ids.append(rec.record_id)
+            record_ids.append(rec.get("evidence_id", ""))
             group_counter += 1
 
         return (
@@ -86,22 +65,3 @@ class RecordsAdapter:
             np.array(group_list, dtype=int),
             record_ids,
         )
-
-    def _level_for_record(self, rec) -> str:
-        schema = self.dbase._templates.get(rec.template_id)
-        if schema is None:
-            return "molecular"
-        try:
-            idx = schema.field_index("biological_level")
-        except KeyError:
-            return "molecular"
-        indices = rec.sparse_vector.get("indices", [])
-        values = rec.sparse_vector.get("values", [])
-        if idx not in indices:
-            return "molecular"
-        val = int(values[indices.index(idx)])
-        field = schema.field_def("biological_level")
-        vocab = field.vocabulary
-        if val < len(vocab):
-            return vocab[val]
-        return "molecular"

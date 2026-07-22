@@ -1,220 +1,272 @@
+"""DBaseManager v0.15.0 — sole access gate to D-Base (evidence dict API)."""
+
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from dargus.dbase import DBase, TemplateRecord
+from dargus.dbase.dbase import DBase
+from dargus.dbase.validate import compute_evidence_id, validate_evidence
 
-_UNIT_SUFFIXES = frozenset({"nm", "um", "mm", "mgml", "μm"})
+
+class DuplicateReviewRequest:
+    """Soft-flag result when semantic similarity >= threshold."""
+
+    def __init__(
+        self,
+        incoming_raw: dict[str, Any],
+        incoming_evidence: dict[str, Any],
+        candidate_evidence: dict[str, Any],
+        similarity_score: float,
+        candidate_evidence_id: str,
+    ) -> None:
+        self.incoming_raw = incoming_raw
+        self.incoming_evidence = incoming_evidence
+        self.candidate_evidence = candidate_evidence
+        self.similarity_score = similarity_score
+        self.candidate_evidence_id = candidate_evidence_id
 
 
 class DBaseManager:
-    """Single read/write interface to D-Base."""
+    """Single read/write interface to D-Base (v0.15.0)."""
 
-    def __init__(self, dbase: DBase):
+    def __init__(self, dbase: DBase) -> None:
         self.dbase = dbase
+
+    # ── read ──────────────────────────────────────────────────────────────
 
     def read_records(
         self,
-        template_id: str | None = None,
-        drug_id: str | None = None,
+        readout_type: str | None = None,
+        readout_category: str | None = None,
+        intervention_id: str | None = None,
         disease_id: str | None = None,
-    ) -> list[TemplateRecord]:
-        """Read records matching the provided filters."""
-        return self.dbase.query(
-            template_id=template_id,
-            drug_id=drug_id,
+        biological_level: str | None = None,
+        evidence_design: str | None = None,
+        *,
+        drug_id: str | None = None,
+        template_id: str | None = None,
+    ) -> list[dict]:
+        """Read evidence records matching filters.
+
+        Compat aliases: drug_id → intervention_id, template_id → readout_type.
+        """
+        iid = intervention_id or drug_id
+        rt = readout_type or template_id
+        return self.dbase.query_parquet(
+            readout_type=rt,
+            readout_category=readout_category,
+            intervention_id=iid,
             disease_id=disease_id,
+            biological_level=biological_level,
         )
 
-    def read_record(self, record_id: str) -> TemplateRecord | None:
-        """Read a single record by its id."""
-        for record in self.dbase.list_records():
-            if record.record_id == record_id:
+    def read_record(self, evidence_id: str) -> dict | None:
+        """Read a single evidence record by content-addressed id."""
+        for record in self.dbase.read_shards():
+            if record.get("evidence_id") == evidence_id:
                 return record
         return None
 
-    def write_record(self, record: TemplateRecord, dedup: bool = True) -> bool:
-        """Write one complete TemplateRecord to D-Base.
+    # ── write ─────────────────────────────────────────────────────────────
 
-        This is the only sanctioned D-Base writer. When ``dedup`` is True and an
-        equivalent record already exists, the write is skipped and False is
-        returned. The record is persisted immediately.
+    def write_record(self, record: dict, dedup: bool = True) -> bool | DuplicateReviewRequest:
+        """Write one evidence dict to D-Base.
+
+        When dedup=True:
+        1. Validate → hard reject aborts
+        2. Compute evidence_id → collision = duplicate (return False)
+        3. Semantic check → DuplicateReviewRequest if similar
+        4. Append shard → mark view stale
         """
-        if not isinstance(record, TemplateRecord):
-            raise TypeError("DBaseManager.write_record() requires a TemplateRecord")
-        if dedup and self._is_duplicate(record):
-            return False
-        self.dbase.add_record(record)
-        self.dbase.save()
+        # Validate
+        result = validate_evidence(record)
+        if not result.ok:
+            raise ValueError(f"Validation failed: {'; '.join(result.hard_errors)}")
+
+        # Apply soft warnings
+        if result.soft_warnings:
+            record["needs_curation"] = True
+
+        # Compute evidence_id
+        eid = compute_evidence_id(record)
+        record["evidence_id"] = eid
+        record.setdefault("schema_version", "v0.15.0")
+
+        if dedup:
+            # Exact dedup
+            if self.dbase.evidence_id_exists(eid):
+                return False
+
+            # Semantic dedup
+            dup = self._semantic_check(record)
+            if dup:
+                return dup
+
+        # Append + mark view stale
+        self.dbase.append_shard(record)
+        self.dbase.mark_view_stale()
         return True
 
-    def reset(self) -> None:
-        """Clear all records from D-Base. Templates and vocabulary are preserved."""
-        self.dbase.clear()
-
-    def _is_duplicate(self, record: TemplateRecord) -> bool:
-        key = self._record_dedup_key(record)
-        for existing in self.dbase.list_records():
-            if self._record_dedup_key(existing) == key:
-                return True
-        return False
-
-    def _record_dedup_key(
-        self, record: TemplateRecord
-    ) -> tuple[str, str | None, str | None, str | None, str | None]:
-        source = record.source
-        source_key = ""
-        if isinstance(source, dict):
-            source_key = source.get("type", "") or ""
-        return (
-            source_key,
-            self._record_field(record, "drug_id"),
-            self._record_field(record, "disease_id"),
-            self._record_field(record, "endpoint"),
-            self._record_field(record, "biological_level"),
-        )
-
-    def _record_field(self, record: TemplateRecord, field_name: str) -> str | None:
-        schema = self.dbase.get_template(record.template_id)
+    def _semantic_check(self, record: dict) -> DuplicateReviewRequest | None:
+        """Check for semantically similar evidence."""
         try:
-            idx = schema.field_index(field_name)
-        except KeyError:
-            return None
-        indices = record.sparse_vector.get("indices", [])
-        values = record.sparse_vector.get("values", [])
-        if idx not in indices:
-            return None
-        pos = indices.index(idx)
-        field = schema.field_def(field_name)
-        if field.type == "factor":
-            factor_value = int(values[pos])
-            if field.vocabulary:
-                if 0 <= factor_value < len(field.vocabulary):
-                    return field.vocabulary[factor_value]
-                return None
-            vocab_ref = field.vocabulary_ref or field_name
-            return self.dbase.vocab.reverse_lookup(vocab_ref, factor_value)
-        return str(values[pos])
+            from dargus.dbase.nlp import DBaseNLP
 
-    def fill_template(
+            nlp = DBaseNLP()
+            text = DBaseNLP.record_to_text(record)
+            similar = self.read_records_semantic(
+                text,
+                top_k=5,
+                intervention_id=_primary_intervention_id(record),
+                disease_id=record.get("disease_id"),
+            )
+            for candidate, score in similar:
+                if score >= 0.85:
+                    return DuplicateReviewRequest(
+                        incoming_raw=record,
+                        incoming_evidence=record,
+                        candidate_evidence=candidate,
+                        similarity_score=score,
+                        candidate_evidence_id=candidate.get("evidence_id", ""),
+                    )
+        except Exception:
+            pass
+        return None
+
+    # ── ingestion ──────────────────────────────────────────────────────────
+
+    def build_evidence(
         self,
         raw_input: dict[str, Any],
         source_metadata: dict[str, Any],
-        suggested_template: str | None = None,
-    ) -> TemplateRecord:
-        """Map a raw input dict to a complete TemplateRecord."""
-        template_id = suggested_template or self._match_template(raw_input)
-        schema = self.dbase.get_template(template_id)
+        biological_level: str | None = None,
+    ) -> dict:
+        """Assemble extracted raw fields into a validated evidence dict.
 
-        indices: list[int] = []
-        values: list[float] = []
+        Replaces the old fill_template(). Does NOT persist — always goes through
+        write_record() afterwards.
+        """
+        evidence: dict[str, Any] = {}
 
-        for field in schema.fields:
-            val = self._extract_field(field, raw_input)
-            if val is None:
-                continue
-            idx = schema.field_index(field.name)
-            indices.append(idx)
-            values.append(int(val) if field.type == "factor" else float(val))
+        # Identity
+        if biological_level:
+            evidence["biological_level"] = biological_level
+        if "biological_level" in raw_input:
+            evidence["biological_level"] = raw_input["biological_level"]
 
-        return TemplateRecord(
-            template_id=template_id,
-            record_id=f"rec_{uuid.uuid4().hex[:12]}",
-            source=source_metadata,
-            sparse_vector={"indices": indices, "values": values},
-            provenance_note=raw_input.get("note", ""),
-        )
+        evidence["disease_id"] = raw_input.get("disease_id")
+        evidence["readout_type"] = raw_input.get("readout_type")
+        evidence["readout_category"] = raw_input.get("readout_category")
+        evidence["evidence_design"] = raw_input.get("evidence_design", "two_arm_comparison")
 
-    def _match_template(self, raw_input: dict[str, Any]) -> str:
-        # MVP: simple keyword matching. Later: LLM-assisted.
-        def _normalize_key(key: str) -> str:
-            key = key.lower()
-            if "_" in key:
-                base, _, suffix = key.rpartition("_")
-                if suffix in _UNIT_SUFFIXES:
-                    return base
-            return key
+        # Intervention — from raw_input
+        interventions = raw_input.get("interventions", [])
+        if not interventions:
+            drug_id = raw_input.get("drug_id") or raw_input.get("drug")
+            if drug_id:
+                entity_id = drug_id if ":" in str(drug_id) else f"chembl:{drug_id}"
+                interventions = [
+                    {
+                        "role": "primary",
+                        "entity_type": "small_molecule",
+                        "entity_id": entity_id,
+                    }
+                ]
+            target_id = raw_input.get("target_id") or raw_input.get("target")
+            if target_id:
+                target_eid = target_id if ":" in str(target_id) else f"uniprot:{target_id}"
+                interventions.append(
+                    {
+                        "role": "comparator_agent",
+                        "entity_type": "gene",
+                        "entity_id": target_eid,
+                        "alteration": raw_input.get("target_alteration")
+                        or raw_input.get("alteration"),
+                    }
+                )
+        evidence["interventions"] = interventions
 
-        normalized_keys = {_normalize_key(k) for k in raw_input}
+        # Readout values
+        for key in (
+            "readout_value",
+            "readout_unit",
+            "n_total",
+            "p_value",
+            "statistical_test",
+            "effect_direction",
+            "is_qualitative",
+            "readout_direction",
+        ):
+            if key in raw_input and raw_input[key] is not None:
+                evidence[key] = raw_input[key]
 
-        if {"ic50", "ki", "kd"} & normalized_keys:
-            candidate = "in_vitro_kinase_inhibition_v1"
-            try:
-                self.dbase.get_template(candidate)
-                return candidate
-            except KeyError:
-                pass
-        if {"cell_viability", "cc50", "ec50"} & normalized_keys:
-            candidate = "cell_viability_assay_v1"
-            try:
-                self.dbase.get_template(candidate)
-                return candidate
-            except KeyError:
-                pass
+        if "ci95_lower" in raw_input and "ci95_upper" in raw_input:
+            evidence["readout_ci95"] = {
+                "lower": raw_input["ci95_lower"],
+                "upper": raw_input["ci95_upper"],
+            }
 
-        available = sorted(p.stem for p in self.dbase.templates_dir.glob("*.yaml"))
-        if available:
-            return available[0]
-        raise RuntimeError("No templates registered in D-Base")
+        # Sources
+        evidence["sources"] = source_metadata.get("sources", [])
+        if not evidence["sources"] and source_metadata:
+            evidence["sources"] = [
+                {
+                    "rank": 1,
+                    "type": source_metadata.get("type", "url"),
+                    "id": source_metadata.get("id", ""),
+                }
+            ]
 
-    def _extract_field(self, field, raw_input: dict[str, Any]) -> int | float | None:
-        name = field.name
-        synonyms = {
-            "drug_id": ["drug", "compound", "molecule"],
-            "target_id": ["target", "gene", "protein"],
-            "disease_id": ["disease", "indication"],
-            "assay_type": ["assay", "method"],
-            "readout": [
-                "ic50",
-                "ic50_nM",
-                "ic50_nm",
-                "ki",
-                "ki_nM",
-                "ki_nm",
-                "kd",
-                "kd_nM",
-                "kd_nm",
-                "ec50",
-                "ec50_nM",
-                "ec50_nm",
-                "cc50",
-                "cc50_nM",
-                "cc50_nm",
-                "value",
-            ],
-            "log_pvalue": ["p_value", "pvalue", "p"],
-        }
-        keys_to_try = [name] + synonyms.get(name, [])
-        for key in keys_to_try:
-            if key in raw_input:
-                raw_val = raw_input[key]
-                if field.type == "factor":
-                    str_val = str(raw_val)
-                    if field.vocabulary:
-                        # Inline vocabulary: factor value is list index
-                        if str_val in field.vocabulary:
-                            return field.vocabulary.index(str_val)
-                        raise ValueError(
-                            f"Value {str_val!r} not in inline vocabulary "
-                            f"for {field.name}: {field.vocabulary}"
-                        )
-                    vocab_ref = field.vocabulary_ref or name
-                    return self.dbase.vocab.get_or_create(vocab_ref, str_val)
-                return raw_val
-        return None
+        # Validate and stamp
+        result = validate_evidence(evidence)
+        if not result.ok:
+            raise ValueError(f"build_evidence validation failed: {'; '.join(result.hard_errors)}")
+        if result.soft_warnings:
+            evidence["needs_curation"] = True
 
-    def create_field_request(
-        self, field_name: str, template_id: str, reason: str
-    ) -> dict[str, Any]:
-        return {
-            "type": "field_extension_request",
-            "template_id": template_id,
-            "field_name": field_name,
-            "reason": reason,
-            "options": [
-                "add_new_field",
-                "map_to_existing_field",
-                "skip_record",
-            ],
-        }
+        evidence["evidence_id"] = compute_evidence_id(evidence)
+        evidence["schema_version"] = "v0.15.0"
+        return evidence
+
+    # ── semantic ───────────────────────────────────────────────────────────
+
+    def read_records_semantic(
+        self,
+        query_text: str,
+        top_k: int = 10,
+        readout_type: str | None = None,
+        intervention_id: str | None = None,
+        disease_id: str | None = None,
+    ) -> list[tuple[dict, float]]:
+        """Semantic search over evidence records."""
+        try:
+            from dargus.dbase.nlp import DBaseNLP
+
+            nlp = DBaseNLP()
+            candidates = self.read_records(
+                readout_type=readout_type,
+                intervention_id=intervention_id,
+                disease_id=disease_id,
+            )
+            scored: list[tuple[dict, float]] = []
+            for record in candidates:
+                text = DBaseNLP.record_to_text(record)
+                score = nlp.similarity(query_text, text)
+                scored.append((record, score))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:top_k]
+        except Exception:
+            return []
+
+    # ── lifecycle ──────────────────────────────────────────────────────────
+
+    def reset(self) -> None:
+        """Clear all records from D-Base."""
+        self.dbase.clear()
+
+
+def _primary_intervention_id(record: dict) -> str | None:
+    for iv in record.get("interventions", []):
+        if iv.get("role") == "primary":
+            return iv.get("entity_id")
+    return None

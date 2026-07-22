@@ -1,8 +1,7 @@
-"""BiomedExpert — preclinical biology evidence assessment."""
+"""BiomedExpert — preclinical biology evidence assessment (v0.15.0)."""
 
 from __future__ import annotations
 
-from dargus.dbase import TemplateRecord
 from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
@@ -28,13 +27,14 @@ class BiomedExpert(Expert):
     DELEGATION_RULES = {
         "molecular": "MoleculeExpert",
         "molecular-sim": "MoleculeExpert",
-        "clinical": "ClinicExpert",
-        "clinical-sim": "ClinicExpert",
+        "rct": "ClinicExpert",
+        "epi": "ClinicExpert",
+        "rct-sim": "ClinicExpert",
     }
 
     def assess(
         self,
-        records: list[TemplateRecord],
+        records: list[dict],
         context: ExpertContext,
     ) -> ExpertReport:
         findings: list[EvidenceAssessment] = []
@@ -46,6 +46,7 @@ class BiomedExpert(Expert):
         in_vitro_count = 0
 
         for record in records:
+            eid = record.get("evidence_id", "")
             level = self._read_biological_level(record)
             if level is None:
                 continue
@@ -56,7 +57,7 @@ class BiomedExpert(Expert):
                     delegations.append(
                         TaskDelegation(
                             target_expert=target,
-                            record_ids=[record.record_id],
+                            record_ids=[eid],
                             reason=f"Record level '{level}' outside BiomedExpert scope",
                         )
                     )
@@ -64,7 +65,7 @@ class BiomedExpert(Expert):
 
             quality = self._assess_quality(record)
             if "-sim" in (level or ""):
-                bias_notes.append(f"Record {record.record_id}: simulation-derived data ({level})")
+                bias_notes.append(f"Record {eid}: simulation-derived data ({level})")
                 quality = max(0.0, quality - 0.2)
 
             if level in ("animal", "animal-sim"):
@@ -74,7 +75,7 @@ class BiomedExpert(Expert):
 
             findings.append(
                 EvidenceAssessment(
-                    record_ids=[record.record_id],
+                    record_ids=[eid],
                     biological_level=level or "unknown",
                     relevance="medium",
                     quality_score=quality,
@@ -96,10 +97,9 @@ class BiomedExpert(Expert):
             bias_notes=bias_notes,
         )
 
-    def _assess_quality(self, record: TemplateRecord) -> float:
-        readout = self._read_field(record, "readout")
+    def _assess_quality(self, record: dict) -> float:
         score = 0.5
-        if readout is not None:
+        if self._read_field(record, "readout_value") is not None:
             score += 0.2
         level = self._read_biological_level(record)
         if level in ("animal", "animal-sim"):

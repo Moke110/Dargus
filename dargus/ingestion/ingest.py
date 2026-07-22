@@ -1,3 +1,5 @@
+"""Ingestion pipeline v0.15.0."""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dargus.dbase import DBase, TemplateSchema
+from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
 from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
 from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
@@ -18,14 +20,6 @@ CONVERTERS: dict[str, callable] = {
 }
 
 
-def _register_templates(dbase: DBase) -> None:
-    templates_dir = Path(__file__).parent.parent / "dbase" / "templates"
-    for path in templates_dir.glob("*.yaml"):
-        schema = TemplateSchema.from_yaml(path)
-        if schema.template_id not in dbase._templates:
-            dbase.add_template(schema)
-
-
 def ingest_dataset(
     project_id: str,
     dataset_name: str,
@@ -36,8 +30,6 @@ def ingest_dataset(
         raise ValueError(f"Unknown dataset {dataset_name!r}")
 
     dbase = DBase(project_id, root_dir=Path(projects_root) / project_id)
-    _register_templates(dbase)
-
     converter_factory = CONVERTERS[dataset_name]
     converter = converter_factory()
 
@@ -53,7 +45,7 @@ def ingest_dataset(
                     sort_keys=True,
                 ).encode("utf-8")
             ).hexdigest()[:16]
-            record = manager.fill_template(
+            record = manager.build_evidence(
                 raw,
                 source_metadata={
                     "type": "public_db",
@@ -62,14 +54,10 @@ def ingest_dataset(
                     "source_file": path.name,
                     "source_row": row_idx,
                 },
-                suggested_template=converter.template_id,
             )
-            # Ensure stable record_id
-            record.record_id = f"{dataset_name}_{record_id}"
             manager.write_record(record)
             n_added += 1
 
-    dbase.save()
     return {"project_id": project_id, "dataset_name": dataset_name, "n_records": n_added}
 
 

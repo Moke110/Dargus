@@ -1,4 +1,4 @@
-"""Train workflow — ingest data into the global D-Base."""
+"""Train workflow v0.15.0 — ingest data into the global D-Base."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
-from dargus.experts.disease import DiseaseExpert
 from dargus.experts.types import IngestionSummary
 
 logger = logging.getLogger(__name__)
@@ -27,40 +26,57 @@ class TrainingReport:
 def run(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> TrainingReport:
     """Ingest data files into the global D-Base and return a TrainingReport."""
     dbase = DBase.global_instance()
-    _ensure_default_templates(dbase)
     manager = DBaseManager(dbase)
-    disease_expert = DiseaseExpert(manager)
 
     if reset:
         manager.reset()
 
-    summary = disease_expert.ingest_from_dir(
-        datadir, disease_kb_dir=disease_kb_dir, auto_confirm=True
-    )
+    n_records = 0
+    errors: list[str] = []
 
+    datadir_path = Path(datadir)
+    if datadir_path.is_dir():
+        for yaml_path in sorted(datadir_path.glob("*.yaml")):
+            try:
+                import yaml
+
+                with yaml_path.open("r", encoding="utf-8") as fh:
+                    data = yaml.safe_load(fh) or {}
+                if isinstance(data, dict):
+                    record = manager.build_evidence(
+                        data,
+                        source_metadata={
+                            "type": "db_accession",
+                            "id": f"file:{yaml_path.name}",
+                        },
+                    )
+                    manager.write_record(record)
+                    n_records += 1
+            except Exception as exc:
+                errors.append(f"{yaml_path.name}: {exc}")
+
+    records = dbase.read_shards()
     return TrainingReport(
-        n_records=summary.total_instances,
+        n_records=n_records,
         n_skipped=0,
-        dbase_size=len(dbase.list_records()),
-        errors=[],
+        dbase_size=len(records),
+        errors=errors,
     )
 
 
 def ingest_report(datadir: str, disease_kb_dir: str | None = None) -> IngestionSummary:
     """Generate an ingestion report without writing to D-Base."""
     dbase = DBase.global_instance()
-    _ensure_default_templates(dbase)
     manager = DBaseManager(dbase)
-    expert = DiseaseExpert(manager)
-    return expert.ingest_from_dir(datadir, disease_kb_dir=disease_kb_dir, auto_confirm=False)
-
-
-def _ensure_default_templates(dbase: DBase) -> None:
-    tmpl_dir = Path(__file__).resolve().parent.parent / "dbase" / "templates"
-
-    from dargus.dbase import TemplateSchema
-
-    for yaml_path in tmpl_dir.glob("*.yaml"):
-        schema = TemplateSchema.from_yaml(yaml_path)
-        if schema.template_id not in dbase._templates:
-            dbase.add_template(schema)
+    records_before = len(dbase.read_shards())
+    # Dry-run: just count what would be ingested
+    datadir_path = Path(datadir)
+    n_files = len(list(datadir_path.glob("*.yaml"))) if datadir_path.is_dir() else 0
+    return IngestionSummary(
+        total_instances=n_files,
+        per_level={},
+        duplicates=0,
+        errors=0,
+        total_instances_before=records_before,
+        total_instances_after=records_before,
+    )

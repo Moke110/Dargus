@@ -28,8 +28,9 @@ class FourDExpert(Expert):
         "exvivo-sim",
         "animal",
         "animal-sim",
-        "clinical",
-        "clinical-sim",
+        "rct",
+        "epi",
+        "rct-sim",
     )
     DELEGATION_RULES = {}
 

@@ -1,17 +1,16 @@
+"""DEPRECATED: Iris-* expert agent wrapper (v0.15.0)."""
+
 from __future__ import annotations
 
 import warnings
 from typing import Any
 
-from dargus.dbase.manager import DBaseManager
 from dargus.iris.base import IrisAgent, PredictionMatrix
 
 
 class IrisExpert(IrisAgent):
-    """DEPRECATED: Iris-* agent that wraps the v0.9.0 Expert system.
-
-    Use ``dargus.iris.commander.Iris.predict()`` instead.
-    Kept for backward compatibility. Will be removed in v0.11.0.
+    """DEPRECATED: Use ``dargus.iris.commander.Iris.predict()`` instead.
+    Kept for backward compatibility. Will be removed.
     """
 
     name = "Iris-expert"
@@ -34,54 +33,24 @@ class IrisExpert(IrisAgent):
         embeddings: dict[str, Any] | None = None,
         context: dict[str, Any] | None = None,
     ) -> PredictionMatrix:
-        # Backward-compatible path: if constructed with a DiseaseExpert, delegate to it
-        if self.disease_expert is not None:
-            predictions = self.disease_expert.predict(
-                drug_ids=drug_ids,
-                disease_id=disease_id,
-                endpoints=endpoints,
-            )
-            for drug in predictions:
-                for endpoint in predictions[drug]:
-                    predictions[drug][endpoint]["reasoning_mode"] = self.name
-            return predictions
+        # Route to Iris commander
+        from dargus.iris.commander import Iris
 
-        from dargus.experts.bioinfo import BioinfoExpert
-        from dargus.experts.biomed import BiomedExpert
-        from dargus.experts.clinic import ClinicExpert
-        from dargus.experts.director import FourDExpert
-        from dargus.experts.iris_expert import IrisExpert as IrisOrchestrator
-        from dargus.experts.molecule import MoleculeExpert
-        from dargus.experts.protocol import ExpertContext
-
-        manager = DBaseManager(dbase)
-        orchestrator = IrisOrchestrator(
-            molecule=MoleculeExpert(dbase=dbase),
-            biomed=BiomedExpert(dbase=dbase),
-            bioinfo=BioinfoExpert(dbase=dbase),
-            clinic=ClinicExpert(dbase=dbase),
-            director=FourDExpert(dbase=dbase),
-        )
-
+        iris = Iris()
         result: PredictionMatrix = {}
         for drug_id in drug_ids:
             result[drug_id] = {}
-            for endpoint in endpoints:
-                ctx = ExpertContext(
-                    drug_ids=[drug_id],
-                    disease_id=disease_id,
-                    endpoints=[endpoint],
-                )
-                records = manager.read_records(disease_id=disease_id)
-                final = orchestrator.run(records, ctx)
-                result[drug_id][endpoint] = {
-                    "efficacy_low": final.efficacy_low,
-                    "efficacy_up": final.efficacy_up,
-                    "confidence_level": final.confidence_level,
+            preds = iris.predict(
+                drug_ids=[drug_id],
+                disease_id=disease_id,
+                endpoints=endpoints,
+            )
+            for epid, pred in preds.get(drug_id, {}).items():
+                result[drug_id][epid] = {
+                    "efficacy_low": pred.get("efficacy_low", 0.0),
+                    "efficacy_up": pred.get("efficacy_up", 1.0),
+                    "confidence_level": pred.get("confidence_level", "unknown"),
                     "reasoning_mode": self.name,
-                    "supporting_records": final.supporting_records,
-                    "expert_consensus": final.expert_consensus,
-                    "contradictions": final.contradictions,
-                    "data_gaps": final.data_gaps,
+                    "supporting_records": pred.get("supporting_records", []),
                 }
         return result

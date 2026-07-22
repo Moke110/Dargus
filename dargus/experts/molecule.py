@@ -1,8 +1,7 @@
-"""MoleculeExpert — molecular-level evidence assessment."""
+"""MoleculeExpert — molecular-level evidence assessment (v0.15.0)."""
 
 from __future__ import annotations
 
-from dargus.dbase import TemplateRecord
 from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
@@ -25,13 +24,14 @@ class MoleculeExpert(Expert):
         "exvivo-sim": "BiomedExpert",
         "animal": "BiomedExpert",
         "animal-sim": "BiomedExpert",
-        "clinical": "ClinicExpert",
-        "clinical-sim": "ClinicExpert",
+        "rct": "ClinicExpert",
+        "epi": "ClinicExpert",
+        "rct-sim": "ClinicExpert",
     }
 
     def assess(
         self,
-        records: list[TemplateRecord],
+        records: list[dict],
         context: ExpertContext,
     ) -> ExpertReport:
         findings: list[EvidenceAssessment] = []
@@ -40,6 +40,7 @@ class MoleculeExpert(Expert):
         bias_notes: list[str] = []
 
         for record in records:
+            eid = record.get("evidence_id", "")
             level = self._read_biological_level(record)
             if level is None:
                 continue
@@ -50,7 +51,7 @@ class MoleculeExpert(Expert):
                     delegations.append(
                         TaskDelegation(
                             target_expert=target,
-                            record_ids=[record.record_id],
+                            record_ids=[eid],
                             reason=f"Record level '{level}' outside MoleculeExpert scope",
                         )
                     )
@@ -59,14 +60,14 @@ class MoleculeExpert(Expert):
             quality = self._assess_quality(record)
             if "-sim" in (level or ""):
                 bias_notes.append(
-                    f"Record {record.record_id}: computational/simulation data "
+                    f"Record {eid}: computational/simulation data "
                     f"({level}) — lower evidential weight"
                 )
                 quality = max(0.0, quality - 0.2)
 
             findings.append(
                 EvidenceAssessment(
-                    record_ids=[record.record_id],
+                    record_ids=[eid],
                     biological_level=level or "unknown",
                     relevance="medium",
                     quality_score=quality,
@@ -85,32 +86,31 @@ class MoleculeExpert(Expert):
             bias_notes=bias_notes,
         )
 
-    def _assess_quality(self, record: TemplateRecord) -> float:
-        readout = self._read_field(record, "readout")
-        has_readout = readout is not None
-        target_id = self._read_field(record, "target_id")
-        has_target = target_id is not None
-
+    def _assess_quality(self, record: dict) -> float:
+        has_readout = self._read_field(record, "readout_value") is not None
         score = 0.5
         if has_readout:
             score += 0.2
+        # Check for target via interventions
+        interventions = record.get("interventions", [])
+        has_target = any(i.get("entity_type") == "gene" for i in interventions)
         if has_target:
             score += 0.1
-        source = record.source
-        if isinstance(source, dict) and source.get("type") == "auto_extract":
-            score -= 0.1
+        sources = record.get("sources", [])
+        for s in sources:
+            if s.get("type") == "auto_extract":
+                score -= 0.1
+                break
         return min(max(score, 0.0), 1.0)
 
     def _compute_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_molecular_evidence"])
-
         avg_quality = sum(f.quality_score for f in findings) / len(findings)
         sim_count = sum(1 for f in findings if "-sim" in f.biological_level)
         sources: list[str] = []
         if sim_count > 0:
             sources.append("simulated_data_present")
-
         low = max(0.0, avg_quality - 0.2)
         high = min(1.0, avg_quality + 0.2)
         return ConfidenceInterval(low=low, high=high, sources=sources)

@@ -33,7 +33,7 @@ class TopClinicalConverter(BaseConverter):
                 for drug in drugs:
                     rows.append(
                         {
-                            "biological_level": "clinical",
+                            "biological_level": "rct",
                             "drug_id": drug,
                             "disease_id": disease,
                             "endpoint": "trial_success",

@@ -1,8 +1,7 @@
-"""ClinicExpert — clinical and epidemiological evidence assessment."""
+"""ClinicExpert — rct and epidemiological evidence assessment (v0.15.0)."""
 
 from __future__ import annotations
 
-from dargus.dbase import TemplateRecord
 from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
@@ -23,13 +22,13 @@ _PHASE_WEIGHTS = {
 
 
 class ClinicExpert(Expert):
-    """Assesses clinical trial, epidemiological, and post-market evidence.
+    """Assesses RCT, epidemiological, and post-market evidence.
 
-    Merges old ClinicalExpert and EpiExpert. Covers clinical and clinical-sim
-    levels with knowledge of trial design, medical statistics, pharmacovigilance.
+    Covers rct, epi, and rct-sim levels with knowledge of trial design,
+    medical statistics, and pharmacovigilance.
     """
 
-    SUPPORTED_LEVELS = ("clinical", "clinical-sim")
+    SUPPORTED_LEVELS = ("rct", "epi", "rct-sim")
     DELEGATION_RULES = {
         "molecular": "MoleculeExpert",
         "molecular-sim": "MoleculeExpert",
@@ -43,7 +42,7 @@ class ClinicExpert(Expert):
 
     def assess(
         self,
-        records: list[TemplateRecord],
+        records: list[dict],
         context: ExpertContext,
     ) -> ExpertReport:
         findings: list[EvidenceAssessment] = []
@@ -52,6 +51,7 @@ class ClinicExpert(Expert):
         bias_notes: list[str] = []
 
         for record in records:
+            eid = record.get("evidence_id", "")
             level = self._read_biological_level(record)
             if level is None:
                 continue
@@ -62,7 +62,7 @@ class ClinicExpert(Expert):
                     delegations.append(
                         TaskDelegation(
                             target_expert=target,
-                            record_ids=[record.record_id],
+                            record_ids=[eid],
                             reason=f"Record level '{level}' outside ClinicExpert scope",
                         )
                     )
@@ -70,17 +70,14 @@ class ClinicExpert(Expert):
 
             quality = self._assess_quality(record)
             if "-sim" in (level or ""):
-                bias_notes.append(
-                    f"Record {record.record_id}: clinical trial simulation data — "
-                    f"no actual patient evidence"
-                )
+                bias_notes.append(f"Record {eid}: rct simulation data — no actual patient evidence")
                 quality = max(0.0, quality - 0.3)
 
             findings.append(
                 EvidenceAssessment(
-                    record_ids=[record.record_id],
+                    record_ids=[eid],
                     biological_level=level or "unknown",
-                    relevance="high" if level == "clinical" else "medium",
+                    relevance="high" if level in ("rct", "epi") else "medium",
                     quality_score=quality,
                     limitations=[],
                 )
@@ -89,7 +86,7 @@ class ClinicExpert(Expert):
         # Mixed direction detection
         readouts = []
         for record in records:
-            r = self._read_field(record, "readout")
+            r = self._read_field(record, "readout_value")
             if r is not None:
                 try:
                     readouts.append(float(r))
@@ -98,9 +95,8 @@ class ClinicExpert(Expert):
         if readouts and any(r > 0 for r in readouts) and any(r < 0 for r in readouts):
             bias_notes.append("Mixed clinical effect directions detected")
 
-        if not any(
-            f.biological_level == "clinical" and "-sim" not in f.biological_level for f in findings
-        ):
+        real_clinical = sum(1 for f in findings if f.biological_level in ("rct", "epi"))
+        if real_clinical == 0:
             data_gaps.append("No real clinical trial evidence — only simulated or none")
 
         confidence = self._compute_confidence(findings)
@@ -114,14 +110,13 @@ class ClinicExpert(Expert):
             bias_notes=bias_notes,
         )
 
-    def _assess_quality(self, record: TemplateRecord) -> float:
+    def _assess_quality(self, record: dict) -> float:
         score = 0.5
         phase = self._read_field(record, "phase")
         if phase is not None:
             phase_key = str(phase).strip().lower().replace(" ", "_")
             score = _PHASE_WEIGHTS.get(phase_key, 0.5)
-        readout = self._read_field(record, "readout")
-        if readout is not None:
+        if self._read_field(record, "readout_value") is not None:
             score = min(score + 0.1, 1.0)
         return min(max(score, 0.0), 1.0)
 
@@ -129,7 +124,7 @@ class ClinicExpert(Expert):
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_clinical_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)
-        real_clinical = sum(1 for f in findings if f.biological_level == "clinical")
+        real_clinical = sum(1 for f in findings if f.biological_level in ("rct", "epi"))
         sources: list[str] = []
         if real_clinical == 0:
             sources.append("no_real_clinical_data")

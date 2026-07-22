@@ -9,7 +9,6 @@ from typing import Any, Callable
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home
-from dargus.experts.disease import DiseaseExpert
 from dargus.iris.analog import IrisAnalog
 from dargus.iris.bayes import IrisBayes
 from dargus.iris.ensemble import IrisEnsemble
@@ -33,17 +32,18 @@ class Iris:
 
     def _global_manager(self) -> DBaseManager:
         dbase = DBase.global_instance()
-        self._ensure_default_templates(dbase)
         return DBaseManager(dbase)
 
     def status(self) -> dict[str, Any]:
         """Report global D-Base status."""
         dbase = DBase.global_instance()
+        records = dbase.read_shards()
+        manifest = dbase.read_manifest()
         return {
             "dargus_home": str(default_dargus_home()),
             "dbase_dir": str(dbase.dbase_dir),
-            "n_records": len(dbase.list_records()),
-            "n_templates": len(dbase._templates),
+            "n_records": len(records),
+            "n_templates": 0,  # templates removed in v0.15.0
         }
 
     def train(self, datadir: str) -> TrainingReport:
@@ -57,17 +57,14 @@ class Iris:
         endpoints: list[str],
         max_rounds: int = 5,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run full Iris -> IrisExpert multi-round prediction.
+        """Run full Iris Expert multi-round prediction (v0.15.0).
 
-        This is the unified prediction path. It delegates to IrisExpert's
-        multi-round Expert dialog protocol (Molecule -> Biomed -> Bioinfo ->
-        Clinic -> FourDExpert).
+        Molecule -> Biomed -> Bioinfo -> Clinic -> FourDExpert.
         """
         from dargus.experts.bioinfo import BioinfoExpert
         from dargus.experts.biomed import BiomedExpert
         from dargus.experts.clinic import ClinicExpert
         from dargus.experts.director import FourDExpert
-        from dargus.experts.iris_expert import IrisExpert as IrisOrchestrator
         from dargus.experts.molecule import MoleculeExpert
         from dargus.experts.protocol import ExpertContext
 
@@ -83,15 +80,26 @@ class Iris:
                     endpoints=[endpoint],
                 )
                 records = manager.read_records(disease_id=disease_id)
-                orchestrator = IrisOrchestrator(
-                    molecule=MoleculeExpert(dbase=manager.dbase),
-                    biomed=BiomedExpert(dbase=manager.dbase),
-                    bioinfo=BioinfoExpert(dbase=manager.dbase),
-                    clinic=ClinicExpert(dbase=manager.dbase),
-                    director=FourDExpert(dbase=manager.dbase),
-                )
-                orchestrator.max_rounds = max_rounds
-                final = orchestrator.run(records, ctx)
+                molecule = MoleculeExpert(dbase=manager.dbase)
+                biomed = BiomedExpert(dbase=manager.dbase)
+                bioinfo = BioinfoExpert(dbase=manager.dbase)
+                clinic = ClinicExpert(dbase=manager.dbase)
+                director = FourDExpert(dbase=manager.dbase)
+
+                # Round 1: each domain Expert assesses
+                mol_report = molecule.assess(records, ctx)
+                bio_report = biomed.assess(records, ctx)
+                bioinfo_report = bioinfo.assess(records, ctx)
+                clinic_report = clinic.assess(records, ctx)
+
+                # Director synthesizes
+                all_reports: dict[str, list] = {
+                    "MoleculeExpert": [mol_report],
+                    "BiomedExpert": [bio_report],
+                    "BioinfoExpert": [bioinfo_report],
+                    "ClinicExpert": [clinic_report],
+                }
+                final = director.conclude(drug_id, disease_id, endpoint, all_reports)
                 result[drug_id][disease_id][endpoint] = {
                     "efficacy_low": final.efficacy_low,
                     "efficacy_up": final.efficacy_up,
@@ -153,7 +161,7 @@ class Iris:
     ) -> dict[str, dict[str, dict[str, Any]]] | None:
         dbase = manager.dbase
         if name == "Iris-expert":
-            agent = IrisExpert(DiseaseExpert(manager))
+            agent = IrisExpert()
             return agent.predict(dbase, drug_ids, disease_id, endpoints)
         if name == "Iris-search":
             return IrisSearch().predict(dbase, drug_ids, disease_id, endpoints)
@@ -321,36 +329,3 @@ Return ONLY valid JSON, no other text. Format:
             ),
         )
         return f"Iris: {message}"
-
-    def _ensure_default_templates(self, dbase: DBase) -> None:
-        drug_vocab = "global_drug_vocab"
-        disease_vocab = "global_disease_vocab"
-        endpoint_vocab = "global_endpoint_vocab"
-        if "clinical_trial_outcome_v1" not in dbase._templates:
-            from dargus.dbase import TemplateSchema
-
-            dbase.add_template(
-                TemplateSchema(
-                    template_id="clinical_trial_outcome_v1",
-                    fields=[
-                        {
-                            "name": "biological_level",
-                            "type": "factor",
-                            "vocabulary": [
-                                "molecular",
-                                "cellular",
-                                "exvivo",
-                                "animal",
-                                "clinical",
-                                "epi",
-                            ],
-                        },
-                        {"name": "drug_id", "type": "factor", "vocabulary_ref": drug_vocab},
-                        {"name": "disease_id", "type": "factor", "vocabulary_ref": disease_vocab},
-                        {"name": "endpoint", "type": "factor", "vocabulary_ref": endpoint_vocab},
-                        {"name": "fold_change", "type": "float"},
-                        {"name": "ci95_lower", "type": "float"},
-                        {"name": "ci95_upper", "type": "float"},
-                    ],
-                )
-            )

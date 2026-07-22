@@ -1,7 +1,8 @@
+"""D-Base heterogeneous graph builder v0.15.0 — evidence dict API."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 import torch
@@ -29,7 +30,7 @@ class DBaseGraphBuilder:
         drug_smiles: dict[str, str] | None = None,
         embedding_dim: int = 128,
     ) -> HeteroGraph:
-        records = self.dbase.list_records()
+        records = self.dbase.read_shards()
 
         drug_ids: set[str] = set()
         target_ids: set[str] = set()
@@ -54,13 +55,16 @@ class DBaseGraphBuilder:
             return mapping[key]
 
         for rec in records:
-            schema = self.dbase._templates.get(rec.template_id)
-            if schema is None:
-                continue
-
-            drug = self._factor_value(rec, schema, "drug_id")
-            target = self._factor_value(rec, schema, "target_id")
-            disease = self._factor_value(rec, schema, "disease_id")
+            interventions = rec.get("interventions", [])
+            primary = next((i for i in interventions if i.get("role") == "primary"), None)
+            drug = (primary or {}).get("entity_id", "")
+            # Find target (gene-type interventions)
+            target = ""
+            for iv in interventions:
+                if iv.get("entity_type") == "gene":
+                    target = iv.get("entity_id", "")
+                    break
+            disease = rec.get("disease_id", "")
 
             if drug:
                 drug_ids.add(drug)
@@ -69,7 +73,7 @@ class DBaseGraphBuilder:
             if disease:
                 disease_ids.add(disease)
 
-            assay_key = f"{rec.template_id}:{rec.record_id}"
+            assay_key = rec.get("evidence_id", f"assay:{len(assay_ids)}")
             assay_ids.add(assay_key)
             assay_idx = _get_idx(assay_to_idx, assay_key)
 
@@ -84,7 +88,6 @@ class DBaseGraphBuilder:
                 disease_idx = _get_idx(disease_to_idx, disease)
                 edges[("assay", "relates_to", "disease")].append((assay_idx, disease_idx))
 
-        # Add disease similarity edges (dummy: fully connected small set)
         disease_list = list(disease_to_idx.keys())
         for i, d1 in enumerate(disease_list):
             for j, d2 in enumerate(disease_list):
@@ -93,7 +96,6 @@ class DBaseGraphBuilder:
                         (disease_to_idx[d1], disease_to_idx[d2])
                     )
 
-        # Node features
         drug_x = []
         for drug in drug_to_idx:
             smiles = (drug_smiles or {}).get(drug)
@@ -132,22 +134,3 @@ class DBaseGraphBuilder:
                 "assay": assay_to_idx,
             },
         )
-
-    def _factor_value(
-        self,
-        rec: Any,
-        schema: Any,
-        field_name: str,
-    ) -> str | None:
-        try:
-            idx = schema.field_index(field_name)
-        except KeyError:
-            return None
-        indices = rec.sparse_vector.get("indices", [])
-        values = rec.sparse_vector.get("values", [])
-        if idx not in indices:
-            return None
-        val = int(values[indices.index(idx)])
-        field = schema.field_def(field_name)
-        vocab_ref = field.vocabulary_ref or field_name
-        return self.dbase.vocab.reverse_lookup(vocab_ref, val)

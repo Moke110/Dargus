@@ -97,16 +97,15 @@ class BenchmarkRunner:
         dbase = DBase("global", root_dir=self.bench_dir)
         manager = DBaseManager(dbase)
         for _, row in train_df.iterrows():
-            record = manager.fill_template(
+            record = manager.build_evidence(
                 {
-                    "biological_level": "clinical",
+                    "biological_level": "rct",
                     "drug_id": row["drug_id"],
                     "disease_id": row["disease_id"],
                     "endpoint": row["endpoint"],
                     "fold_change": 0.5 if row["label"] == 1 else -0.5,
                 },
                 source_metadata={"type": "benchmark_backfill"},
-                suggested_template="clinical_trial_outcome_v1",
             )
             manager.write_record(record, dedup=False)
 

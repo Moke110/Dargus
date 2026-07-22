@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json as _json
 import logging
+import secrets
 import sys
 
 from dargus import Iris
@@ -89,15 +90,8 @@ def main(argv: list[str] | None = None) -> int:
         print(status)
         return 0
 
-    if args.command == "clear":
-        from dargus.dbase import DBase
-        from dargus.dbase.manager import DBaseManager
-
-        dbase = DBase.global_instance()
-        manager = DBaseManager(dbase)
-        manager.reset()
-        print("Global D-Base cleared.")
-        return 0
+    if args.command == "clear-dbase":
+        return _clear_dbase()
 
     if args.command == "config":
         if args.config_command == "set-api-key":
@@ -151,6 +145,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: Cannot launch REPL — missing dependency: {exc}", file=sys.stderr)
         print("Run: pip install -e .[dev]", file=sys.stderr)
         return 1
+    return 0
+
+
+def _clear_dbase() -> int:
+    """Clear all records from the global D-Base with confirmation code."""
+    from dargus.dbase import DBase
+    from dargus.dbase.manager import DBaseManager
+
+    code = secrets.token_hex(5)
+    print("WARNING: This will delete ALL records from the global D-Base.")
+    print(f"Confirmation code: {code}")
+    user_input = input("Enter the code exactly to proceed: ").strip()
+    if user_input != code:
+        print("Confirmation code mismatch. Aborted.")
+        return 1
+
+    dbase = DBase.global_instance()
+    manager = DBaseManager(dbase)
+    manager.reset()
+    print("Global D-Base cleared.")
     return 0
 
 

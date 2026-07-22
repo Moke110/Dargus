@@ -29,8 +29,10 @@ You can ask me things like:
 
 _HELP = """\
 Available commands:
-  /help  — show this message
-  /quit  — exit
+  /help         — show this message
+  /quit         — exit
+  /model        — interactive LLM configuration wizard
+  /clear-dbase  — clear all records from the global D-Base
 
 Type any natural language query to get started."""
 
@@ -66,7 +68,7 @@ def run_repl() -> None:
     console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))
 
     console.print()
-    console.print(Text(f"v{__version__}  ·  /help  /quit", style=Style(color="grey50")))
+    console.print(Text(f"v{__version__}  ·  /help  /quit  /model", style=Style(color="grey50")))
 
     # API key status
     if os.environ.get("DARGUS_LLM_API_KEY"):
@@ -104,6 +106,12 @@ def run_repl() -> None:
             from dargus.cli import _run_model_wizard
 
             _run_model_wizard()
+            console.print()
+            continue
+        if cmd == "/clear-dbase":
+            from dargus.cli import _clear_dbase
+
+            _clear_dbase()
             console.print()
             continue
 

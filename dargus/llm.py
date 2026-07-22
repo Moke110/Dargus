@@ -77,7 +77,7 @@ def check_llm_connection(llm: DargusLLM) -> dict[str, Any]:
 
     t0 = time.monotonic()
     try:
-        response = llm.chat([{"role": "user", "content": "Reply with just: OK"}])
+        llm.chat([{"role": "user", "content": "Reply with just: OK"}])
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": True, "model": llm.model, "latency_ms": elapsed_ms}
     except Exception as exc:

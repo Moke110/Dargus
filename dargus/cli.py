@@ -168,6 +168,50 @@ def _clear_dbase() -> int:
     return 0
 
 
+def _arrow_menu(options: list[str]) -> int:
+    """Display an arrow-key navigable menu. Returns selected index (0-based)."""
+    import sys
+    import termios
+    import tty
+
+    idx = 0
+    n = len(options)
+
+    def _draw():
+        out = sys.stdout
+        out.write("\n")
+        for i, opt in enumerate(options):
+            out.write(f"  > {opt}\n" if i == idx else f"    {opt}\n")
+        out.write("\n")
+        out.write("  Use ↑/↓ to navigate, ENTER to select\n")
+        out.flush()
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        _draw()
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x1b":
+                nxt = sys.stdin.read(2)
+                if nxt == "[A":
+                    idx = (idx - 1) % n
+                elif nxt == "[B":
+                    idx = (idx + 1) % n
+                sys.stdout.write(f"\033[{n + 3}A\033[J")
+                _draw()
+            elif ch == "\x03":
+                raise KeyboardInterrupt
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    print()
+    return idx
+
+
 def _run_model_wizard() -> int:
     """Interactive LLM configuration wizard for CLI and REPL."""
     import os
@@ -177,6 +221,16 @@ def _run_model_wizard() -> int:
 
     from dargus._env import write_dotenv
     from dargus.llm import DargusLLM, check_llm_connection
+
+    print()
+    print("  Configure LLM connection")
+    print("  ────────────────────────────────")
+    print()
+
+    choice = _arrow_menu(["Enter new configuration", "Skip (keep current settings)"])
+    if choice == 1:
+        print("  Keeping current configuration.")
+        return 0
 
     # Load current config
     config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
@@ -189,11 +243,6 @@ def _run_model_wizard() -> int:
     cur_key = os.environ.get("DARGUS_LLM_API_KEY", "")
 
     key_display = "********" if cur_key else "(not set)"
-
-    print()
-    print("  Configure LLM connection")
-    print("  ────────────────────────────────")
-    print()
 
     # Step 1: Base URL
     prompt = f"  Base URL [{cur_base_url}]: "

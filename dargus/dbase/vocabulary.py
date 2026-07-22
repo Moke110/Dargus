@@ -1,4 +1,4 @@
-"""D-Base vocabulary manager v0.15.0 — CURIE prefix registry + closed enum values."""
+"""D-Base vocabulary manager v0.15.5 — three-axis enum registry loaded from vocabularies.json."""
 
 from __future__ import annotations
 
@@ -7,8 +7,19 @@ import re
 from pathlib import Path
 from typing import Any
 
-# ── closed enum vocabularies (from field_registry.yaml) ──────────────────────
+# ── module-level compat exports (loaded from vocabularies.json) ──────────────
 
+_vm: VocabularyManager | None = None
+
+
+def _get_vm() -> "VocabularyManager":
+    global _vm
+    if _vm is None:
+        _vm = VocabularyManager()
+    return _vm
+
+
+# backward-compatible module-level enum lists (used by existing tests)
 BIOLOGICAL_LEVELS = [
     "molecular",
     "molecular-sim",
@@ -91,60 +102,85 @@ FALLBACK_PREFIXES = frozenset(
 
 
 class VocabularyManager:
-    """CURIE prefix registry + enum term registry (v0.15.0)."""
+    """CURIE prefix registry + three-axis enum term registry (v0.15.5).
+
+    Loads all controlled vocabularies from vocabularies.json (§3.0–§3.14).
+    """
 
     def __init__(self) -> None:
-        self._enums: dict[str, list[str]] = {
-            "biological_level": BIOLOGICAL_LEVELS,
-            "readout_category": READOUT_CATEGORIES,
-            "evidence_design": EVIDENCE_DESIGNS,
-        }
+        self._data: dict[str, Any] = {}
         self._curie_patterns: dict[str, re.Pattern] = {}
-        for prefix, pattern in CURIE_PATTERNS.items():
-            self._curie_patterns[prefix] = re.compile(pattern)
+        self._load()
+
+    def _load(self) -> None:
+        path = Path(__file__).resolve().parent / "vocabularies.json"
+        if path.exists():
+            self._data = json.loads(path.read_text(encoding="utf-8"))
+
+        # compile CURIE patterns
+        curie_data = self._data.get("curie_prefixes") or {}
+        for prefix, pat in (curie_data.get("hard_validated") or {}).items():
+            self._curie_patterns[prefix] = re.compile(pat)
+
+    def get_enum_values(self, vocab_name: str) -> list[str]:
+        """Return flat list of enum values for a vocabulary."""
+        entry = self._data.get(vocab_name) or {}
+        if isinstance(entry, dict):
+            vals = entry.get("values", [])
+            if vals and isinstance(vals[0], dict):
+                return [item["value"] for item in vals]
+            return list(vals)
+        return []
+
+    def get_enum(self, vocab_name: str) -> list[str]:
+        """Alias for get_enum_values."""
+        return self.get_enum_values(vocab_name)
+
+    def is_valid_enum_value(self, vocab_name: str, value: str) -> bool:
+        return value in self.get_enum_values(vocab_name)
+
+    def clinical_levels(self) -> frozenset:
+        entry = self._data.get("biological_level") or {}
+        vals = entry.get("values", [])
+        return frozenset(item["value"] for item in vals if item.get("is_clinical"))
+
+    def sim_levels(self) -> frozenset:
+        entry = self._data.get("biological_level") or {}
+        vals = entry.get("values", [])
+        return frozenset(item["value"] for item in vals if item.get("is_sim"))
+
+    def log_effect_types(self) -> frozenset:
+        entry = self._data.get("y_effect_type") or {}
+        return frozenset(entry.get("log_types", []))
+
+    def control_labels(self) -> frozenset:
+        return frozenset(self.get_enum_values("x_value_control_labels"))
 
     def validate_curie(self, curie_str: str) -> bool:
         """Check if a CURIE string has a registered prefix and valid accession."""
         if ":" not in curie_str:
             return False
         prefix, _, accession = curie_str.partition(":")
-        if prefix in FALLBACK_PREFIXES:
+
+        curie_data = self._data.get("curie_prefixes") or {}
+        fallback = set(curie_data.get("fallback", []))
+
+        if prefix in fallback:
             return True
         pat = self._curie_patterns.get(prefix)
         if pat is None:
             return False
         return bool(pat.match(accession))
 
-    def get_enum(self, vocab_name: str) -> list[str]:
-        """Return the values for a closed enum vocabulary."""
-        return list(self._enums.get(vocab_name, []))
-
-    def is_valid_enum_value(self, vocab_name: str, value: str) -> bool:
-        return value in self._enums.get(vocab_name, [])
-
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "biological_level": BIOLOGICAL_LEVELS,
-            "readout_category": READOUT_CATEGORIES,
-            "evidence_design": EVIDENCE_DESIGNS,
-            "curie_prefixes": {k: p for k, p in CURIE_PATTERNS.items()},
-            "fallback_prefixes": sorted(FALLBACK_PREFIXES),
-        }
+        return dict(self._data)
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(
-            json.dumps(self.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
-        )
+        Path(path).write_text(json.dumps(self._data, indent=2, sort_keys=True), encoding="utf-8")
 
     @classmethod
     def load(cls, path: str | Path) -> "VocabularyManager":
         vm = cls()
         if Path(path).exists():
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            for k in ("biological_level", "readout_category", "evidence_design"):
-                if k in data:
-                    vm._enums[k] = data[k]
-            if "curie_prefixes" in data:
-                for prefix, pattern in data["curie_prefixes"].items():
-                    vm._curie_patterns[prefix] = re.compile(pattern)
+            vm._data = json.loads(Path(path).read_text(encoding="utf-8"))
         return vm

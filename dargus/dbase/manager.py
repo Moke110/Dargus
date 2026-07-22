@@ -1,15 +1,19 @@
-"""DBaseManager v0.15.0 — sole access gate to D-Base (evidence dict API)."""
+"""DBaseManager v0.15.5 — sole write/read gate with three-axis evidence dict API."""
 
 from __future__ import annotations
 
+import logging
+import warnings
 from typing import Any
 
 from dargus.dbase.dbase import DBase
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
 
+logger = logging.getLogger(__name__)
+
 
 class DuplicateReviewRequest:
-    """Soft-flag result when semantic similarity >= threshold."""
+    """Soft-flag when semantic similarity >= threshold (v0.15.5 three-axis fields)."""
 
     def __init__(
         self,
@@ -27,37 +31,55 @@ class DuplicateReviewRequest:
 
 
 class DBaseManager:
-    """Single read/write interface to D-Base (v0.15.0)."""
+    """Single read/write interface to D-Base (v0.15.5 three-axis)."""
 
     def __init__(self, dbase: DBase) -> None:
         self.dbase = dbase
 
-    # ── read ──────────────────────────────────────────────────────────────
+    # ── read (§8.2) ─────────────────────────────────────────────────────────
 
     def read_records(
         self,
-        readout_type: str | None = None,
-        readout_category: str | None = None,
-        intervention_id: str | None = None,
+        x_entity: str | None = None,
         disease_id: str | None = None,
-        biological_level: str | None = None,
+        y_type: str | None = None,
+        y_category: str | None = None,
+        level: str | None = None,
         evidence_design: str | None = None,
         *,
         drug_id: str | None = None,
         template_id: str | None = None,
+        readout_type: str | None = None,
+        intervention_id: str | None = None,
     ) -> list[dict]:
-        """Read evidence records matching filters.
+        """Read evidence records matching three-axis filters.
 
-        Compat aliases: drug_id → intervention_id, template_id → readout_type.
+        Transitional compat aliases (deprecation warning):
+          drug_id → x_entity
+          template_id → ignored
+          readout_type → y_type
+          intervention_id → x_entity
         """
-        iid = intervention_id or drug_id
-        rt = readout_type or template_id
+        if drug_id is not None and x_entity is None:
+            warnings.warn("'drug_id' is deprecated, use 'x_entity' instead", DeprecationWarning)
+            x_entity = drug_id
+        if template_id is not None:
+            warnings.warn("'template_id' is deprecated and ignored", DeprecationWarning)
+        if readout_type is not None and y_type is None:
+            warnings.warn("'readout_type' is deprecated, use 'y_type' instead", DeprecationWarning)
+            y_type = readout_type
+        if intervention_id is not None and x_entity is None:
+            warnings.warn(
+                "'intervention_id' is deprecated, use 'x_entity' instead", DeprecationWarning
+            )
+            x_entity = intervention_id
+
         return self.dbase.query_parquet(
-            readout_type=rt,
-            readout_category=readout_category,
-            intervention_id=iid,
+            readout_type=y_type,
+            readout_category=y_category,
+            intervention_id=x_entity,
             disease_id=disease_id,
-            biological_level=biological_level,
+            biological_level=level,
             evidence_design=evidence_design,
         )
 
@@ -68,48 +90,39 @@ class DBaseManager:
                 return record
         return None
 
-    # ── write ─────────────────────────────────────────────────────────────
+    # ── write (§8.1) ────────────────────────────────────────────────────────
 
     def write_record(self, record: dict, dedup: bool = True) -> bool | DuplicateReviewRequest:
-        """Write one evidence dict to D-Base.
+        """Write one three-axis evidence dict to D-Base.
 
-        When dedup=True:
-        1. Validate → hard reject aborts
-        2. Compute evidence_id → collision = duplicate (return False)
-        3. Semantic check → DuplicateReviewRequest if similar
-        4. Append shard → mark view stale
+        1. validate(§6) → hard reject aborts
+        2. compute evidence_id(§5) → collision = duplicate (return False)
+        3. semantic check → DuplicateReviewRequest if similar
+        4. append shard → mark view stale
         """
-        # Validate
         result = validate_evidence(record)
         if not result.ok:
             raise ValueError(f"Validation failed: {'; '.join(result.hard_errors)}")
 
-        # Apply soft warnings
         if result.soft_warnings:
             record["needs_curation"] = True
 
-        # Compute evidence_id
         eid = compute_evidence_id(record)
         record["evidence_id"] = eid
-        record.setdefault("schema_version", "v0.15.0")
 
         if dedup:
-            # Exact dedup
             if self.dbase.evidence_id_exists(eid):
                 return False
 
-            # Semantic dedup
             dup = self._semantic_check(record)
             if dup:
                 return dup
 
-        # Append + mark view stale
         self.dbase.append_shard(record)
         self.dbase.mark_view_stale()
         return True
 
     def _semantic_check(self, record: dict) -> DuplicateReviewRequest | None:
-        """Check for semantically similar evidence."""
         try:
             from dargus.dbase.nlp import DBaseNLP
 
@@ -117,8 +130,8 @@ class DBaseManager:
             similar = self.read_records_semantic(
                 text,
                 top_k=5,
-                intervention_id=_primary_intervention_id(record),
-                disease_id=record.get("disease_id"),
+                x_entity=_primary_x_entity(record),
+                disease_id=_primary_disease_id(record),
             )
             for candidate, score in similar:
                 if score >= 0.85:
@@ -133,7 +146,7 @@ class DBaseManager:
             pass
         return None
 
-    # ── ingestion ──────────────────────────────────────────────────────────
+    # ── build_evidence (§8.3) ───────────────────────────────────────────────
 
     def build_evidence(
         self,
@@ -141,72 +154,149 @@ class DBaseManager:
         source_metadata: dict[str, Any],
         biological_level: str | None = None,
     ) -> dict:
-        """Assemble extracted raw fields into a validated evidence dict.
-
-        Replaces the old fill_template(). Does NOT persist — always goes through
-        write_record() afterwards.
-        """
+        """Assemble raw fields into a three-axis evidence dict. Does NOT persist."""
         evidence: dict[str, Any] = {}
 
-        # Identity
+        # top-level identity
         if biological_level:
             evidence["biological_level"] = biological_level
         if "biological_level" in raw_input:
             evidence["biological_level"] = raw_input["biological_level"]
 
-        evidence["disease_id"] = raw_input.get("disease_id")
-        evidence["readout_type"] = raw_input.get("readout_type")
-        evidence["readout_category"] = raw_input.get("readout_category")
-        evidence["evidence_design"] = raw_input.get("evidence_design", "two_arm_comparison")
+        evidence["evidence_design"] = raw_input.get("evidence_design", "descriptive")
 
-        # Intervention — from raw_input
-        interventions = raw_input.get("interventions", [])
-        if not interventions:
-            drug_id = raw_input.get("drug_id") or raw_input.get("drug")
-            if drug_id:
-                entity_id = drug_id if ":" in str(drug_id) else f"chembl:{drug_id}"
-                interventions = [
-                    {
-                        "role": "primary",
-                        "entity_type": "small_molecule",
-                        "entity_id": entity_id,
-                    }
-                ]
-            target_id = raw_input.get("target_id") or raw_input.get("target")
-            if target_id:
-                target_eid = target_id if ":" in str(target_id) else f"uniprot:{target_id}"
-                interventions.append(
-                    {
-                        "role": "comparator_agent",
-                        "entity_type": "gene",
-                        "entity_id": target_eid,
-                        "alteration": raw_input.get("target_alteration")
-                        or raw_input.get("alteration"),
-                    }
-                )
-        evidence["interventions"] = interventions
+        # xy axis
+        xy_count = raw_input.get("xy", {}).get("count", 0)
+        evidence.setdefault("xy", {})["count"] = xy_count
 
-        # Readout values
-        for key in (
-            "readout_value",
-            "readout_unit",
-            "n_total",
-            "p_value",
-            "statistical_test",
-            "effect_direction",
-            "is_qualitative",
-            "readout_direction",
-        ):
-            if key in raw_input and raw_input[key] is not None:
-                evidence[key] = raw_input[key]
+        # x axis
+        x_type = raw_input.get("x", {}).get("type", "drug")
+        x_unit = raw_input.get("x", {}).get("unit")
+        x_vals = raw_input.get("x", {}).get("value", [])
+        evidence["x"] = {"type": x_type, "unit": x_unit, "value": x_vals}
 
-        if "ci95_lower" in raw_input and "ci95_upper" in raw_input:
-            evidence["readout_ci95"] = {
-                "lower": raw_input["ci95_lower"],
-                "upper": raw_input["ci95_upper"],
-            }
+        # y axis
+        y_type = raw_input.get("y", {}).get("type") or raw_input.get("readout_type", "")
+        y_cat = raw_input.get("y", {}).get("category") or raw_input.get("readout_category", "")
+        y_unit = raw_input.get("y", {}).get("unit") or raw_input.get("readout_unit")
+        y_basis = raw_input.get("y", {}).get("basis", "absolute")
+        y_vals = (raw_input.get("y") or {}).get("value")
+        if y_vals is None:
+            rv = raw_input.get("readout_value")
+            if rv is not None:
+                y_vals = [rv] if not isinstance(rv, list) else rv
+            else:
+                y_vals = []
+        y_ci95 = raw_input.get("y", {}).get("ci95") or []
+        y_n = raw_input.get("y", {}).get("n_total") or []
+        y_pval = raw_input.get("y", {}).get("p_value") or []
+        y_dir = raw_input.get("y", {}).get("direction") or raw_input.get("readout_direction")
+        y_eff = raw_input.get("y", {}).get("effect")
 
-        # Sources
+        # backward compat: build ci95 from flat fields
+        if not y_ci95:
+            ci_low = raw_input.get("ci95_lower")
+            ci_up = raw_input.get("ci95_upper")
+            if ci_low is not None and ci_up is not None:
+                y_ci95 = [{"lower": ci_low, "upper": ci_up}]
+
+        # backward compat: build n_total from flat n_total
+        if not y_n and raw_input.get("n_total") is not None:
+            n = raw_input["n_total"]
+            y_n = [n] if not isinstance(n, list) else n
+
+        # backward compat: build p_value from flat p_value
+        if not y_pval and raw_input.get("p_value") is not None:
+            pv = raw_input["p_value"]
+            y_pval = [pv] if not isinstance(pv, (list, tuple)) else list(pv)
+
+        # Backward compat: drug_id / drug → store in bg.drugs (descriptive records)
+        drug_id = raw_input.get("drug_id") or raw_input.get("drug")
+        if drug_id:
+            entity_id = drug_id if ":" in str(drug_id) else f"chembl:{drug_id}"
+            _bg_drugs_from_compat = [{"entity_id": entity_id}]
+        else:
+            _bg_drugs_from_compat = []
+
+        # Assemble y
+        evidence["y"] = {"type": y_type, "category": y_cat}
+        if y_unit:
+            evidence["y"]["unit"] = y_unit
+        evidence["y"]["basis"] = y_basis
+        evidence["y"]["value"] = y_vals
+        if y_ci95:
+            evidence["y"]["ci95"] = y_ci95
+        if y_n:
+            evidence["y"]["n_total"] = y_n
+        if y_pval:
+            evidence["y"]["p_value"] = y_pval
+        if y_dir:
+            evidence["y"]["direction"] = y_dir
+        if y_eff:
+            evidence["y"]["effect"] = y_eff
+
+        # bg axis
+        disease_id = raw_input.get("bg", {}).get("disease_id") or raw_input.get("disease_id")
+        if isinstance(disease_id, str):
+            disease_id = [disease_id]
+        bg_drugs = (raw_input.get("bg") or {}).get("drugs", [])
+        if _bg_drugs_from_compat:
+            bg_drugs = _bg_drugs_from_compat + bg_drugs
+        bg_genes = raw_input.get("bg", {}).get("genes", [])
+        bg_model = raw_input.get("bg", {}).get("model")
+        evidence["bg"] = {
+            "disease_id": disease_id or [],
+            "drugs": bg_drugs,
+            "genes": bg_genes,
+            "model": bg_model,
+        }
+
+        # sample identity — flattened from old experimental_context
+        ec = raw_input.get("experimental_context") or {}
+        for key in ("cell_line_id", "model_organism", "strain", "sex"):
+            val = raw_input.get(key) or ec.get(key)
+            if val is not None:
+                evidence[key] = val
+
+        # tissue / cell_type — flattened from old sample
+        sample = raw_input.get("sample") or {}
+        for key in ("tissue", "cell_type"):
+            val = raw_input.get(key) or sample.get(key)
+            if val is not None:
+                evidence[key] = val
+
+        # assay/exposure — flattened from old platform/exposure
+        platform = raw_input.get("platform") or {}
+        _ap = raw_input.get("assay_platform") or platform.get("assay_platform")
+        evidence["assay_platform"] = _ap
+        _ep = raw_input.get("exvivo_platform") or platform.get("exvivo_platform")
+        evidence["exvivo_platform"] = _ep
+
+        _exp_keys = (
+            "exposure_dose_value",
+            "exposure_dose_unit",
+            "exposure_duration_value",
+            "exposure_duration_unit",
+        )
+        for key in _exp_keys:
+            val = raw_input.get(key)
+            if val is not None:
+                evidence[key] = val
+        exposure = raw_input.get("exposure") or {}
+        dose = exposure.get("dose") or {}
+        if "exposure_dose_value" not in evidence and dose.get("value") is not None:
+            evidence["exposure_dose_value"] = dose["value"]
+            evidence["exposure_dose_unit"] = dose.get("unit")
+        dur = exposure.get("duration") or {}
+        if "exposure_duration_value" not in evidence and dur.get("value") is not None:
+            evidence["exposure_duration_value"] = dur["value"]
+            evidence["exposure_duration_unit"] = dur.get("unit")
+
+        # clinical_design
+        if "clinical_design" in raw_input:
+            evidence["clinical_design"] = raw_input["clinical_design"]
+
+        # sources
         evidence["sources"] = source_metadata.get("sources", [])
         if not evidence["sources"] and source_metadata:
             evidence["sources"] = [
@@ -217,6 +307,21 @@ class DBaseManager:
                 }
             ]
 
+        # metadata
+        for key in (
+            "phenotypes",
+            "is_primary_endpoint",
+            "p_value_adjusted",
+            "llm_summary",
+            "status",
+            "superseded_by",
+            "revision",
+            "legacy_hash",
+            "experiment_group_id",
+        ):
+            if key in raw_input and raw_input[key] is not None:
+                evidence[key] = raw_input[key]
+
         # Validate and stamp
         result = validate_evidence(evidence)
         if not result.ok:
@@ -225,28 +330,33 @@ class DBaseManager:
             evidence["needs_curation"] = True
 
         evidence["evidence_id"] = compute_evidence_id(evidence)
-        evidence["schema_version"] = "v0.15.0"
         return evidence
 
-    # ── semantic ───────────────────────────────────────────────────────────
+    # ── semantic (§8.5) ─────────────────────────────────────────────────────
 
     def read_records_semantic(
         self,
         query_text: str,
         top_k: int = 10,
-        readout_type: str | None = None,
-        intervention_id: str | None = None,
+        x_entity: str | None = None,
         disease_id: str | None = None,
+        y_type: str | None = None,
+        *,
+        intervention_id: str | None = None,
+        readout_type: str | None = None,
     ) -> list[tuple[dict, float]]:
         """Semantic search over evidence records."""
+        _x_entity = x_entity or intervention_id
+        _y_type = y_type or readout_type
+
         try:
             from dargus.dbase.nlp import DBaseNLP
 
             nlp = DBaseNLP()
             candidates = self.read_records(
-                readout_type=readout_type,
-                intervention_id=intervention_id,
+                x_entity=_x_entity,
                 disease_id=disease_id,
+                y_type=_y_type,
             )
             scored: list[tuple[dict, float]] = []
             for record in candidates:
@@ -258,36 +368,39 @@ class DBaseManager:
         except Exception:
             return []
 
-    # ── lifecycle ──────────────────────────────────────────────────────────
+    # ── lifecycle ────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
         """Clear all records from D-Base."""
         self.dbase.clear()
 
     def _record_field(self, record: dict, field_name: str) -> Any:
-        """Extract a field from an evidence dict.
-
-        Handles v0.15.0 evidence dict structure:
-        - Direct dict access for most fields
-        - ``drug_id`` resolved from interventions[0].entity_id
-        - ``endpoint`` resolved from readout_type
-        - ``fold_change`` resolved from readout_value
-        """
+        """Extract a field from a three-axis evidence dict."""
         if field_name in record:
             return record[field_name]
-        if field_name == "drug_id":
-            for iv in record.get("interventions", []):
-                if iv.get("role") == "primary":
-                    return iv.get("entity_id")
-        if field_name == "endpoint":
-            return record.get("readout_type")
-        if field_name == "fold_change":
-            return record.get("readout_value")
+        # resolve from three-axis structure
+        if field_name == "drug_id" or field_name == "x_entity":
+            xv = record.get("x", {}).get("value") or []
+            if xv:
+                return xv[0].get("entity_id")
+        if field_name == "endpoint" or field_name == "y_type":
+            return record.get("y", {}).get("type")
+        if field_name == "fold_change" or field_name == "y_value":
+            yv = record.get("y", {}).get("value") or []
+            return yv[0] if yv else None
+        if field_name == "disease_id":
+            dids = record.get("bg", {}).get("disease_id") or []
+            return dids[0] if dids else None
         return None
 
 
-def _primary_intervention_id(record: dict) -> str | None:
-    for iv in record.get("interventions", []):
-        if iv.get("role") == "primary":
-            return iv.get("entity_id")
+def _primary_x_entity(record: dict) -> str | None:
+    xv = record.get("x", {}).get("value") or []
+    if xv:
+        return xv[0].get("entity_id") or xv[0].get("entity_label")
     return None
+
+
+def _primary_disease_id(record: dict) -> str | None:
+    dids = record.get("bg", {}).get("disease_id") or []
+    return dids[0] if dids else None

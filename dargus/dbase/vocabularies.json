@@ -1,0 +1,174 @@
+{
+  "biological_level": {
+    "description": "Biological evidence level (11 values). is_clinical=1 for rct,epi.",
+    "values": [
+      {"value": "molecular", "is_clinical": 0, "is_sim": 0},
+      {"value": "molecular-sim", "is_clinical": 0, "is_sim": 1},
+      {"value": "cellular", "is_clinical": 0, "is_sim": 0},
+      {"value": "cellular-sim", "is_clinical": 0, "is_sim": 1},
+      {"value": "exvivo", "is_clinical": 0, "is_sim": 0},
+      {"value": "exvivo-sim", "is_clinical": 0, "is_sim": 1},
+      {"value": "animal", "is_clinical": 0, "is_sim": 0},
+      {"value": "animal-sim", "is_clinical": 0, "is_sim": 1},
+      {"value": "rct", "is_clinical": 1, "is_sim": 0},
+      {"value": "epi", "is_clinical": 1, "is_sim": 0},
+      {"value": "rct-sim", "is_clinical": 1, "is_sim": 1}
+    ]
+  },
+
+  "evidence_design": {
+    "description": "Evidence structure type (7 values).",
+    "values": [
+      "two_arm_comparison",
+      "single_arm",
+      "dose_escalation",
+      "dose_response_curve",
+      "observational_association",
+      "continuous_trajectory",
+      "descriptive"
+    ]
+  },
+
+  "x_type": {
+    "description": "Experimental variable type (5 values).",
+    "values": ["drug", "gene", "concentration", "time", "combination"]
+  },
+
+  "y_category": {
+    "description": "Readout/endpoint category (23 values).",
+    "values": [
+      "clinic_efficacy_primary",
+      "clinic_efficacy_secondary",
+      "clinic_efficacy_exploratory",
+      "clinic_toxicity_primary",
+      "clinic_toxicity_secondary",
+      "clinic_toxicity_exploratory",
+      "binding",
+      "pk_adme",
+      "prot_exp",
+      "rna_exp",
+      "viability",
+      "apoptosis",
+      "proliferation",
+      "migration",
+      "invasion",
+      "autophagy",
+      "differentiation",
+      "phosphorylation",
+      "localization",
+      "metabolism",
+      "oxidative_stress",
+      "behavioral",
+      "other"
+    ]
+  },
+
+  "y_direction": {
+    "description": "Direction of effect (3 values).",
+    "values": ["beneficial", "harmful", "neutral"]
+  },
+
+  "y_dispersion_type": {
+    "description": "Dispersion measure type (5 values).",
+    "values": ["SD", "SEM", "IQR", "CI95", "range"]
+  },
+
+  "y_effect_type": {
+    "description": "Effect size type (16 values). log_or/log_rr/log_hr require scale=log.",
+    "values": [
+      "cohens_d", "hedges_g", "smd", "raw_mean_diff", "ratio",
+      "odds_ratio", "risk_ratio", "hazard_ratio",
+      "log_or", "log_rr", "log_hr",
+      "correlation", "AUC", "IC50", "EC50", "other"
+    ],
+    "log_types": ["log_or", "log_rr", "log_hr"]
+  },
+
+  "y_effect_scale": {
+    "description": "Effect scale (2 values).",
+    "values": ["linear", "log"]
+  },
+
+  "y_basis": {
+    "description": "What the y.value represents (3 values).",
+    "values": ["absolute", "change_from_baseline", "ratio_to_baseline"]
+  },
+
+  "source_type": {
+    "description": "Source identifier type (6 values).",
+    "values": ["doi", "pmid", "pmcid", "db_accession", "file_path", "url"]
+  },
+
+  "comparator_type": {
+    "description": "Clinical trial comparator type (4 values).",
+    "values": ["placebo", "active", "standard_of_care", "no_treatment"]
+  },
+
+  "blinding": {
+    "description": "Blinding level (4 values).",
+    "values": ["open_label", "single", "double", "triple"]
+  },
+
+  "phase": {
+    "description": "Clinical trial phase (4 values).",
+    "values": ["phase_1", "phase_2", "phase_3", "phase_4"]
+  },
+
+  "population": {
+    "description": "Generic population strata (6 values, extensible).",
+    "values": ["adults", "elderly_65_plus", "pediatric", "pregnant", "other"]
+  },
+
+  "sex": {
+    "description": "Biological sex (3 values).",
+    "values": ["male", "female", "mixed"]
+  },
+
+  "alteration": {
+    "description": "Gene alteration type (8 values).",
+    "values": ["KO", "KD", "OE", "GOF", "LOF", "DN", "CRISPRi", "CRISPRa"]
+  },
+
+  "status": {
+    "description": "Record status (3 values).",
+    "values": ["active", "superseded", "retracted"]
+  },
+
+  "x_value_control_labels": {
+    "description": "Sanctioned control arm labels for pairwise x.value[1].",
+    "values": ["placebo", "wildtype", "untreated", "baseline", "vehicle"]
+  },
+
+  "curie_prefixes": {
+    "description": "CURIE prefix registry with accession validation regexes.",
+    "hard_validated": {
+      "chembl": "CHEMBL\\d+",
+      "uniprot": "([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\\d+)?",
+      "mondo": "\\d{7}",
+      "doid": "\\d+",
+      "hp": "\\d{7}",
+      "uberon": "\\d{7}",
+      "cl": "\\d{7}",
+      "cellosaurus": "CVCL_[A-Z0-9]{4}",
+      "NCBITaxon": "\\d+",
+      "clinicaltrials": "NCT\\d{8}"
+    },
+    "fallback": [
+      "drugbank", "rxnorm", "unii", "iuphar", "pubchem.compound",
+      "complexportal", "refseq", "genbank", "insdc", "bto"
+    ]
+  },
+
+  "string_nulls": {
+    "description": "Forbidden string values anywhere in a record.",
+    "values": ["null", "NA", "None", "nan", "N/A"]
+  },
+
+  "count_design_rules": {
+    "description": "xy.count constraints by evidence_design.",
+    "descriptive": {"min": 0, "max": 0},
+    "two_arm_comparison": {"min": 2, "max": 2},
+    "dose_response_curve": {"min": 3},
+    "continuous_trajectory": {"min": 3}
+  }
+}

@@ -1,4 +1,4 @@
-"""D-Base v0.15.0 — keyed-object evidence store with shard JSONL + Parquet view."""
+"""D-Base v0.15.5 — keyed-object evidence store with shard JSONL + Parquet view."""
 
 from __future__ import annotations
 
@@ -141,7 +141,10 @@ class DBase:
 
         df = pd.DataFrame(records)
         self.views_dir.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(self.parquet_path, index=False)
+        try:
+            df.to_parquet(self.parquet_path, index=False)
+        except ImportError:
+            return  # pyarrow/fastparquet not installed; skip view
 
         manifest = self.read_manifest()
         manifest["view_built_at"] = str(pd.Timestamp.now())
@@ -176,21 +179,36 @@ class DBase:
             return []
 
         df = pd.read_parquet(self.parquet_path)
+
+        # three-axis: y.type (new) or readout_type (old)
         if readout_type:
-            df = df[df["readout_type"] == readout_type]
-        if readout_category:
-            df = df[df["readout_category"] == readout_category]
-        if intervention_id:
-            mask = df["interventions"].apply(
-                lambda ivs: (
-                    any(i.get("entity_id") == intervention_id for i in (ivs or []))
-                    if isinstance(ivs, list)
-                    else False
+            df = df[
+                df.apply(
+                    lambda r: _get_y_type(r) == readout_type,
+                    axis=1,
                 )
-            )
-            df = df[mask]
+            ]
+        if readout_category:
+            df = df[
+                df.apply(
+                    lambda r: _get_y_category(r) == readout_category,
+                    axis=1,
+                )
+            ]
+        if intervention_id:
+            df = df[
+                df.apply(
+                    lambda r: _match_x_entity(r, intervention_id),
+                    axis=1,
+                )
+            ]
         if disease_id:
-            df = df[df["disease_id"] == disease_id]
+            df = df[
+                df.apply(
+                    lambda r: _match_disease_id(r, disease_id),
+                    axis=1,
+                )
+            ]
         if biological_level:
             df = df[df["biological_level"] == biological_level]
         if evidence_design:
@@ -208,19 +226,13 @@ class DBase:
     ) -> list[dict]:
         results = self.read_shards()
         if readout_type:
-            results = [r for r in results if r.get("readout_type") == readout_type]
+            results = [r for r in results if _get_y_type(r) == readout_type]
         if readout_category:
-            results = [r for r in results if r.get("readout_category") == readout_category]
+            results = [r for r in results if _get_y_category(r) == readout_category]
         if intervention_id:
-            results = [
-                r
-                for r in results
-                if any(
-                    i.get("entity_id") == intervention_id for i in (r.get("interventions") or [])
-                )
-            ]
+            results = [r for r in results if _match_x_entity(r, intervention_id)]
         if disease_id:
-            results = [r for r in results if r.get("disease_id") == disease_id]
+            results = [r for r in results if _match_disease_id(r, disease_id)]
         if biological_level:
             results = [r for r in results if r.get("biological_level") == biological_level]
         if evidence_design:
@@ -240,3 +252,48 @@ class DBase:
     def global_instance(cls) -> "DBase":
         """Return the singleton-like global D-Base, respecting WORKING_DBASE."""
         return cls(project_id="global")
+
+
+# ── three-axis query helpers ─────────────────────────────────────────────
+
+
+def _get_y_type(r: dict) -> str | None:
+    """Resolve y.type from three-axis or legacy record."""
+    y = r.get("y")
+    if isinstance(y, dict):
+        return y.get("type")
+    return r.get("readout_type")
+
+
+def _get_y_category(r: dict) -> str | None:
+    """Resolve y.category from three-axis or legacy record."""
+    y = r.get("y")
+    if isinstance(y, dict):
+        return y.get("category")
+    return r.get("readout_category")
+
+
+def _match_x_entity(r: dict, entity_id: str) -> bool:
+    """Check if record's x.value[*] matches the given entity_id/entity_label."""
+    x = r.get("x")
+    if isinstance(x, dict):
+        for item in x.get("value") or []:
+            if isinstance(item, dict):
+                if item.get("entity_id") == entity_id or item.get("entity_label") == entity_id:
+                    return True
+    # legacy fallback
+    for iv in r.get("interventions") or []:
+        if iv.get("entity_id") == entity_id or iv.get("entity_label") == entity_id:
+            return True
+    return False
+
+
+def _match_disease_id(r: dict, disease_id: str) -> bool:
+    """Check if record's bg.disease_id list contains the given disease_id."""
+    bg = r.get("bg")
+    if isinstance(bg, dict):
+        dids = bg.get("disease_id") or []
+        if disease_id in dids:
+            return True
+    # legacy fallback
+    return r.get("disease_id") == disease_id

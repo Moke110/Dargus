@@ -15,4 +15,5 @@ literature/
 .DS_Store
 *.log
 CLAUDE.local.md
-rags/
+data/
+/tests/

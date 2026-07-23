@@ -113,9 +113,15 @@ def run_repl() -> None:
 
         if not cmd:
             continue
-        if cmd == "/quit":
+        if cmd in ("/quit", "/q"):
             console.print("Goodbye.", style=Style(color="grey50"))
             break
+        if cmd in ("/test", "/t"):
+            from dargus.cli import _run_test_suite
+
+            _run_test_suite()
+            console.print()
+            continue
         if cmd == "/help":
             console.print(Panel(_HELP, border_style="white", padding=(0, 2)))
             console.print()
@@ -132,13 +138,6 @@ def run_repl() -> None:
             _clear_dbase()
             console.print()
             continue
-        if cmd == "/test":
-            from dargus.cli import _run_test_suite
-
-            _run_test_suite()
-            console.print()
-            continue
-
         # Route to Iris agent
         console.print()  # blank line before response
         result = iris.process_query(cmd)

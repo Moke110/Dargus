@@ -7,6 +7,7 @@ import json as _json
 import logging
 import secrets
 import sys
+from pathlib import Path
 
 from dargus import Iris
 from dargus._env import load_dotenv
@@ -186,6 +187,7 @@ def _run_test_suite() -> int:
         f"Run All Tests ({_count_tests(test_dir)} tests)",
         "DB Input — write single evidence to test D-Base",
         "Bulk Input — bulk write evidence instances from db-input-instances/",
+        "Ingest Test — run ingest workflow on a test data directory",
     ]
     for mod in modules:
         options.append(f"{mod} ({_count_tests(test_dir / mod)} tests)")
@@ -204,10 +206,12 @@ def _run_test_suite() -> int:
             _run_test_dbase()
         elif idx == 2:  # Bulk Input
             _run_test_bulk_input()
+        elif idx == 3:  # Ingest Test
+            _run_test_ingest()
         else:  # specific module
             import pytest
 
-            mod = modules[idx - 3]
+            mod = modules[idx - 4]
             pytest.main(["-q", str(test_dir / mod)])
         print()
         input("Press ENTER to return to menu...")
@@ -499,6 +503,342 @@ def _run_test_bulk_input() -> int:
     return 0
 
 
+def _run_test_ingest() -> int:
+    """Run the ingest workflow on a test data directory and report results."""
+    import json
+    import os
+    import shutil
+    import time
+
+    import yaml
+
+    from dargus.dbase import DBase
+    from dargus.dbase.manager import DBaseManager, DuplicateReviewRequest
+    from dargus.dbase.paths import default_dargus_home
+
+    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+
+    with config_path.open("r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+
+    saved_dir = cfg.get("test", {}).get("ingest_dir", "")
+    default_dir = "~/dargus-dev/test/ingest/slices"
+    current_dir = Path(saved_dir).expanduser() if saved_dir else Path(default_dir).expanduser()
+
+    print(f"\n  Ingest data directory: {current_dir}")
+    choice = input("  Change directory? Enter new path or ENTER to keep: ").strip()
+    if choice:
+        new_dir = Path(choice).expanduser()
+        if not new_dir.is_dir():
+            print(f"  Directory not found: {new_dir}")
+            return 1
+        current_dir = new_dir
+        cfg.setdefault("test", {})["ingest_dir"] = str(new_dir)
+        with config_path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(cfg, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        print("  Saved to config.")
+
+    if not current_dir.is_dir():
+        print(f"  Directory not found: {current_dir}")
+        return 1
+
+    # ── Step 1: check / create test D-Base ──
+    test_root = default_dargus_home()
+    test_dbase_dir = test_root / "dbase-test"
+    data_dir_path = test_dbase_dir / "data"
+
+    if data_dir_path.exists():
+        records = []
+        for shard in sorted(data_dir_path.glob("shard-*.jsonl")):
+            with shard.open("r", encoding="utf-8") as fh:
+                records.extend(json.loads(line) for line in fh if line.strip())
+        print(f"  Test D-Base found ({len(records)} records).")
+        choice = input("  Clear existing data? [y/N]: ").strip().lower()
+        if choice in ("y", "yes"):
+            shutil.rmtree(test_dbase_dir)
+            test_dbase_dir.mkdir(parents=True)
+            (test_dbase_dir / "data").mkdir()
+            (test_dbase_dir / "views").mkdir()
+            print("  Cleared.")
+    else:
+        test_dbase_dir.mkdir(parents=True)
+        data_dir_path.mkdir()
+        (test_dbase_dir / "views").mkdir()
+        print(f"  Test D-Base created at {test_dbase_dir}")
+
+    # ── Step 2: switch to test database ──
+    old_working = os.environ.get("WORKING_DBASE")
+    os.environ["WORKING_DBASE"] = "dbase-test"
+
+    dbase = DBase.global_instance()
+    manager = DBaseManager(dbase)
+
+    # ── Step 3: scan files and run converters ──
+    file_map = _scan_data_dir(current_dir)
+    if not file_map:
+        print("  No supported files found in the directory.")
+        _restore_working_dbase(old_working, default_dargus_home())
+        return 1
+
+    added = 0
+    duplicates = 0
+    hard_rejects = 0
+    errors = 0
+    error_details: list[str] = []
+    per_file_stats: dict[str, dict] = {}
+
+    total = len(file_map)
+    processed = 0
+    bar_width = 30
+    t0 = time.perf_counter()
+
+    print(f"\n  Processing {total} files in {current_dir}")
+    print()
+
+    try:
+        for conv_instance, fp in file_map:
+            try:
+                raw_rows = conv_instance.convert(fp)
+            except Exception as exc:
+                errors += 1
+                error_details.append(f"{fp.name}: convert failed — {exc}")
+                processed += 1
+                _draw_progress(
+                    processed, total, bar_width, added, duplicates, hard_rejects, errors, t0
+                )
+                continue
+
+            file_added = 0
+            file_dup = 0
+            file_reject = 0
+            file_err = 0
+
+            for row_idx, raw in enumerate(raw_rows):
+                try:
+                    evidence = manager.build_evidence(
+                        raw,
+                        source_metadata={
+                            "type": "file_path",
+                            "id": f"test-ingest:{fp.name}:{row_idx}",
+                        },
+                    )
+                except ValueError as exc:
+                    file_reject += 1
+                    raw_msg = str(exc)[:120]
+                    error_details.append(f"{fp.name} row {row_idx}: {raw_msg}")
+                    continue
+                except Exception as exc:
+                    file_err += 1
+                    error_details.append(f"{fp.name} row {row_idx}: build_evidence — {exc}")
+                    continue
+
+                try:
+                    result = manager.write_record(evidence)
+                except ValueError as exc:
+                    file_reject += 1
+                    raw_msg = str(exc)[:120]
+                    error_details.append(f"{fp.name} row {row_idx}: {raw_msg}")
+                    continue
+                except Exception as exc:
+                    file_err += 1
+                    error_details.append(f"{fp.name} row {row_idx}: write_record — {exc}")
+                    continue
+
+                if result is True:
+                    file_added += 1
+                elif isinstance(result, DuplicateReviewRequest):
+                    file_dup += 1
+                else:
+                    file_dup += 1
+
+            added += file_added
+            duplicates += file_dup
+            hard_rejects += file_reject
+            errors += file_err
+
+            per_file_stats[fp.name] = {
+                "added": file_added,
+                "duplicates": file_dup,
+                "rejects": file_reject,
+                "errors": file_err,
+            }
+
+            processed += 1
+            _draw_progress(processed, total, bar_width, added, duplicates, hard_rejects, errors, t0)
+
+        print()
+
+    finally:
+        _restore_working_dbase(old_working, default_dargus_home())
+
+    # Rebuild view
+    try:
+        dbase.rebuild_view()
+    except Exception:
+        pass
+
+    elapsed = time.perf_counter() - t0
+
+    # ── Step 5: report ──
+    print()
+    print("  Ingest complete.")
+    print("  ────────────────────────────────")
+    print(f"  Directory:        {current_dir}")
+    print(f"  Files processed:  {total}")
+    print(f"  Added:            {added}")
+    print(f"  Duplicates:       {duplicates}")
+    print(f"  Hard rejects:     {hard_rejects}")
+    print(f"  Errors:           {errors}")
+    print(f"  Time:             {elapsed:.1f}s")
+    if error_details:
+        print("\n  Details (first 10):")
+        for detail in error_details[:10]:
+            print(f"    - {detail}")
+        if len(error_details) > 10:
+            print(f"    ... and {len(error_details) - 10} more")
+    print(f"\n  Working D-Base restored to default ({default_dargus_home() / 'dbase'}).")
+
+    # ── Step 6: ask about report ──
+    report_choice = input("\n  Generate Ingest-test-report.md? [y/N]: ").strip().lower()
+    if report_choice in ("y", "yes"):
+        report_path = current_dir.parent / "Ingest-test-report.md"
+        _write_ingest_report(
+            report_path,
+            current_dir,
+            total,
+            added,
+            duplicates,
+            hard_rejects,
+            errors,
+            elapsed,
+            per_file_stats,
+            error_details,
+        )
+        print(f"\n  Report written to {report_path}")
+
+    return 0
+
+
+def _scan_data_dir(dir_path: Path) -> list[tuple]:
+    """Scan a directory and create (converter_instance, file_path) pairs.
+
+    Returns [(converter_instance, Path), ...].
+    """
+    from dargus.ingestion.converters.gdsc import GdscConverter
+    from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
+    from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
+    from dargus.ingestion.converters.top_clinical import TopClinicalConverter
+
+    pairs: list[tuple] = []
+
+    for fp in sorted(dir_path.iterdir()):
+        if not fp.is_file():
+            continue
+        name = fp.name.lower()
+
+        if "gdsc" in name and name.endswith(".csv"):
+            pairs.append((GdscConverter(), fp))
+        elif any(kw in name for kw in ("bindingdb", "davis", "kiba")):
+            assay = "affinity"
+            if "ic50" in name:
+                assay = "IC50"
+            elif "ki" in name:
+                assay = "Ki"
+            elif "kd" in name:
+                assay = "Kd"
+            pairs.append((TdcDtiConverter(assay), fp))
+        elif "solubility" in name:
+            pairs.append((TdcAdmetConverter("solubility"), fp))
+        elif "bioavailability" in name:
+            pairs.append((TdcAdmetConverter("bioavailability"), fp))
+        elif "cyp3a4" in name:
+            pairs.append((TdcAdmetConverter("cyp3a4_substrate"), fp))
+        elif any(
+            kw in name
+            for kw in (
+                "cyp",
+                "caco2",
+                "bbb",
+                "half_life",
+                "clearance",
+                "vdss",
+                "ppbr",
+                "ames",
+                "carcinogens",
+                "ld50",
+            )
+        ):
+            pairs.append((TdcAdmetConverter("admet"), fp))
+        elif "top" in name and "clinical" in name:
+            pairs.append((TopClinicalConverter(), fp))
+
+    return pairs
+
+
+def _restore_working_dbase(old_working: str | None, dargus_home: Path) -> None:
+    import os
+
+    if old_working is not None:
+        os.environ["WORKING_DBASE"] = old_working
+    else:
+        os.environ.pop("WORKING_DBASE", None)
+
+
+def _write_ingest_report(
+    report_path: Path,
+    data_dir: Path,
+    total_files: int,
+    added: int,
+    duplicates: int,
+    hard_rejects: int,
+    errors: int,
+    elapsed: float,
+    per_file_stats: dict[str, dict],
+    error_details: list[str],
+) -> None:
+    """Write a detailed ingest test report in markdown format."""
+    from datetime import datetime
+
+    lines = [
+        "# Ingest Test Report",
+        "",
+        f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"**Data directory**: `{data_dir}`",
+        "",
+        "## Summary",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Files processed | {total_files} |",
+        f"| Evidence records added | {added} |",
+        f"| Duplicates skipped | {duplicates} |",
+        f"| Hard rejects | {hard_rejects} |",
+        f"| Errors | {errors} |",
+        f"| Total time | {elapsed:.1f}s |",
+        f"| Rate | {total_files / elapsed:.1f} files/s |" if elapsed > 0 else "",
+        "",
+        "## Per-File Breakdown",
+        "",
+        "| File | Added | Dup | Reject | Err |",
+        "|---|---|---|---|---|",
+    ]
+    for fname, stats in sorted(per_file_stats.items()):
+        lines.append(
+            f"| {fname} | {stats['added']} | {stats['duplicates']} | "
+            f"{stats['rejects']} | {stats['errors']} |"
+        )
+
+    if error_details:
+        lines.append("")
+        lines.append("## Error Details")
+        lines.append("")
+        for detail in error_details:
+            lines.append(f"- {detail}")
+
+    lines.append("")
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _draw_progress(
     done: int,
     total: int,
@@ -544,18 +884,16 @@ def _arrow_menu(options: list[str]) -> int:
 
     idx = 0
     n = len(options)
-    # total lines drawn: blank line + options + blank + help
-    total_lines = n + 3
+    total_lines = n + 2
     _first = True
 
     def _draw():
         nonlocal _first
         out = sys.stdout
         if not _first:
-            out.write(f"\r\033[{total_lines}A")  # return to col 0, move up
+            out.write(f"\r\033[{total_lines}A")
         _first = False
-        out.write("\r\033[J")  # CR + clear to end of screen
-        out.write("\r\n")
+        out.write("\r\033[J")
         for i, opt in enumerate(options):
             prefix = "  > " if i == idx else "    "
             out.write(f"\r{prefix}{opt}\r\n")

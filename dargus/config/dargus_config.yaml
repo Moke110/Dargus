@@ -44,7 +44,8 @@ projects:
     - ADAS-Cog_change
     - MMSE_change
 test:
-  bulk_input_dir: /home/chang/dargus-dev/tests/1000_instances
+  bulk_input_dir: test/ingest/slices
+  ingest_dir: /home/chang/dargus-dev/data
 logging:
   level: INFO
   format: '%(asctime)s | %(name)s | %(levelname)s | %(message)s'

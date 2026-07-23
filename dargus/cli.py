@@ -884,7 +884,7 @@ def _arrow_menu(options: list[str]) -> int:
 
     idx = 0
     n = len(options)
-    total_lines = n + 2
+    total_lines = n + 3
     _first = True
 
     def _draw():

@@ -10,6 +10,7 @@ import yaml
 from dargus.models.config import EnvSecretsManager, load_model_config
 from dargus.models.embedding import EmbeddingModel, SentenceTransformerBackend
 from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM
+from dargus.models.router import ModelRouter
 from dargus.runtime.context import RuntimeContext, health_check
 
 logger = logging.getLogger(__name__)
@@ -88,14 +89,15 @@ def bootstrap(config_path: str | None = None) -> RuntimeContext:
             backend=SentenceTransformerBackend(model_name=model_config.embedding_model)
         )
 
-    # ModelRouter will be wired into the context in a future phase
-    # (currently created during bootstrap for later integration)
+    # ModelRouter — routes reasoning calls by agent phase
+    model_router = ModelRouter(backends={"planner": reasoning_backend})
 
     # Assemble context
     ctx = RuntimeContext(
         config=config,
         reasoning_llm=reasoning_llm,
         embedding_model=embedding_model,
+        model_router=model_router,
     )
 
     if health_check(ctx):

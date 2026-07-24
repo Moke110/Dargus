@@ -114,7 +114,7 @@ class TestLoadModelConfig:
     def test_none_config_treated_as_empty(self):
         """None config is treated as empty dict."""
         with pytest.raises(KeyError):
-            load_model_config(None, EnvSecretsManager())  # type: ignore[arg-type]
+            load_model_config(None, EnvSecretsManager())
 
     def test_embedding_config_without_api_key(self):
         """Embedding config without api_key_env works fine."""

@@ -1,5 +1,9 @@
 """Tests for ReasoningLLM, ReasoningBackend, and related dataclasses."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from dargus.models.reasoning import (
     LiteLLMBackend,
     LLMResponse,
@@ -162,3 +166,160 @@ class TestLiteLLMBackend:
     def test_constructor_minimal_params(self):
         backend = LiteLLMBackend(provider="openai", model="gpt-4o", api_key="sk-123")
         assert backend._base_url is None
+
+    def test_chat_returns_llm_response_with_usage(self):
+        """chat() parses litellm response and returns LLMResponse with usage info."""
+        backend = LiteLLMBackend(
+            provider="anthropic",
+            model="claude-sonnet-4",
+            api_key="sk-test",
+        )
+        messages = [Message(role="user", content="hello")]
+
+        mock_usage = MagicMock()
+        mock_usage.prompt_tokens = 42
+        mock_usage.completion_tokens = 17
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "Hello, world!"
+        mock_choice.finish_reason = "stop"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_response.usage = mock_usage
+
+        with patch("litellm.completion", return_value=mock_response):
+            with patch("litellm.completion_cost", return_value=0.0015):
+                resp = backend.chat(messages)
+
+        assert isinstance(resp, LLMResponse)
+        assert resp.content == "Hello, world!"
+        assert resp.model == "anthropic/claude-sonnet-4"
+        assert resp.finish_reason == "stop"
+        assert resp.usage.input_tokens == 42
+        assert resp.usage.output_tokens == 17
+        assert resp.usage.cost == 0.0015
+
+    def test_chat_handles_missing_usage_gracefully(self):
+        """chat() handles response with no usage field gracefully."""
+        backend = LiteLLMBackend(
+            provider="anthropic",
+            model="claude-sonnet-4",
+            api_key="sk-test",
+        )
+        messages = [Message(role="user", content="hi")]
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.finish_reason = "stop"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        # Make usage evaluate as None (falsy) so the code path handles it
+        mock_response.usage = None
+
+        with patch("litellm.completion", return_value=mock_response):
+            with patch("litellm.completion_cost", return_value=0.0):
+                resp = backend.chat(messages)
+
+        assert resp.content == "ok"
+        assert resp.usage.input_tokens == 0
+        assert resp.usage.output_tokens == 0
+
+    def test_chat_handles_none_content(self):
+        """chat() handles response with None message content."""
+        backend = LiteLLMBackend(
+            provider="openai",
+            model="gpt-4o",
+            api_key="sk-test",
+        )
+        messages = [Message(role="user", content="test")]
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = None
+        mock_choice.finish_reason = "length"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with patch("litellm.completion", return_value=mock_response):
+            with patch("litellm.completion_cost", return_value=0.0):
+                resp = backend.chat(messages)
+
+        assert resp.content == ""
+        assert resp.finish_reason == "length"
+
+    def test_chat_passes_options_to_litellm(self):
+        """chat() passes temperature, max_tokens, and stop_sequences to litellm."""
+        backend = LiteLLMBackend(
+            provider="anthropic",
+            model="claude-sonnet-4",
+            api_key="sk-test",
+        )
+        messages = [Message(role="user", content="test")]
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.finish_reason = "stop"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with patch("litellm.completion", return_value=mock_response) as mock_completion:
+            with patch("litellm.completion_cost", return_value=0.0):
+                backend.chat(
+                    messages,
+                    options=ReasoningOptions(
+                        temperature=0.7,
+                        max_tokens=512,
+                        stop_sequences=["END"],
+                    ),
+                )
+
+        call_kwargs = mock_completion.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.7
+        assert call_kwargs["max_tokens"] == 512
+        assert call_kwargs["stop"] == ["END"]
+
+    def test_chat_passes_base_url_when_set(self):
+        """chat() passes api_base to litellm when base_url is set."""
+        backend = LiteLLMBackend(
+            provider="openai",
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://custom.api.com",
+        )
+        messages = [Message(role="user", content="hi")]
+
+        mock_choice = MagicMock()
+        mock_choice.message.content = "ok"
+        mock_choice.finish_reason = "stop"
+
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        with patch("litellm.completion", return_value=mock_response) as mock_completion:
+            with patch("litellm.completion_cost", return_value=0.0):
+                backend.chat(messages)
+
+        call_kwargs = mock_completion.call_args.kwargs
+        assert call_kwargs["api_base"] == "https://custom.api.com"
+
+    def test_chat_wraps_errors_as_runtime_error(self):
+        """chat() wraps litellm exceptions in RuntimeError with provider/model context."""
+        backend = LiteLLMBackend(
+            provider="anthropic",
+            model="claude-sonnet-4",
+            api_key="sk-bad",
+        )
+        messages = [Message(role="user", content="hello")]
+
+        with patch(
+            "litellm.completion",
+            side_effect=Exception("API error: 401 Unauthorized"),
+        ):
+            with pytest.raises(
+                RuntimeError,
+                match="LiteLLMBackend call failed for anthropic/claude-sonnet-4",
+            ):
+                backend.chat(messages)

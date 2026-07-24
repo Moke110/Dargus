@@ -48,8 +48,8 @@ class LifecycleManager:
 
     def run_ingest(self, task_spec: dict):
         """Stub — execute an ingest workflow."""
-        raise NotImplementedError("run_predict not implemented yet")
+        raise NotImplementedError("run_ingest not implemented yet")
 
     def run_benchmark(self, task_spec: dict):
         """Stub — execute a benchmark workflow."""
-        raise NotImplementedError("run_predict not implemented yet")
+        raise NotImplementedError("run_benchmark not implemented yet")

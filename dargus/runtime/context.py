@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from dargus.models.embedding import EmbeddingModel
     from dargus.models.reasoning import ReasoningLLM
+    from dargus.models.router import ModelRouter
 
 
 @dataclass
@@ -22,6 +23,7 @@ class RuntimeContext:
     config: dict[str, Any] = field(default_factory=dict)
     reasoning_llm: ReasoningLLM | None = None
     embedding_model: EmbeddingModel | None = None
+    model_router: ModelRouter | None = None
     tool_registry: Any | None = None
     skill_registry: Any | None = None
     knowledge_retrievers: dict[str, Any] = field(default_factory=dict)

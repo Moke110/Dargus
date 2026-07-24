@@ -47,7 +47,7 @@ class ModelConfig:
     embedding_api_key_env: str = ""
 
 
-def load_model_config(config_dict: dict, secrets: SecretsManager) -> ModelConfig:
+def load_model_config(config_dict: dict | None, secrets: SecretsManager) -> ModelConfig:
     """Parse and validate model configuration from a config dict.
 
     Expected shape (under ``models`` key):

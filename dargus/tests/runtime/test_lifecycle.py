@@ -63,11 +63,11 @@ class TestLifecycleManager:
     def test_run_ingest_raises_not_implemented(self):
         ctx = RuntimeContext()
         lm = LifecycleManager(ctx)
-        with pytest.raises(NotImplementedError, match="run_predict not implemented yet"):
+        with pytest.raises(NotImplementedError, match="run_ingest not implemented yet"):
             lm.run_ingest({"file": "data.csv"})
 
     def test_run_benchmark_raises_not_implemented(self):
         ctx = RuntimeContext()
         lm = LifecycleManager(ctx)
-        with pytest.raises(NotImplementedError, match="run_predict not implemented yet"):
+        with pytest.raises(NotImplementedError, match="run_benchmark not implemented yet"):
             lm.run_benchmark({"holdout": 0.2})

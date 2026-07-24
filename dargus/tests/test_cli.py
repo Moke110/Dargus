@@ -43,7 +43,7 @@ def test_cli_train_has_disease_kb_flag(capsys):
 
 def test_cli_no_subcommand_starts_tui():
     """Bare 'dargus' (no subcommand) should call run_app() to launch the TUI."""
-    with patch("dargus.cli.run_app") as mock_run_app:
+    with patch("dargus.cli.main.run_app") as mock_run_app:
         main([])
         mock_run_app.assert_called_once()
 
@@ -71,11 +71,13 @@ def test_cli_clear_dbase_correct_code_clears(minimal_dbase, monkeypatch):
     """'dargus clear-dbase' with correct code exits 0 and prints cleared."""
     import os
 
+    from dargus.cli import main as _cli_main
+
     os.environ["DARGUS_HOME"] = minimal_dbase
-    monkeypatch.setattr("dargus.cli.secrets.token_hex", lambda _: "abc123def4")
-    monkeypatch.setattr("builtins.input", lambda _: "abc123def4")
-    exit_code = main(["clear-dbase"])
-    assert exit_code == 0
+    with patch("dargus.cli.main.secrets.token_hex", return_value="abc123def4"):
+        monkeypatch.setattr("builtins.input", lambda _: "abc123def4")
+        exit_code = _cli_main(["clear-dbase"])
+        assert exit_code == 0
 
 
 def test_cli_predict_requires_args():
@@ -87,7 +89,7 @@ def test_cli_predict_requires_args():
 
 def test_cli_bare_invocation_import_error_handled(capsys):
     """When run_app raises ImportError, CLI prints install hint and exits 1."""
-    with patch("dargus.cli.run_app", side_effect=ImportError("No module named 'textual'")):
+    with patch("dargus.cli.main.run_app", side_effect=ImportError("No module named 'textual'")):
         exit_code = main([])
     captured = capsys.readouterr()
     assert exit_code == 1
@@ -97,7 +99,7 @@ def test_cli_bare_invocation_import_error_handled(capsys):
 
 def test_cli_bare_invocation_unknown_error_bubbles():
     """Non-ImportError exceptions from run_app are not caught by the guard."""
-    with patch("dargus.cli.run_app", side_effect=RuntimeError("unexpected")):
+    with patch("dargus.cli.main.run_app", side_effect=RuntimeError("unexpected")):
         with pytest.raises(RuntimeError, match="unexpected"):
             main([])
 
@@ -136,9 +138,9 @@ def test_cli_config_show_displays_config(capsys, monkeypatch):
 def test_cli_config_show_no_key_warns(capsys, monkeypatch):
     """'dargus config show' with no key set shows guidance."""
     monkeypatch.delenv("DARGUS_LLM_API_KEY", raising=False)
-    monkeypatch.setattr("dargus.cli.load_dotenv", lambda *a, **kw: None)
-    exit_code = main(["config", "show"])
-    assert exit_code == 0
-    captured = capsys.readouterr()
-    assert "not set" in captured.out
-    assert "set-api-key" in captured.out
+    with patch("dargus.cli.main.load_dotenv", new=lambda *a, **kw: None):
+        exit_code = main(["config", "show"])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert "not set" in captured.out
+        assert "set-api-key" in captured.out

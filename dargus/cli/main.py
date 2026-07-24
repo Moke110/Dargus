@@ -1,4 +1,4 @@
-"""Dargus command-line interface."""
+"""Dargus command-line interface — argument parsing and dispatch."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from pathlib import Path
 
 from dargus import Iris
 from dargus._env import load_dotenv
+from dargus.cli.commands.benchmark import handle_benchmark
+from dargus.cli.commands.ingest import handle_ingest
+from dargus.cli.commands.predict import handle_predict
 from dargus.tui import run_app
 
 
@@ -42,6 +45,17 @@ def main(argv: list[str] | None = None) -> int:
     predict_parser.add_argument("--endpoints", nargs="+")
     predict_parser.add_argument("--max-rounds", type=int, default=5)
 
+    benchmark_parser = subparsers.add_parser("benchmark", help="run benchmark against holdout data")
+    benchmark_parser.add_argument(
+        "--strip", default="{}", help="JSON dict with holdout_ids, drug_ids, disease_id, etc."
+    )
+    benchmark_parser.add_argument(
+        "--split", default=None, help="Optional JSON split config (test_size, random_state)."
+    )
+    benchmark_parser.add_argument(
+        "--output-dir", default=None, help="Output directory for reports."
+    )
+
     subparsers.add_parser("status", help="show global D-Base status")
 
     subparsers.add_parser("clear-dbase", help="clear all records from the global D-Base")
@@ -63,43 +77,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "ingest":
-        from dargus.workflows.ingest import run_ingest
-
-        report = run_ingest(args.datadir, reset=args.reset, disease_kb_dir=args.disease_kb_dir)
-        print(f"Records added: {report.n_records}")
-        print(f"Duplicates skipped: {report.n_skipped}")
-        print(f"Global D-Base size: {report.dbase_size}")
-        return 0
-
-    if args.command == "train":
-        from dargus.workflows.ingest import run_ingest
-
-        report = run_ingest(args.datadir, reset=args.reset, disease_kb_dir=args.disease_kb_dir)
-        print(f"Records added: {report.n_records}")
-        print(f"Duplicates skipped: {report.n_skipped}")
-        print(f"Global D-Base size: {report.dbase_size}")
-        return 0
+    if args.command in ("ingest", "train"):
+        return handle_ingest(args)
 
     if args.command == "predict":
-        from dargus.workflows.predict import run as run_predict
+        return handle_predict(args)
 
-        drug_ids = [d.strip() for d in args.drugs.split(",") if d.strip()]
-        result = run_predict(
-            drug_ids=drug_ids,
-            disease_id=args.disease,
-            endpoints=args.endpoints,
-            max_rounds=args.max_rounds,
-        )
-        for drug, disease_eps in result.items():
-            print(f"{drug}:")
-            for disease, endpoints_dict in disease_eps.items():
-                for endpoint, pred in endpoints_dict.items():
-                    print(
-                        f"  {disease}/{endpoint}: "
-                        f"[{pred['efficacy_low']:.3f}, {pred['efficacy_up']:.3f}]"
-                    )
-        return 0
+    if args.command == "benchmark":
+        return handle_benchmark(args)
 
     if args.command == "status":
         iris = Iris()
@@ -125,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
 
             import yaml
 
-            config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+            config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
             with config_path.open("r", encoding="utf-8") as fh:
                 cfg = yaml.safe_load(fh) or {}
             llm_cfg = cfg.get("llm", {})
@@ -192,7 +177,7 @@ def _run_test_suite() -> int:
     """Run the internal Dargus test suite (arrow-key menu)."""
     from pathlib import Path
 
-    test_dir = Path(__file__).resolve().parent / "tests"
+    test_dir = Path(__file__).resolve().parent.parent / "tests"
     modules = sorted(
         p.name for p in test_dir.iterdir() if p.is_dir() and (p / "__init__.py").exists()
     )
@@ -342,7 +327,7 @@ def _run_test_bulk_input() -> int:
     from dargus.dbase.manager import DBaseManager, DuplicateReviewRequest
     from dargus.dbase.paths import default_dargus_home
 
-    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
 
     # Load current config
     with config_path.open("r", encoding="utf-8") as fh:
@@ -530,7 +515,7 @@ def _run_test_ingest() -> int:
     from dargus.dbase.manager import DBaseManager, DuplicateReviewRequest
     from dargus.dbase.paths import default_dargus_home
 
-    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
 
     with config_path.open("r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
@@ -961,7 +946,7 @@ def _run_model_wizard() -> int:
         return 0
 
     # Load current config
-    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
     with config_path.open("r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
     llm_cfg = cfg.get("llm", {})

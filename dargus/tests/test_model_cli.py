@@ -44,16 +44,16 @@ def test_run_model_wizard_help_exists():
 
     with patch("sys.stdout"):
         with patch("sys.stderr"):
-            with patch("dargus.cli._run_model_wizard", return_value=0):
+            with patch("dargus.cli.main._run_model_wizard", return_value=0):
                 result = main(["model"])
                 assert result == 0
 
 
 def test_run_model_wizard_skip(monkeypatch, capsys):
     """Choosing 'Skip' from menu returns 0 without entering config flow."""
-    from dargus.cli import _run_model_wizard
+    from dargus.cli.main import _run_model_wizard
 
-    with patch("dargus.cli._arrow_menu", return_value=1):
+    with patch("dargus.cli.main._arrow_menu", return_value=1):
         result = _run_model_wizard()
     assert result == 0
     captured = capsys.readouterr()
@@ -62,11 +62,11 @@ def test_run_model_wizard_skip(monkeypatch, capsys):
 
 def test_run_model_wizard_enter_config(monkeypatch, capsys):
     """Choosing 'Enter new configuration' then Discard works."""
-    from dargus.cli import _run_model_wizard
+    from dargus.cli.main import _run_model_wizard
 
     monkeypatch.setenv("DARGUS_LLM_API_KEY", "sk-test")
     inputs = ["", "", "", "n"]
-    with patch("dargus.cli._arrow_menu", return_value=0):
+    with patch("dargus.cli.main._arrow_menu", return_value=0):
         with patch("builtins.input", side_effect=inputs):
             result = _run_model_wizard()
     assert result == 0

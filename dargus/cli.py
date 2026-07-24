@@ -31,6 +31,11 @@ def main(argv: list[str] | None = None) -> int:
     train_parser.add_argument("--reset", action="store_true", help="clear D-Base before training")
     train_parser.add_argument("--disease-kb-dir", help="path to disease knowledge base directory")
 
+    ingest_parser = subparsers.add_parser("ingest", help="ingest data into the global D-Base")
+    ingest_parser.add_argument("--datadir", required=True)
+    ingest_parser.add_argument("--reset", action="store_true", help="clear D-Base before ingestion")
+    ingest_parser.add_argument("--disease-kb-dir", help="path to disease knowledge base directory")
+
     predict_parser = subparsers.add_parser("predict", help="predict efficacy for drugs/disease")
     predict_parser.add_argument("--drugs", required=True)
     predict_parser.add_argument("--disease", required=True)
@@ -57,6 +62,15 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("test", help="run internal test suite")
 
     args = parser.parse_args(argv)
+
+    if args.command == "ingest":
+        from dargus.workflows.ingest import run_ingest
+
+        report = run_ingest(args.datadir, reset=args.reset, disease_kb_dir=args.disease_kb_dir)
+        print(f"Records added: {report.n_records}")
+        print(f"Duplicates skipped: {report.n_skipped}")
+        print(f"Global D-Base size: {report.dbase_size}")
+        return 0
 
     if args.command == "train":
         from dargus.workflows.ingest import run_ingest

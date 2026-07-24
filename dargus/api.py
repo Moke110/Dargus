@@ -91,7 +91,12 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
     return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
 
 
-train = ingest  # backward compat alias
+def train(*args: Any, **kwargs: Any) -> Any:
+    """Deprecated: use :func:`ingest` instead."""
+    import warnings
+
+    warnings.warn("'train' is deprecated, use 'ingest' instead", DeprecationWarning, stacklevel=2)
+    return ingest(*args, **kwargs)
 
 
 def query_dbase(

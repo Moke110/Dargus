@@ -38,7 +38,7 @@ def predict(
     )
 
 
-def train(datadir: str, reset: bool = False) -> Any:
+def ingest(datadir: str, reset: bool = False) -> Any:
     """Ingest data into the global D-Base.
 
     Args:
@@ -49,7 +49,10 @@ def train(datadir: str, reset: bool = False) -> Any:
         IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
     """
     iris = Iris()
-    return iris.train(datadir)
+    return iris.ingest(datadir)
+
+
+train = ingest  # backward compat alias
 
 
 def query_dbase(

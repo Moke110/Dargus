@@ -96,11 +96,10 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
 
         # ROUND_END safety check
         ctx = hooks.run(HookPoint.ROUND_END, ctx)
-        if ctx.extra.get("force_converge"):
-            logger.info("Safety net triggered — forcing convergence at round %d", round_num)
-            break
-
         round_num += 1
+        if ctx.extra.get("force_converge"):
+            logger.info("Safety net triggered — forcing convergence at round %d", round_num - 1)
+            break
 
     # ---- Store FinalReport in context -----------------------------------------
     final_report = _build_final_report(report, task_spec)
@@ -118,6 +117,11 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
         "workflow": "predict",
         "status": ctx.extra.get("result", {}).get("status", "completed"),
         "rounds_completed": round_num,
+        "efficacy_low": final_report.get("efficacy_low"),
+        "efficacy_up": final_report.get("efficacy_up"),
+        "drug_ids": final_report.get("drug_ids"),
+        "disease_id": final_report.get("disease_id"),
+        "endpoints": final_report.get("endpoints"),
         "report": final_report,
         "session": ctx.session,
     }
@@ -203,14 +207,18 @@ def _execute_predict_round(ctx: HookContext, d4: Any, round_num: int) -> dict[st
 
 
 def _build_final_report(round_report: dict[str, Any], task_spec: dict[str, Any]) -> dict[str, Any]:
-    """Convert the last round's synthesized report into a validated FinalReport."""
+    """Convert the last round's synthesized report into a validated FinalReport.
+
+    Supports ``_efficacy_low_override`` and ``_efficacy_up_override`` keys
+    in *task_spec* for injection of invalid values during testing.
+    """
     return {
         "drug_ids": task_spec.get("drug_ids", []),
         "disease_id": task_spec.get("disease_id", "unknown"),
         "endpoints": task_spec.get("endpoints", []),
-        "efficacy_low": 0.3,
-        "efficacy_up": 0.7,
-        "supporting_records": ["stub-record-1"],
+        "efficacy_low": task_spec.get("_efficacy_low_override", 0.3),
+        "efficacy_up": task_spec.get("_efficacy_up_override", 0.7),
+        "supporting_records": task_spec.get("_supporting_records_override", ["stub-record-1"]),
         "overall_conclusion": round_report.get("overall_conclusion", "no conclusion"),
         "reasoning_mode": "workflow-hook-orchestrated",
     }
@@ -229,3 +237,10 @@ def _user_confirmation_gate(ctx: HookContext, task_spec: dict[str, Any]) -> None
     """
     if task_spec.get("require_confirmation"):
         logger.info("User confirmation required — auto-approved (stub)")
+    if isinstance(ctx.session, dict):
+        ctx.session.setdefault("confirmations", []).append(
+            {
+                "type": "predict_confirmation",
+                "action": "auto_approved",
+            }
+        )

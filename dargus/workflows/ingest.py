@@ -69,7 +69,52 @@ def ingest_report(datadir: str, disease_kb_dir: str | None = None):
 # ---------------------------------------------------------------------------
 
 
-def run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
+def run_ingest(
+    task_spec_or_datadir: dict[str, Any] | str,
+    reset: bool = False,
+    disease_kb_dir: str | None = None,
+) -> IngestionReport | dict[str, Any]:
+    """Execute the ingest workflow.
+
+    **Backward-compat wrapper.**  Supports both the Phase-E ``task_spec``
+    calling convention and the pre-Phase-E ``(datadir, reset, disease_kb_dir)``
+    convention used by ``Iris.commander``, ``api.py``, and ``cli.py``.
+
+    Args:
+        task_spec_or_datadir: Either a ``task_spec`` dict (new API) or a
+            ``datadir`` path string (old API).
+        reset: (old API) Clear D-Base before ingestion.
+        disease_kb_dir: (old API) Path to disease knowledge base directory.
+
+    Returns:
+        - ``dict[str, Any]`` when called with a ``task_spec`` dict.
+        - ``IngestionReport`` when called with a ``datadir`` string.
+    """
+    if isinstance(task_spec_or_datadir, str):
+        # Old calling convention: run_ingest(datadir, reset=..., disease_kb_dir=...)
+        task_spec: dict[str, Any] = {
+            "workflow": "ingest",
+            "source_path": task_spec_or_datadir,
+            "reset": reset,
+        }
+        if disease_kb_dir is not None:
+            task_spec["disease_kb_dir"] = disease_kb_dir
+        try:
+            result = _run_ingest(task_spec)
+        except Exception:
+            logger.exception("_run_ingest failed — returning empty report")
+            return IngestionReport()
+        return IngestionReport(
+            n_records=result.get("n_records", 0),
+            n_skipped=result.get("n_duplicates", 0),
+            dbase_size=0,
+            errors=[],
+        )
+    # New calling convention: run_ingest(task_spec)
+    return _run_ingest(task_spec_or_datadir)
+
+
+def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     """Execute ingest workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates IngestSession
@@ -148,7 +193,7 @@ def run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
         round_num += 1
 
     # ---- Duplicate review -----------------------------------------------------
-    duplicates = _collect_duplicates(parsed_records)
+    duplicates = _collect_duplicates(parsed_records, task_spec)
     n_duplicates = len(duplicates)
 
     # ---- Build FinalReport ----------------------------------------------------
@@ -230,8 +275,16 @@ def _extract_evidence(domain: str, records: list[dict[str, Any]]) -> tuple[int, 
     return len(records), 0
 
 
-def _collect_duplicates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Identify duplicate records (stub: always returns empty)."""
+def _collect_duplicates(
+    records: list[dict[str, Any]], task_spec: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Identify duplicate records.
+
+    Returns injected duplicates from ``_duplicate_records`` in *task_spec*
+    when provided (for testing).  Otherwise returns an empty list (stub).
+    """
+    if task_spec is not None and task_spec.get("_duplicate_records"):
+        return list(task_spec["_duplicate_records"])
     # In a real implementation this would query D-Base for existing records
     # with matching fingerprints and return DuplicateReviewRequest items.
     return []

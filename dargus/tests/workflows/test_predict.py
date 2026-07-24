@@ -177,6 +177,22 @@ def test_build_final_report_has_expected_keys():
     assert report["overall_conclusion"] == "test"
 
 
+def test_build_final_report_overrides_from_task_spec():
+    """I5: _build_final_report respects override keys in task_spec."""
+    spec = {
+        "drug_ids": ["DB1"],
+        "disease_id": "Cancer",
+        "endpoints": ["survival"],
+        "_efficacy_low_override": 0.1,
+        "_efficacy_up_override": 0.9,
+        "_supporting_records_override": ["custom-rec"],
+    }
+    report = _build_final_report({"overall_conclusion": "test"}, spec)
+    assert report["efficacy_low"] == 0.1
+    assert report["efficacy_up"] == 0.9
+    assert report["supporting_records"] == ["custom-rec"]
+
+
 # ---------------------------------------------------------------------------
 # _StubD4Expert tests
 # ---------------------------------------------------------------------------
@@ -206,8 +222,63 @@ def test_stub_d4_expert_synthesize():
 
 
 def test_user_confirmation_gate(caplog):
-    ctx = HookContext(runtime=None, task_spec={"require_confirmation": True})
+    ctx = HookContext(runtime=None, task_spec={"require_confirmation": True}, session={})
     _user_confirmation_gate(ctx, {"require_confirmation": True})
-    # The gate only logs when require_confirmation is set; currently the log is
-    # inside the task_spec check, so we confirm no exception is raised.
-    assert True
+    # The gate logs when require_confirmation is set and also appends to
+    # ctx.session["confirmations"]
+    assert "confirmations" in ctx.session
+    assert len(ctx.session["confirmations"]) == 1
+    assert ctx.session["confirmations"][0]["type"] == "predict_confirmation"
+    assert ctx.session["confirmations"][0]["action"] == "auto_approved"
+
+
+def test_user_confirmation_gate_append_without_require(caplog):
+    """I6: Even without require_confirmation, gate appends to session confirmations."""
+    ctx = HookContext(runtime=None, task_spec={}, session={})
+    _user_confirmation_gate(ctx, {})
+    assert "confirmations" in ctx.session
+    assert len(ctx.session["confirmations"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Acceptance gate end-to-end tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_low():
+    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_low."""
+    spec = {
+        "workflow": "predict",
+        "drug_ids": ["DB00001"],
+        "disease_id": "Alzheimer",
+        "max_rounds": 1,
+        "_efficacy_low_override": -0.5,
+    }
+    with pytest.raises(RuntimeError, match="efficacy_low must be in"):
+        run_predict(spec)
+
+
+def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_up():
+    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_up."""
+    spec = {
+        "workflow": "predict",
+        "drug_ids": ["DB00001"],
+        "disease_id": "Alzheimer",
+        "max_rounds": 1,
+        "_efficacy_up_override": 1.5,
+    }
+    with pytest.raises(RuntimeError, match="efficacy_up must be in"):
+        run_predict(spec)
+
+
+def test_run_predict_acceptance_gate_failure_on_empty_records():
+    """I5: AcceptanceGateHook fires for empty supporting_records."""
+    spec = {
+        "workflow": "predict",
+        "drug_ids": ["DB00001"],
+        "disease_id": "Alzheimer",
+        "max_rounds": 1,
+        "_supporting_records_override": [],
+    }
+    with pytest.raises(RuntimeError, match="supporting_records must be a non-empty"):
+        run_predict(spec)

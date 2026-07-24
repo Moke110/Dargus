@@ -9,6 +9,7 @@ from dargus.workflows.ingest import (
     _collect_duplicates,
     _parse_source,
     _partition_by_domain,
+    _run_ingest,
     run_ingest,
 )
 
@@ -103,6 +104,33 @@ def test_collect_duplicates_empty_for_stub():
     assert dups == []
 
 
+def test_collect_duplicates_injectable_via_task_spec():
+    """I4: _collect_duplicates returns injected duplicates from task_spec."""
+    records = [{"id": "r1"}]
+    fake_dups = [
+        {"evidence_id": "dup-1", "reason": "similar_fingerprint"},
+        {"evidence_id": "dup-2", "reason": "exact_match"},
+    ]
+    dups = _collect_duplicates(records, task_spec={"_duplicate_records": fake_dups})
+    assert len(dups) == 2
+    assert dups[0]["evidence_id"] == "dup-1"
+
+
+def test_ingest_duplicate_review_path_reached(valid_ingest_spec):
+    """I4: When duplicates are injected, the n_duplicates > 0 branch is executed."""
+    valid_ingest_spec["_duplicate_records"] = [
+        {"evidence_id": "dup-001", "reason": "exact_match"},
+    ]
+    valid_ingest_spec["max_rounds"] = 1
+    result = _run_ingest(valid_ingest_spec)
+    assert result["n_duplicates"] == 1
+    # Confirm the confirmation record was appended to session
+    confirmations = result["session"].get("confirmations", [])
+    assert len(confirmations) == 1
+    assert confirmations[0]["type"] == "duplicate_review"
+    assert confirmations[0]["n_duplicates"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Backward-compat dataclasses
 # ---------------------------------------------------------------------------
@@ -122,3 +150,35 @@ def test_training_report_is_ingestion_report():
     r = TrainingReport(n_records=10)
     assert isinstance(r, IngestionReport)
     assert r.n_records == 10
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat run_ingest(datadir) signature tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_ingest_backward_compat_datadir_string():
+    """C2: run_ingest(datadir) returns IngestionReport for backward compat."""
+    result = run_ingest("/data/test_dir")
+    assert isinstance(result, IngestionReport)
+    assert result.n_records > 0
+
+
+def test_run_ingest_backward_compat_with_reset():
+    """C2: run_ingest(datadir, reset=True) works."""
+    result = run_ingest("/data/test_dir", reset=True)
+    assert isinstance(result, IngestionReport)
+    assert result.n_skipped == 0
+
+
+def test_run_ingest_backward_compat_with_disease_kb_dir():
+    """C2: run_ingest(datadir, disease_kb_dir=...) works."""
+    result = run_ingest("/data/test_dir", disease_kb_dir="/data/kb")
+    assert isinstance(result, IngestionReport)
+
+
+def test_run_ingest_new_api_dict():
+    """C2: run_ingest(task_spec) still returns dict."""
+    result = run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
+    assert isinstance(result, dict)
+    assert result["workflow"] == "ingest"

@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class LifecycleManager:
     """Manages the Dargus runtime lifecycle: startup, run, shutdown.
 
-    In Phase A all workflow methods are stubs.  Real implementations arrive
-    in Phase E.
+    Phase E: workflow methods delegate to the hook-orchestrated functions
+    in ``dargus.workflows``.
     """
 
     def __init__(self, runtime: RuntimeContext) -> None:
@@ -42,14 +42,44 @@ class LifecycleManager:
         self._runtime.healthy = False
         logger.info("LifecycleManager shutdown complete")
 
-    def run_predict(self, task_spec: dict):
-        """Stub — execute a predict workflow."""
-        raise NotImplementedError("run_predict not implemented yet")
+    def run_predict(self, task_spec: dict) -> dict:
+        """Execute a predict workflow via the hook-orchestrated function.
 
-    def run_ingest(self, task_spec: dict):
-        """Stub — execute an ingest workflow."""
-        raise NotImplementedError("run_ingest not implemented yet")
+        Args:
+            task_spec: Dict with ``workflow``, ``drug_ids``, ``disease_id``,
+                optional ``endpoints``, ``max_rounds``, etc.
 
-    def run_benchmark(self, task_spec: dict):
-        """Stub — execute a benchmark workflow."""
-        raise NotImplementedError("run_benchmark not implemented yet")
+        Returns:
+            PredictResult dict from ``dargus.workflows.predict.run_predict``.
+        """
+        from dargus.workflows.predict import run_predict
+
+        return run_predict(task_spec)
+
+    def run_ingest(self, task_spec: dict) -> dict:
+        """Execute an ingest workflow via the hook-orchestrated function.
+
+        Args:
+            task_spec: Dict with ``workflow``, ``source_path``, optional
+                ``source_type``, ``max_rounds``, ``require_confirmation``.
+
+        Returns:
+            IngestResult dict from ``dargus.workflows.ingest.run_ingest``.
+        """
+        from dargus.workflows.ingest import run_ingest
+
+        return run_ingest(task_spec)
+
+    def run_benchmark(self, task_spec: dict) -> dict:
+        """Execute a benchmark workflow via the hook-orchestrated function.
+
+        Args:
+            task_spec: Dict with ``workflow``, ``holdout_ids``, optional
+                ``drug_ids``, ``disease_id``, ``endpoints``.
+
+        Returns:
+            BenchmarkResult dict from ``dargus.workflows.benchmark.run_benchmark``.
+        """
+        from dargus.workflows.benchmark import run_benchmark
+
+        return run_benchmark(task_spec)

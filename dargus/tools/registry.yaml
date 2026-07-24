@@ -4,31 +4,77 @@
 
 tools:
   dbase_query:
-    description: "Query D-Base by drug/disease/biological_level filters"
+    description: "Query the D-Base evidence store by drug/disease/biological_level filters"
     domain: core
     biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
     parameters:
-      drug_id:
+      x_entity:
         type: string
         required: false
-        description: "Drug identifier (CURIE format, e.g. chembl:CHEMBL25)"
+        description: "Intervention/drug identifier (CURIE format, e.g. chembl:CHEMBL25)"
       disease_id:
         type: string
         required: false
         description: "Disease identifier (MONDO format, e.g. MONDO:0005148)"
-      biological_level:
+      y_type:
+        type: string
+        required: false
+        description: "Readout/endpoint type to filter by"
+      y_category:
+        type: string
+        required: false
+        description: "Readout category to filter by"
+      level:
         type: string
         required: false
         description: "Filter by biological evidence level"
+      evidence_design:
+        type: string
+        required: false
+        description: "Filter by evidence design (e.g. two_arm_comparison)"
       limit:
         type: integer
         required: false
         default: 100
         description: "Maximum number of records to return"
     output:
-      type: array
-      items: EvidenceRecord
+      type: object
+      properties:
+        records: {type: array}
+        count: {type: integer}
     timeout_ms: 5000
+    fallback: empty_list
+
+  dbase_write:
+    description: "Write an evidence record to D-Base with automatic embedding generation"
+    domain: core
+    biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
+    parameters:
+      record:
+        type: object
+        required: true
+        description: "Three-axis evidence dict to write"
+    output:
+      type: object
+      properties:
+        evidence_id: {type: string}
+        written: {type: boolean}
+        embedding_generated: {type: boolean}
+    timeout_ms: 10000
+    fallback: empty_list
+
+  dbase_status:
+    description: "Get D-Base status and statistics"
+    domain: core
+    biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
+    parameters: {}
+    output:
+      type: object
+      properties:
+        record_count: {type: integer}
+        shard_count: {type: integer}
+        has_parquet_view: {type: boolean}
+    timeout_ms: 3000
     fallback: empty_list
 
   pubmed_search:

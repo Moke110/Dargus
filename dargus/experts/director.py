@@ -140,7 +140,14 @@ class FourDExpert(Expert):
 
         return {
             "domain": domain,
-            "conclusion": report.bias_notes if report.bias_notes else "assessment complete",
+            "conclusion": (
+                f"{len(report.findings)} evidence items assessed "
+                f"(avg quality: "
+                f"{sum(f.quality_score for f in report.findings) / len(report.findings):.2f}"
+                f")"
+                if report.findings
+                else "assessment complete"
+            ),
             "confidence": {
                 "low": report.confidence.low if report.confidence else 0.0,
                 "high": report.confidence.high if report.confidence else 1.0,

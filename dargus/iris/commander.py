@@ -43,6 +43,32 @@ class Iris(BaseAgent):
         super().__init__(config=config)
         self._lifecycle_manager: LifecycleManager | None = lifecycle_manager
 
+        # ------------------------------------------------------------------
+        # Phase D/E: Skill loading for predict/ingest workflows.
+        #
+        # TODO(Phase E): Create Skill .md files in dargus/agents/skills/
+        #   - predict.md  → predict workflow Skill
+        #   - ingest.md   → ingest workflow Skill
+        # Once Phase E ships, Iris will load these Skills and pass them to
+        # LifecycleManager.run_predict / run_ingest. Until then the Skills
+        # are attempted but gracefully skipped when missing.
+        # ------------------------------------------------------------------
+        try:
+            from pathlib import Path
+
+            from dargus.agents.skill_registry import SkillRegistry
+
+            _skills_dir = Path(__file__).resolve().parent.parent / "agents" / "skills"
+            self._skill_registry = SkillRegistry(_skills_dir)
+            _loaded = {s.name for s in self._skill_registry.list_all()}
+            if _loaded:
+                logger.info("Iris loaded Skills: %s", sorted(_loaded))
+            else:
+                logger.debug("Iris: no Skill files found in %s", _skills_dir)
+        except Exception:
+            logger.debug("Iris: SkillRegistry init skipped (skills dir missing)", exc_info=True)
+            self._skill_registry = None
+
     def _global_manager(self) -> DBaseManager:
         dbase = DBase.global_instance()
         return DBaseManager(dbase)
@@ -65,6 +91,17 @@ class Iris(BaseAgent):
         to ``lifecycle_manager.run_ingest``.  Falls back to the direct
         ``run_ingest`` call for backward compatibility.
         """
+        # ------------------------------------------------------------------
+        # Phase D/E: Attempt to load the ingest Skill.  If present, it will
+        # be passed to LifecycleManager.run_ingest once Phase E ships.
+        # ------------------------------------------------------------------
+        _ingest_skill = None
+        if self._skill_registry is not None:
+            try:
+                _ingest_skill = self._skill_registry.get("ingest")
+            except KeyError:
+                logger.debug("Iris: 'ingest' Skill not found in registry")
+
         if self._lifecycle_manager is not None:
             try:
                 result = self._lifecycle_manager.run_ingest({"datadir": datadir})
@@ -89,6 +126,17 @@ class Iris(BaseAgent):
         to ``lifecycle_manager.run_predict``.  Falls back to the direct
         implementation for backward compatibility.
         """
+        # ------------------------------------------------------------------
+        # Phase D/E: Attempt to load the predict Skill.  If present, it will
+        # be passed to LifecycleManager.run_predict once Phase E ships.
+        # ------------------------------------------------------------------
+        _predict_skill = None
+        if self._skill_registry is not None:
+            try:
+                _predict_skill = self._skill_registry.get("predict")
+            except KeyError:
+                logger.debug("Iris: 'predict' Skill not found in registry")
+
         if self._lifecycle_manager is not None:
             try:
                 result = self._lifecycle_manager.run_predict(

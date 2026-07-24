@@ -120,6 +120,66 @@ def test_fourd_expert_delegate_to_expert_returns_dict():
         expert.delegate_to_expert("fake_domain", [], "test question")
 
 
+def test_fourd_expert_delegate_to_expert_valid_domain():
+    """delegate_to_expert delegates to a valid domain expert and returns
+    a dict with domain, conclusion, confidence, supporting_evidence."""
+    from unittest.mock import MagicMock, patch
+
+    from dargus.experts.protocol import (
+        ConfidenceInterval,
+        EvidenceAssessment,
+        ExpertReport,
+    )
+
+    # Build a realistic mock ExpertReport
+    mock_report = ExpertReport(
+        expert="MoleculeExpert",
+        round=0,
+        findings=[
+            EvidenceAssessment(
+                record_ids=["rec_001"],
+                biological_level="molecular",
+                quality_score=0.7,
+            ),
+            EvidenceAssessment(
+                record_ids=["rec_002"],
+                biological_level="molecular",
+                quality_score=0.9,
+            ),
+        ],
+        confidence=ConfidenceInterval(low=0.6, high=0.9, sources=[]),
+        data_gaps=[],
+        bias_notes=["Simulation data present"],
+    )
+
+    # Mock the dynamic import and instantiation
+    mock_cls = MagicMock()
+    mock_cls.return_value.assess.return_value = mock_report
+    mock_module = MagicMock()
+    mock_module.MoleculeExpert = mock_cls
+
+    with patch("importlib.import_module", return_value=mock_module):
+        result = FourDExpert().delegate_to_expert(
+            "molecular",
+            [{"evidence_id": "ev_001", "biological_level": "molecular"}],
+            "What is the binding affinity?",
+        )
+
+    assert isinstance(result, dict)
+    assert result["domain"] == "molecular"
+    # conclusion should be derived from findings, NOT from bias_notes
+    assert "2 evidence items assessed" in result["conclusion"]
+    conclusion_text = str(result.get("conclusion", ""))
+    assert conclusion_text.startswith("2 evidence items")
+    assert "confidence" in result
+    assert "low" in result["confidence"]
+    assert "high" in result["confidence"]
+    assert "supporting_evidence" in result
+    assert len(result["supporting_evidence"]) == 2
+    assert result["supporting_evidence"][0]["record_ids"] == ["rec_001"]
+    assert result["supporting_evidence"][0]["quality"] == 0.7
+
+
 def test_fourd_expert_delegate_to_expert_rejects_unknown_domain():
     """delegate_to_expert raises ValueError for unknown domain."""
     expert = FourDExpert()

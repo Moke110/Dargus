@@ -60,7 +60,7 @@ def tool_dbase_ingest(
         real_path = os.path.realpath(datadir)
         if not os.path.isdir(real_path):
             return _respond(False, error=f"Not a directory: {datadir}")
-        report = dargus.train(datadir=real_path, reset=reset)
+        report = dargus.ingest(datadir=real_path, reset=reset)
         return _respond(
             True,
             data={

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from typing import Any
 
 from dargus.agents.base import BaseAgent
 from dargus.agents.report import AgentReport
+from dargus.agents.skill_registry import SkillRegistry
 from dargus.experts.protocol import ExpertContext, ExpertReport
+from dargus.models.reasoning import ReasoningLLM
+from dargus.runtime.hooks import HookRegistry
+from dargus.tools.registry import ToolRegistry
 
 
 class Expert(BaseAgent):
@@ -24,18 +27,50 @@ class Expert(BaseAgent):
     SUPPORTED_LEVELS: tuple[str, ...] = ()
     DELEGATION_RULES: dict[str, str] = {}
 
-    def __init__(self, dbase: Any = None, config: dict[str, Any] | None = None):
-        super().__init__(config=config)
+    def __init__(
+        self,
+        dbase: Any = None,
+        config: dict[str, Any] | None = None,
+        reasoning_llm: ReasoningLLM | None = None,
+        tool_registry: ToolRegistry | None = None,
+        skill_registry: SkillRegistry | None = None,
+        knowledge_retrievers: dict[str, Any] | None = None,
+        hook_registry: HookRegistry | None = None,
+    ):
+        super().__init__(
+            config=config,
+            reasoning_llm=reasoning_llm,
+            tool_registry=tool_registry,
+            skill_registry=skill_registry,
+            knowledge_retrievers=knowledge_retrievers,
+            hook_registry=hook_registry,
+        )
         self.dbase = dbase
 
     # ------------------------------------------------------------------
-    # Core assess — called by run() for each round
+    # Core assess — template method, called by run() for each round
     # ------------------------------------------------------------------
 
-    @abstractmethod
     def assess(self, records: list[dict], context: ExpertContext) -> ExpertReport:
-        """Assess evidence records and produce a structured report."""
-        ...
+        """Assess evidence records and produce a structured report.
+
+        Template method: delegates to :meth:`_do_assess` which subclasses
+        must implement.  Existing subclasses that override ``assess()``
+        directly continue to work — the template is only invoked when
+        no direct override is present.
+        """
+        return self._do_assess(records, context)
+
+    def _do_assess(self, records: list[dict], context: ExpertContext) -> ExpertReport:
+        """Subclass hook for assessment logic (template method pattern).
+
+        Override this method instead of :meth:`assess` if you want the
+        base-class template to handle lifecycle concerns.  The default
+        raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must override assess() or _do_assess()"
+        )
 
     # ------------------------------------------------------------------
     # Record routing

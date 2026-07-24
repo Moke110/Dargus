@@ -15,6 +15,8 @@ import yaml
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
 from dargus.knowledge.base import KnowledgeItem, KnowledgeRetriever
+from dargus.models.reasoning import Message, ReasoningLLM
+from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
 
@@ -40,13 +42,42 @@ class BaseAgent(ABC):
     SUPPORTED_LEVELS: tuple[str, ...] = ()
     MAX_ROUNDS: int = 5
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
+        reasoning_llm: ReasoningLLM | None = None,
+        tool_registry: ToolRegistry | None = None,
+        skill_registry: SkillRegistry | None = None,
+        knowledge_retrievers: dict[str, Any] | None = None,
+        hook_registry: HookRegistry | None = None,
+    ):
+        # Backward compat: if first positional arg is a dict, treat as config not name
+        if isinstance(name, dict):
+            config = name if config is None else config
+            name = None
+
+        if name is not None:
+            self.name = name
         self.config = config or self._load_default_config()
         self.skills: set[str] = set()
-        self._tool_registry = ToolRegistry()
-        self._skill_registry = SkillRegistry()
-        self._knowledge_retrievers: dict[str, KnowledgeRetriever] = {}
-        self._llm = self._init_llm()
+
+        # DI or defaults — each injected value takes priority; None means "create default"
+        self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
+        self._skill_registry = skill_registry if skill_registry is not None else SkillRegistry()
+        self._knowledge_retrievers: dict[str, KnowledgeRetriever] = (
+            knowledge_retrievers if knowledge_retrievers is not None else {}
+        )
+        self._hook_registry: HookRegistry | None = hook_registry
+
+        # Reasoning LLM: DI (ReasoningLLM) takes priority over config-based LLM
+        if reasoning_llm is not None:
+            self._reasoning_llm: ReasoningLLM | None = reasoning_llm
+            self._llm = None  # old-style LLM unused when ReasoningLLM is injected
+        else:
+            self._reasoning_llm = None
+            self._llm = self._init_llm()
+
         self._validate_permissions()
 
     def _validate_permissions(self) -> None:
@@ -100,13 +131,52 @@ class BaseAgent(ABC):
             plan, plan_trace = self._plan(task_spec, history, round_num)
             traces.append(plan_trace)
 
+            # Hook: PLAN_END
+            if self._hook_registry is not None:
+                _ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    trace=plan_trace,
+                    extra={},
+                )
+                self._hook_registry.run(HookPoint.PLAN_END, _ctx)
+
             # --- Executor ---
             executor_output, exec_traces = self._execute(plan, round_num)
             traces.extend(exec_traces)
 
+            # Hook: ACT_END
+            if self._hook_registry is not None:
+                _ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    trace=exec_traces[-1] if exec_traces else None,
+                    extra={},
+                )
+                self._hook_registry.run(HookPoint.ACT_END, _ctx)
+
             # --- Critic ---
             verdict, critic_trace = self._criticize(plan, executor_output, history, round_num)
             traces.append(critic_trace)
+
+            # Hook: CRITIC_END
+            if self._hook_registry is not None:
+                _ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    trace=critic_trace,
+                    extra={},
+                )
+                self._hook_registry.run(HookPoint.CRITIC_END, _ctx)
 
             converged = verdict.get("converged", False)
             data_gaps.extend(verdict.get("gaps", []))
@@ -185,7 +255,26 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def _llm_call(self, system_prompt: str, user_prompt: str) -> str:
-        """Send a prompt to the configured LLM. Falls back to deterministic stub."""
+        """Send a prompt to the configured LLM. Falls back to deterministic stub.
+
+        When a :class:`ReasoningLLM` is injected (DI path), it is used in
+        preference to the config-based old-style LLM.
+        """
+        # DI path — ReasoningLLM from Phase A
+        if self._reasoning_llm is not None:
+            try:
+                response = self._reasoning_llm.chat(
+                    [
+                        Message(role="system", content=system_prompt),
+                        Message(role="user", content=user_prompt),
+                    ]
+                )
+                return response.content
+            except Exception:
+                logger.exception("%s: ReasoningLLM call failed", self.name)
+                return json.dumps({"error": "llm_call_failed"})
+
+        # Legacy path — config-based LLM
         if self._llm is None:
             logger.warning("%s: no LLM configured, using stub", self.name)
             return self._llm_stub(system_prompt, user_prompt)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
@@ -12,6 +12,9 @@ from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.iris.ensemble import IrisEnsemble
 from dargus.workflows.ingest import IngestionReport, run_ingest
+
+if TYPE_CHECKING:
+    from dargus.runtime.lifecycle import LifecycleManager
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +35,13 @@ class Iris(BaseAgent):
     PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []  # Iris orchestrates; doesn't execute skills directly
 
-    def __init__(self, config: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        lifecycle_manager: LifecycleManager | None = None,
+    ):
         super().__init__(config=config)
+        self._lifecycle_manager: LifecycleManager | None = lifecycle_manager
 
     def _global_manager(self) -> DBaseManager:
         dbase = DBase.global_instance()
@@ -51,7 +59,21 @@ class Iris(BaseAgent):
         }
 
     def ingest(self, datadir: str) -> IngestionReport:
-        """Run the Ingest workflow on the global D-Base."""
+        """Run the Ingest workflow on the global D-Base.
+
+        When a :class:`LifecycleManager` is injected (Phase D+), delegates
+        to ``lifecycle_manager.run_ingest``.  Falls back to the direct
+        ``run_ingest`` call for backward compatibility.
+        """
+        if self._lifecycle_manager is not None:
+            try:
+                result = self._lifecycle_manager.run_ingest({"datadir": datadir})
+                if result is not None:
+                    return result
+            except NotImplementedError:
+                logger.warning("LifecycleManager.run_ingest is not implemented — falling back")
+            except Exception:
+                logger.exception("LifecycleManager.run_ingest failed — falling back")
         return run_ingest(datadir)
 
     def predict(
@@ -61,7 +83,30 @@ class Iris(BaseAgent):
         endpoints: list[str],
         max_rounds: int = 5,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run full multi-Expert assessment."""
+        """Run full multi-Expert assessment.
+
+        When a :class:`LifecycleManager` is injected (Phase D+), delegates
+        to ``lifecycle_manager.run_predict``.  Falls back to the direct
+        implementation for backward compatibility.
+        """
+        if self._lifecycle_manager is not None:
+            try:
+                result = self._lifecycle_manager.run_predict(
+                    {
+                        "drug_ids": drug_ids,
+                        "disease_id": disease_id,
+                        "endpoints": endpoints,
+                        "max_rounds": max_rounds,
+                    }
+                )
+                if result is not None:
+                    return result
+            except NotImplementedError:
+                logger.warning("LifecycleManager.run_predict is not implemented — falling back")
+            except Exception:
+                logger.exception("LifecycleManager.run_predict failed — falling back")
+
+        # --- Fallback: direct implementation (backward compat) ---
         from dargus.experts.bioinfo import BioinfoExpert
         from dargus.experts.biomed import BiomedExpert
         from dargus.experts.clinic import ClinicExpert

@@ -20,8 +20,12 @@ class _TestExpert(Expert):
 
 
 def test_expert_cannot_instantiate_abstract():
-    with pytest.raises(TypeError):
-        Expert()
+    # Phase D: assess() is now a template method; _do_assess() raises
+    # NotImplementedError for bare Expert (not a TypeError — Expert is
+    # no longer abstract, subclasses must override _do_assess or assess).
+    expert = Expert()
+    with pytest.raises(NotImplementedError):
+        expert._do_assess([], ExpertContext(drug_ids=[], disease_id="", endpoints=[]))
 
 
 def test_concrete_expert_has_levels():

@@ -30,7 +30,7 @@ def run_v4(
 
     iris = Iris()
     if datadir:
-        iris.train(datadir)
+        iris.ingest(datadir)
     predictions = iris.predict(
         drug_ids=drugs,
         disease_id=disease,

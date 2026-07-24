@@ -1,8 +1,10 @@
-"""D-Base NLP v0.15.0 — embedding backend + evidence-to-text serialization."""
+"""D-Base NLP v0.17.0 — embedding delegated to EmbeddingModel + evidence-to-text serialization."""
 
 from __future__ import annotations
 
 import numpy as np
+
+from dargus.models.embedding import Embedding, EmbeddingModel
 
 
 class MockNLP:
@@ -16,32 +18,45 @@ class MockNLP:
 
 
 class DBaseNLP:
-    """Embedding backend for D-Base evidence records and DiseaseRAG knowledge bases."""
+    """Embedding backend for D-Base evidence records.
 
-    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
-        self.model_name = model_name
-        self._model = None
+    Delegates embedding computation to an :class:`EmbeddingModel` instance.
+    ``record_to_text`` (static) is the non-embedding serialization utility;
+    it lives here unchanged.
+    """
+
+    def __init__(self, embedding_model: EmbeddingModel | None = None) -> None:
+        self._embedding_model = embedding_model
+
+    # ── lazy default ────────────────────────────────────────────────────────
+
+    def _get_embedding_model(self) -> EmbeddingModel:
+        if self._embedding_model is None:
+            from dargus.models.embedding import SentenceTransformerBackend
+
+            backend = SentenceTransformerBackend("all-MiniLM-L6-v2")
+            self._embedding_model = EmbeddingModel(backend)
+        return self._embedding_model
+
+    # ── embedding ──────────────────────────────────────────────────────────
 
     def embed_text(self, text: str) -> np.ndarray:
-        if self._model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-
-                self._model = SentenceTransformer(self.model_name)
-            except Exception:  # noqa: BLE001
-                return MockNLP().embed_text(text)
+        """Embed a single text, returning a numpy array (backward-compat)."""
         try:
-            return self._model.encode(text, convert_to_numpy=True).astype(np.float32)
+            emb: Embedding = self._get_embedding_model().embed([text])[0]
+            return np.array(emb, dtype=np.float32)
         except Exception:  # noqa: BLE001
             return MockNLP().embed_text(text)
 
     def similarity(self, a: str, b: str) -> float:
-        va = self.embed_text(a)
-        vb = self.embed_text(b)
-        norm = float(np.linalg.norm(va)) * float(np.linalg.norm(vb))
-        if norm == 0:
-            return 0.0
-        return float(np.dot(va, vb) / norm)
+        """Cosine similarity between two texts."""
+        try:
+            model = self._get_embedding_model()
+            ea: Embedding = model.embed([a])[0]
+            eb: Embedding = model.embed([b])[0]
+            return EmbeddingModel.similarity(ea, eb)
+        except Exception:  # noqa: BLE001
+            return MockNLP().similarity(a, b)
 
     @staticmethod
     def record_to_text(record: dict) -> str:

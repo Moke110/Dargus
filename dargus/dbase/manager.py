@@ -1,13 +1,17 @@
-"""DBaseManager v0.15.5 — sole write/read gate with three-axis evidence dict API."""
+"""DBaseManager v0.17.0 — sole write/read gate with three-axis evidence dict API."""
 
 from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dargus.dbase.dbase import DBase
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
+
+if TYPE_CHECKING:
+    from dargus.dbase.nlp import DBaseNLP
+    from dargus.models.embedding import EmbeddingModel
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +35,23 @@ class DuplicateReviewRequest:
 
 
 class DBaseManager:
-    """Single read/write interface to D-Base (v0.15.5 three-axis)."""
+    """Single read/write interface to D-Base (v0.17.0 three-axis)."""
 
-    def __init__(self, dbase: DBase) -> None:
+    def __init__(self, dbase: DBase, embedding_model: EmbeddingModel | None = None) -> None:
         self.dbase = dbase
+        self._embedding_model = embedding_model
+        self._nlp: DBaseNLP | None = None
+
+    # ── nlp (lazy) ──────────────────────────────────────────────────────────
+
+    @property
+    def nlp(self) -> DBaseNLP:
+        """Lazily-initialised DBaseNLP instance, wired to the manager's EmbeddingModel."""
+        if self._nlp is None:
+            from dargus.dbase.nlp import DBaseNLP
+
+            self._nlp = DBaseNLP(embedding_model=self._embedding_model)
+        return self._nlp
 
     # ── read (§8.2) ─────────────────────────────────────────────────────────
 
@@ -352,7 +369,7 @@ class DBaseManager:
         try:
             from dargus.dbase.nlp import DBaseNLP
 
-            nlp = DBaseNLP()
+            nlp = self.nlp
             candidates = self.read_records(
                 x_entity=_x_entity,
                 disease_id=disease_id,

@@ -10,7 +10,6 @@ from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home, working_dbase
-from dargus.iris.ensemble import IrisEnsemble
 from dargus.workflows.ingest import IngestionReport, run_ingest
 
 if TYPE_CHECKING:
@@ -84,7 +83,7 @@ class Iris(BaseAgent):
             "n_records": len(records),
         }
 
-    def ingest(self, datadir: str) -> IngestionReport:
+    def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> IngestionReport:
         """Run the Ingest workflow on the global D-Base.
 
         When a :class:`LifecycleManager` is injected (Phase D+), delegates
@@ -104,14 +103,17 @@ class Iris(BaseAgent):
 
         if self._lifecycle_manager is not None:
             try:
-                result = self._lifecycle_manager.run_ingest({"datadir": datadir})
+                _task_spec: dict = {"datadir": datadir}
+                if disease_kb_dir is not None:
+                    _task_spec["disease_kb_dir"] = disease_kb_dir
+                result = self._lifecycle_manager.run_ingest(_task_spec)
                 if result is not None:
                     return result
             except NotImplementedError:
                 logger.warning("LifecycleManager.run_ingest is not implemented — falling back")
             except Exception:
                 logger.exception("LifecycleManager.run_ingest failed — falling back")
-        return run_ingest(datadir)
+        return run_ingest(datadir, disease_kb_dir=disease_kb_dir)
 
     def predict(
         self,
@@ -251,32 +253,6 @@ class Iris(BaseAgent):
             "confidence_level": "insufficient_data",
         }
 
-    def ensemble(
-        self,
-        predictions: dict[str, dict[str, dict[str, Any]]],
-        weights: dict[str, float] | None = None,
-    ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Aggregate predictions from multiple Iris-* agents."""
-        ensembler = IrisEnsemble()
-        aggregated = ensembler.aggregate(predictions)
-        if weights:
-            for drug in aggregated:
-                for endpoint in aggregated[drug]:
-                    entry = aggregated[drug][endpoint]
-                    components = entry.get("component_predictions", {})
-                    weighted_low: list[float] = []
-                    weighted_up: list[float] = []
-                    denom = 0.0
-                    for mode, interval in components.items():
-                        w = weights.get(mode, 1.0)
-                        weighted_low.append(interval["efficacy_low"] * w)
-                        weighted_up.append(interval["efficacy_up"] * w)
-                        denom += w
-                    if denom > 0:
-                        entry["efficacy_low"] = sum(weighted_low) / denom
-                        entry["efficacy_up"] = sum(weighted_up) / denom
-        return aggregated
-
     def process_query(self, query: str) -> str:
         """Parse NL query via LLM and route to predict/status."""
         import json
@@ -284,7 +260,7 @@ class Iris(BaseAgent):
 
         import yaml
 
-        from dargus.llm import llm_from_config
+        from dargus.models.compat import llm_from_config
 
         config = self.config
         if not config:

@@ -41,7 +41,7 @@ def test_ingest_parses_args_and_calls_api(capsys):
     with patch("dargus.api.ingest", return_value=mock_report) as mock_ingest:
         exit_code = main(["ingest", "--datadir", "/tmp/testdata"])
         assert exit_code == 0
-        mock_ingest.assert_called_once_with("/tmp/testdata", reset=False)
+        mock_ingest.assert_called_once_with("/tmp/testdata", reset=False, disease_kb_dir=None)
 
     captured = capsys.readouterr()
     assert "Records added: 42" in captured.out
@@ -56,7 +56,7 @@ def test_ingest_with_reset_flag(capsys):
     with patch("dargus.api.ingest", return_value=mock_report) as mock_ingest:
         exit_code = main(["ingest", "--datadir", "/tmp/testdata", "--reset"])
         assert exit_code == 0
-        mock_ingest.assert_called_once_with("/tmp/testdata", reset=True)
+        mock_ingest.assert_called_once_with("/tmp/testdata", reset=True, disease_kb_dir=None)
 
 
 def test_train_alias_dispatches_to_ingest(capsys):
@@ -66,7 +66,7 @@ def test_train_alias_dispatches_to_ingest(capsys):
     with patch("dargus.api.ingest", return_value=mock_report) as mock_ingest:
         exit_code = main(["train", "--datadir", "/tmp/traindata"])
         assert exit_code == 0
-        mock_ingest.assert_called_once_with("/tmp/traindata", reset=False)
+        mock_ingest.assert_called_once_with("/tmp/traindata", reset=False, disease_kb_dir=None)
 
 
 def test_ingest_has_disease_kb_flag(capsys):

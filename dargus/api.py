@@ -73,7 +73,7 @@ def predict(
     )
 
 
-def ingest(datadir: str, reset: bool = False) -> Any:
+def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> Any:
     """Ingest data into the global D-Base.
 
     Tries to bootstrap a RuntimeContext and inject a LifecycleManager.
@@ -82,12 +82,13 @@ def ingest(datadir: str, reset: bool = False) -> Any:
     Args:
         datadir: Path to directory containing data files.
         reset: If True, clear D-Base before ingestion.
+        disease_kb_dir: Optional path to disease knowledge base directory.
 
     Returns:
         IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
     """
     iris = _create_iris_with_lm()
-    return iris.ingest(datadir)
+    return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
 
 
 train = ingest  # backward compat alias
@@ -185,6 +186,15 @@ def benchmark(
             lm.shutdown()
     except Exception:
         logger.debug("API: LifecycleManager benchmark failed — falling back", exc_info=True)
+
+    # ---- Iris benchmark fallback (backward compat) -----------------------------
+    try:
+        iris = Iris()
+        return iris.benchmark(strip=strip, split=split, output_dir=output_dir)
+    except NotImplementedError:
+        logger.debug("API: Iris.benchmark not implemented — using workflow fallback")
+    except Exception:
+        logger.debug("API: Iris.benchmark failed — falling back to workflow", exc_info=True)
 
     # ---- Workflow-level fallback ----------------------------------------------
     from dargus.workflows.benchmark import run_benchmark

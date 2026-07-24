@@ -1,4 +1,9 @@
-"""DargusLLM — unified OpenAI-compatible HTTP client for online and local LLMs."""
+"""Compatibility module — DargusLLM (deprecated), migrated from dargus/llm.py.
+
+This module exists to preserve backward compatibility for code that still uses
+``DargusLLM`` directly (e.g. IrisLlm, model wizard).  New code should use
+:class:`dargus.models.reasoning.ReasoningLLM` instead.
+"""
 
 from __future__ import annotations
 
@@ -12,10 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class DargusLLM:
-    """Single-protocol LLM client via POST /v1/chat/completions.
+    """DEPRECATED: Single-protocol LLM client via POST /v1/chat/completions.
 
     Works with any OpenAI-compatible endpoint: OpenAI, DeepSeek, Groq,
     Ollama, vLLM, llama.cpp server, etc.
+
+    .. deprecated::
+        Use :class:`dargus.models.reasoning.ReasoningLLM` instead.
     """
 
     def __init__(

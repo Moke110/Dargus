@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import httpx
 
-from dargus.llm import DargusLLM, check_llm_connection
+from dargus.models.compat import DargusLLM, check_llm_connection
 
 
 def test_check_llm_connection_ok():

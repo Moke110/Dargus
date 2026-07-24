@@ -34,7 +34,7 @@ def _fake_backend(response: str):
 def test_process_query_missing_llm_backend_fallback():
     """Without LLM backend (None from llm_from_config), returns config guidance."""
     iris = Iris()
-    with patch("dargus.llm.llm_from_config", return_value=None):
+    with patch("dargus.models.compat.llm_from_config", return_value=None):
         result = iris.process_query("predict aspirin for headache")
     assert "No LLM backend configured" in result
     assert "dargus config set-api-key" in result
@@ -55,7 +55,7 @@ def test_process_query_predict_intent():
     )
 
     with patch(
-        "dargus.llm.llm_from_config",
+        "dargus.models.compat.llm_from_config",
         _fake_backend(response),
     ):
         result = iris.process_query("predict aspirin for headache")
@@ -73,7 +73,7 @@ def test_process_query_status_intent():
     response = json.dumps({"intent": "status"})
 
     with patch(
-        "dargus.llm.llm_from_config",
+        "dargus.models.compat.llm_from_config",
         _fake_backend(response),
     ):
         result = iris.process_query("what's the current status?")
@@ -94,7 +94,7 @@ def test_process_query_clarify_intent():
     )
 
     with patch(
-        "dargus.llm.llm_from_config",
+        "dargus.models.compat.llm_from_config",
         _fake_backend(response),
     ):
         result = iris.process_query("predict aspirin")
@@ -114,7 +114,7 @@ def test_process_query_chat_intent():
     )
 
     with patch(
-        "dargus.llm.llm_from_config",
+        "dargus.models.compat.llm_from_config",
         _fake_backend(response),
     ):
         result = iris.process_query("hello")
@@ -126,7 +126,7 @@ def test_process_query_invalid_json_fallback():
     iris = Iris()
 
     with patch(
-        "dargus.llm.llm_from_config",
+        "dargus.models.compat.llm_from_config",
         _fake_backend("not valid json {{{"),
     ):
         result = iris.process_query("blah")

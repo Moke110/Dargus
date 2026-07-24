@@ -98,7 +98,7 @@ class BaseAgent(ABC):
     def _init_llm(self):
         """Create LLM client from config. Returns None if no LLM configured."""
         try:
-            from dargus.llm import llm_from_config
+            from dargus.models.compat import llm_from_config
 
             return llm_from_config(self.config)
         except Exception:
@@ -456,7 +456,7 @@ class BaseAgent(ABC):
         return sum(confidences) / len(confidences) if confidences else 0.0
 
     # ------------------------------------------------------------------
-    # Backward-compat legacy methods (kept for ReportSearcher, etc.)
+    # Backward-compat legacy methods (deprecated)
     # ------------------------------------------------------------------
 
     def register_skill(self, skill_path: str) -> None:

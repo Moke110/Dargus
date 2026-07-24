@@ -933,7 +933,7 @@ def _run_model_wizard() -> int:
     import yaml
 
     from dargus._env import write_dotenv
-    from dargus.llm import DargusLLM, check_llm_connection
+    from dargus.models.compat import DargusLLM, check_llm_connection
 
     print()
     print("  Configure LLM connection")

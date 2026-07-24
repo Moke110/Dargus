@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from dargus.iris.base import IrisAgent, PredictionMatrix, normalize_prediction_entry
-from dargus.llm import DargusLLM, llm_from_config
+from dargus.models.compat import DargusLLM, llm_from_config
 
 logger = logging.getLogger(__name__)
 

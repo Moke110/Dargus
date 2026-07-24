@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from dargus.llm import DargusLLM, llm_from_config
+from dargus.models.compat import DargusLLM, llm_from_config
 
 
 class TestDargusLLM:

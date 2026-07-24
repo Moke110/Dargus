@@ -38,7 +38,7 @@ def test_api_predict_returns_prediction_matrix(minimal_dbase):
 
 
 def test_api_train_returns_training_report(minimal_dbase, tmp_path):
-    """dargus.train() returns a TrainingReport."""
+    """dargus.train() returns an IngestionReport."""
     datadir = tmp_path / "test_data"
     datadir.mkdir()
     report = dargus.train(datadir=str(datadir))

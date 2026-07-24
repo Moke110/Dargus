@@ -46,7 +46,7 @@ def train(datadir: str, reset: bool = False) -> Any:
         reset: If True, clear D-Base before ingestion.
 
     Returns:
-        TrainingReport with ``n_records``, ``n_skipped``, ``dbase_size``.
+        IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
     """
     iris = Iris()
     return iris.train(datadir)

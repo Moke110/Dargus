@@ -11,8 +11,7 @@ from dargus.dbase import DBase
 from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.iris.ensemble import IrisEnsemble
-from dargus.workflows.train import TrainingReport
-from dargus.workflows.train import run as run_train
+from dargus.workflows.ingest import IngestionReport, run_ingest
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +50,9 @@ class Iris(BaseAgent):
             "n_records": len(records),
         }
 
-    def train(self, datadir: str) -> TrainingReport:
+    def train(self, datadir: str) -> IngestionReport:
         """Run the Train workflow on the global D-Base."""
-        return run_train(datadir)
+        return run_ingest(datadir)
 
     def predict(
         self,

@@ -1,4 +1,4 @@
-"""Train workflow v0.15.0 — ingest data into the global D-Base."""
+"""Ingest workflow — ingest data into the global D-Base."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class TrainingReport:
-    """Report from a Train workflow run."""
+class IngestionReport:
+    """Report from an Ingest workflow run."""
 
     n_records: int = 0
     n_skipped: int = 0
@@ -23,8 +23,13 @@ class TrainingReport:
     errors: list[str] = field(default_factory=list)
 
 
-def run(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> TrainingReport:
-    """Ingest data files into the global D-Base and return a TrainingReport."""
+TrainingReport = IngestionReport  # backward compat alias
+
+
+def run_ingest(
+    datadir: str, reset: bool = False, disease_kb_dir: str | None = None
+) -> TrainingReport:
+    """Ingest data files into the global D-Base and return an IngestionReport."""
     dbase = DBase.global_instance()
     manager = DBaseManager(dbase)
 
@@ -56,7 +61,7 @@ def run(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) ->
                 errors.append(f"{yaml_path.name}: {exc}")
 
     records = dbase.read_shards()
-    return TrainingReport(
+    return IngestionReport(
         n_records=n_records,
         n_skipped=0,
         dbase_size=len(records),

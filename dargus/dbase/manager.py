@@ -114,8 +114,9 @@ class DBaseManager:
 
         1. validate(§6) → hard reject aborts
         2. compute evidence_id(§5) → collision = duplicate (return False)
-        3. semantic check → DuplicateReviewRequest if similar
-        4. append shard → mark view stale
+        3. generate + store embedding (optional; best-effort)
+        4. semantic check → DuplicateReviewRequest if similar
+        5. append shard → mark view stale
         """
         result = validate_evidence(record)
         if not result.ok:
@@ -126,6 +127,14 @@ class DBaseManager:
 
         eid = compute_evidence_id(record)
         record["evidence_id"] = eid
+
+        # ── generate + store embedding (best-effort) ──────────────────────
+        try:
+            text = self.nlp.record_to_text(record)
+            emb = self.nlp.embed_text(text)
+            record["embedding"] = emb.tolist()
+        except Exception:
+            pass  # embedding is optional; record still writable
 
         if dedup:
             if self.dbase.evidence_id_exists(eid):
@@ -141,9 +150,7 @@ class DBaseManager:
 
     def _semantic_check(self, record: dict) -> DuplicateReviewRequest | None:
         try:
-            from dargus.dbase.nlp import DBaseNLP
-
-            text = DBaseNLP.record_to_text(record)
+            text = self.nlp.record_to_text(record)
             similar = self.read_records_semantic(
                 text,
                 top_k=5,
@@ -159,6 +166,8 @@ class DBaseManager:
                         similarity_score=score,
                         candidate_evidence_id=candidate.get("evidence_id", ""),
                     )
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
             pass
         return None
@@ -367,8 +376,6 @@ class DBaseManager:
         _y_type = y_type or readout_type
 
         try:
-            from dargus.dbase.nlp import DBaseNLP
-
             nlp = self.nlp
             candidates = self.read_records(
                 x_entity=_x_entity,
@@ -377,11 +384,13 @@ class DBaseManager:
             )
             scored: list[tuple[dict, float]] = []
             for record in candidates:
-                text = DBaseNLP.record_to_text(record)
+                text = nlp.record_to_text(record)
                 score = nlp.similarity(query_text, text)
                 scored.append((record, score))
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored[:top_k]
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception:
             return []
 

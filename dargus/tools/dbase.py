@@ -40,13 +40,6 @@ def dbase_write(manager: DBaseManager, record: dict) -> dict:
     Returns:
         Dict with ``evidence_id``, ``written`` (bool), and ``embedding_generated`` (bool).
     """
-    try:
-        text = manager.nlp.record_to_text(record)
-        _ = manager.nlp.embed_text(text)
-        embedding_generated = True
-    except Exception:
-        embedding_generated = False
-
     result = manager.write_record(record)
     if isinstance(result, bool):
         written = result
@@ -56,6 +49,8 @@ def dbase_write(manager: DBaseManager, record: dict) -> dict:
 
     if written:
         manager.dbase.rebuild_view()
+
+    embedding_generated = "embedding" in record
 
     return {
         "evidence_id": record.get("evidence_id", ""),

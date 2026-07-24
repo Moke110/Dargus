@@ -50,8 +50,8 @@ class Iris(BaseAgent):
             "n_records": len(records),
         }
 
-    def train(self, datadir: str) -> IngestionReport:
-        """Run the Train workflow on the global D-Base."""
+    def ingest(self, datadir: str) -> IngestionReport:
+        """Run the Ingest workflow on the global D-Base."""
         return run_ingest(datadir)
 
     def predict(

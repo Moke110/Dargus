@@ -2,9 +2,22 @@
 
 This file records design changes and the rationale behind them. It keeps the main design documents free of historical comparisons.
 
+## 2026-07-26 — cadev workflow removed
+
+**Changed docs:** `CLAUDE.md`, `.gitignore`, `.claude/hooks/pre-commit-gate.sh`, `0_design_changes.md`
+
+**What changed:**
+- The cadev dev-workflow skill was removed entirely: `.claude/skills/cadev/`, its state/config/knowledge directory `docs/cadev/` (including `cadev-principles.md` and `references/`), and the `.claude/hooks/cadev-state-check.sh` hook.
+- `.claude/hooks/pre-commit-gate.sh` no longer reads cadev state to enforce quality checks; it now only enforces the no-commits-on-main rule.
+- `CLAUDE.md` no longer routes development through `/cadev` and no longer points at `docs/cadev/` knowledge files.
+- `.gitignore` no longer excludes `docs/cadev/state.json`.
+
+**Why:**
+The cadev orchestration layer is no longer used to manage development. Historical mentions of cadev in `docs/history-specs/` and `dargus/version.md` are preserved as-is since they are historical records. The knowledge summaries previously held in `docs/cadev/references/` are superseded by the design docs in `dargus/design/`.
+
 ## 2026-07-26 — Sidecar fields, entry-point scope, CLI consolidation, and insufficient-data semantics
 
-**Changed docs:** `1_design_overview.md`, `2_D-Base.md`, `2.1_D-Base_field_vocabulary.md`, `2.1.1_D-Base_field.md`, `2.1.2_D-Base_enumerate.md`, `2.2_D-Base_storage_and_lifecycle.md`, `3_runtime.md`, `4.1_agent_protocols.md`, `5_hooks.md`, `6_skills_tools_knowledge.md`, `7_workflows.md`, `8_cli.md`, `9_quality_and_experience.md`, `x_prospect.md`, `CONTEXT.md`, `docs/cadev/cadev-principles.md`, `docs/cadev/references/` (architecture, agent-protocols, dbase-fields, dbase-manager, key-files, test-norms)
+**Changed docs:** `1_design_overview.md`, `2_D-Base.md`, `2.1_D-Base_field_vocabulary.md`, `2.1.1_D-Base_field.md`, `2.1.2_D-Base_enumerate.md`, `2.2_D-Base_storage_and_lifecycle.md`, `3_runtime.md`, `4.1_agent_protocols.md`, `5_hooks.md`, `6_skills_tools_knowledge.md`, `7_workflows.md`, `8_cli.md`, `9_quality_and_experience.md`, `x_prospect.md`, `CONTEXT.md`
 
 **What changed:**
 - D-Base now has three sidecar fields stored outside the evidence record, each in its own append-only file keyed by `evidence_id`: lifecycle `status` with `superseded_by` (`sidecars/status.jsonl`), the LLM summary (`sidecars/llm_summary.jsonl`), and the embedding (`sidecars/embeddings-{model_fp}.jsonl`). `status` and `superseded_by` moved out of the record; the record schema is now 50 fields. Sidecar fields never participate in the identity hash.
@@ -18,7 +31,7 @@ This file records design changes and the rationale behind them. It keeps the mai
 - `CONTEXT.md` glossary updated: Perceive → Reason → Act loop, DES ± DCS output, and the y-axis description no longer mentions "confidence interval".
 - Fixed stale leftovers: "sparse matrices" in testing norms, `drug_id`/`y_type` filter names in the Routing Skill (now `bg.drugs` entity IDs, `bg.disease_id`, `y.type`).
 - Post-v1.0.0 visions consolidated into `x_prospect.md` (per-Agent model routing, API/MCP, Benchmark validation split, schema extension, advanced routing/tools/skills); other docs no longer carry "(post-v1.0.0)" markers.
-- `docs/cadev/cadev-principles.md` and the `docs/cadev/references/` summaries were resynced to the design docs: they no longer reference `spec.md`/`roadmap.md` (both deleted), `DBaseManager`, `EmbeddingService`, `AcceptanceGateHook`, 95% CI output, `Planner/Executor/Critic` phases, or `FourDExpert`.
+- The project knowledge summaries formerly kept under `docs/cadev/` were resynced to the design docs (they no longer referenced `spec.md`/`roadmap.md` (both deleted), `DBaseManager`, `EmbeddingService`, `AcceptanceGateHook`, 95% CI output, `Planner/Executor/Critic` phases, or `FourDExpert`); those summaries have since been removed together with cadev (see the 2026-07-26 cadev removal entry above).
 
 **Why:**
 A doc-wide consistency review (grill-with-docs session) found cross-doc contradictions (MCP/API listed as runtime entry points while deferred in the overview; record immutability vs. status flips), stale references from earlier designs, and undefined terms. The sidecar model makes the append-only invariant uniformly true: evidence records are immutable, and all mutable lifecycle/derived state lives in append-only sidecars keyed by `evidence_id`. Consolidating configuration under `dargus config`/`/config` keeps the CLI surface small while leaving room to grow.
@@ -177,7 +190,7 @@ A flat one-line tree does not clearly express nesting and ownership. The 2D tree
 
 ## 2026-07-25 — D-Base field refinements: identity, source tracking, y-axis, and background
 
-**Changed docs:** `2.1_D-Base_field_vocabulary.md`, `2.1.1_D-Base_field.md`, `2.1.2_D-Base_enumerate.md`, `2_D-Base.md`, `docs/cadev/references/dbase-fields.md`
+**Changed docs:** `2.1_D-Base_field_vocabulary.md`, `2.1.1_D-Base_field.md`, `2.1.2_D-Base_enumerate.md`, `2_D-Base.md`
 
 **What changed:**
 - Renamed `experiment_group_id` to `related_evidence_id`, changed it to a list of strings, and moved it from Identity to Metadata.
@@ -199,7 +212,7 @@ Source identity belongs at the top level because provenance is part of what make
 
 ## 2026-07-25 — D-Base field vocabulary reorganization and reference docs
 
-**Changed docs:** `2.1_D-Base_field_vocabulary.md`, `2_D-Base.md`, `2.1.1_D-Base_field.md` (new), `2.1.2_D-Base_enumerate.md` (new), `2.2_D-Base_storage_and_lifecycle.md`, `6_skills_tools_knowledge.md`, `7_workflows.md`, `9_quality_and_experience.md`, `docs/cadev/references/dbase-fields.md`
+**Changed docs:** `2.1_D-Base_field_vocabulary.md`, `2_D-Base.md`, `2.1.1_D-Base_field.md` (new), `2.1.2_D-Base_enumerate.md` (new), `2.2_D-Base_storage_and_lifecycle.md`, `6_skills_tools_knowledge.md`, `7_workflows.md`, `9_quality_and_experience.md`
 
 **What changed:**
 - Added `age` to the Sample group.
@@ -211,7 +224,7 @@ Source identity belongs at the top level because provenance is part of what make
 - Schema count updated from 52 to 53 fields.
 - Created `2.1.1_D-Base_field.md` with field-by-field semantics.
 - Created `2.1.2_D-Base_enumerate.md` documenting all controlled vocabularies and explaining important ones.
-- Updated `docs/cadev/references/dbase-fields.md` to match the new field names and 53-field count.
+- Updated the D-Base field reference summary to match the new field names and 53-field count.
 
 **Why:**
 The Exposure group mixed sample-source, background, and outcome information. Moving `exvivo_platform` to Sample, dose/duration to Background, and assay platform to the y-axis makes the three-axis model consistent. Adding `age` captures a common sample descriptor. Splitting the concise vocabulary doc from detailed field and enumeration references makes the docs usable for both quick lookup and deep reading.

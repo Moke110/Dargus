@@ -1,6 +1,6 @@
 # Workflow Design
 
-> Dargus has three user-facing workflows: **Ingest**, **Predict**, and **Benchmark**. Each is implemented as a Skill-driven, hook-orchestrated process rather than a hardcoded script.
+> Dargus v1.0.0 has two user-facing workflows: **Ingest** and **Predict**. Each is implemented as a Skill-driven, hook-orchestrated process rather than a hardcoded script.
 
 ## Ingest — from raw data to structured evidence
 
@@ -33,25 +33,15 @@ Predict estimates the probability that a drug improves outcomes for a disease ac
 
 A Predict session converges when no new delegations remain or when the Reason step judges that another round would not change the conclusion. `SafetyNetHook` forces convergence if `max_rounds` or a timeout is reached.
 
-## Benchmark — evaluate Predict without data leakage
-
-Benchmark measures Predict against evidence already in D-Base.
-
-### Rules
-
-- Matching records are temporarily marked `holdout-test`.
-- Predict reads only `active` records, so holdout records cannot leak into inference.
-- Predictions are compared against the held-out ground truth.
-- After Benchmark finishes, all holdout records are restored to `active`.
-- No temporary D-Base is created.
-
-### Output
-
-Benchmark reports standard classification metrics plus the number of test records and the number of rounds consumed.
-
 ## v1.0.0 scope
 
 - Ingest: explore → convert → input with confirmation.
 - Predict: dispatch → assess → delegate → synthesize → validate.
-- Benchmark: holdout marking, active-only inference, status restoration.
-- All three workflows run through the hook system and return typed result dicts.
+- Both workflows run through the hook system and return typed result dicts.
+
+## Out of Scope
+
+- **Benchmark workflow.** Evaluates Predict against evidence already in D-Base: matching records are temporarily marked `holdout-test`, Predict reads only `active` records so holdout records cannot leak into inference, predictions are compared against the held-out ground truth, and all holdout records are restored to `active` afterward — no temporary D-Base is created. Output is standard classification metrics plus the number of test records and rounds consumed. Deferred because v1.0.0 makes no accuracy demand; the `holdout-test` / `holdout-valid` statuses already exist in D-Base to support it (see `2.2_D-Base_storage_and_lifecycle.md`).
+- **Train workflow.** Fine-tuning local LLMs on Dargus-produced Expert assessments, calibrating Bayesian and GNN models on held-out records, and learning delegation policies from historical convergence traces. Deferred until local-model deployment and post-v1.0.0 model integration are stable.
+- **Multi-model prediction ensemble.** v1.0.0 Predict is Expert-driven. A future release can add specialized prediction primitives — `iris_search` (literature and database search), `iris_analog` (analog-based reasoning), `iris_bayes` (hierarchical Bayesian modeling), `iris_gnn` (graph-neural-network prediction), `iris_llm` (direct LLM reasoning) — aggregated by an `Iris.ensemble()` layer with weights derived from calibration and evidence coverage.
+- **Advanced Routing Skills.** Expert knowledge graphs that traverse drug-target-disease relationships to find indirect evidence, contrastive retrieval that surfaces evidence challenging the current hypothesis, and temporal retrieval that prefers recent evidence or tracks its evolution.

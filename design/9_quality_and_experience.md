@@ -1,6 +1,6 @@
 # Quality & Experience Design
 
-> Dargus must be trustworthy under real-world friction: bad files, missing LLMs, unavailable embeddings, sparse evidence, and long-running benchmarks. The quality layer defines how the system behaves when things go wrong and how it proves it is working.
+> Dargus must be trustworthy under real-world friction: bad files, missing LLMs, unavailable embeddings, and sparse evidence. The quality layer defines how the system behaves when things go wrong and how it proves it is working.
 
 ## Testing norms
 
@@ -16,7 +16,6 @@
 - Semantic read with metadata filters and top-k sorting.
 - Ingest end-to-end: directory → records → D-Base.
 - Predict end-to-end: query → Expert reports → FinalReport.
-- Benchmark holdout marking and restoration.
 - CLI command parsing and handler wiring.
 - Expert `extract()` and `assess()` from fixtures.
 - Iris multi-round convergence.
@@ -32,7 +31,6 @@
 | Empty D-Base | Predict returns a report with `confidence_level: insufficient_data`, DES/DCS unset, and a warning |
 | Duplicate review request | Pause for confirmation; default to allow if no callback |
 | Validation failure | Skip record; log reason; continue with remaining records |
-| Benchmark matches zero records | Abort with clear message |
 | `max_rounds` reached | `SafetyNetHook` forces convergence and flags `max_rounds_reached` |
 
 ## Quality gates
@@ -44,7 +42,6 @@
 | Formatting | `black --check dargus tests` passes |
 | Traceability | 100% of delivered predictions cite supporting records (`insufficient_data` reports excepted) |
 | Write safety | 100% of evidence writes go through the single-writer D-Base API |
-| Test-set leakage | 0 holdout records read during Benchmark inference |
 | Report validation | Format, DES/DCS range, and supporting-record checks pass for every delivered report |
 
 ## Observability
@@ -54,6 +51,11 @@ Every Agent run produces an `AgentReport` with a `CallTrace`. Every workflow pro
 ## v1.0.0 scope
 
 - Test-driven development with module-level test files.
-- End-to-end tests for Ingest, Predict, and Benchmark.
+- End-to-end tests for Ingest and Predict.
 - Safety-net hooks for round limits and timeouts.
 - Report validation enforcing the prediction contract.
+
+## Out of Scope
+
+- **Benchmark quality gates.** Benchmark holdout marking/restoration tests, the zero-match abort behavior, and the 0-leakage gate return with the Benchmark workflow (see `7_workflows.md`).
+- **Operational maturity.** Environment separation (dev / staging / prod), structured audit logs and metrics, streaming Predict output, prompt caching and session reuse, scheduled or event-driven ingestion, and always-allow / always-ask permission tiers.

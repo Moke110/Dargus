@@ -16,7 +16,6 @@ The runtime controls the following components:
 | **Reasoning LLM** | Holds the single v1.0.0 model used by all Agents. |
 | **Tool Registry** | Registers and resolves every Tool, including D-Base tools and heavy cached tools. |
 | **Skill Registry** | Registers and resolves Skills that orchestrate workflows. |
-| **Knowledge Retrievers** | Provides lookup interfaces for project-level knowledge (vocabularies, endpoint mappings, model metadata). |
 | **D-Base Tools** | Mediates all reads and writes to the cumulative evidence store. |
 | **HookRegistry** | Stores hook registrations and executes them at the named lifecycle points. |
 | **AgentFactory** | Creates and terminates every Agent, injecting runtime-provided dependencies. |
@@ -40,7 +39,6 @@ flowchart TB
         LLM[Reasoning LLM]
         ToolReg[Tool Registry]
         SkillReg[Skill Registry]
-        KnowReg[Knowledge Retrievers]
         DBTools[D-Base Tools]
         HookReg[HookRegistry]
         Factory[AgentFactory]
@@ -55,7 +53,6 @@ flowchart TB
     Runtime -->|configures| LLM
     Runtime -->|manages| ToolReg
     Runtime -->|manages| SkillReg
-    Runtime -->|manages| KnowReg
     Runtime -->|manages| DBTools
     Runtime -->|manages| HookReg
     Runtime -->|manages| Factory
@@ -71,7 +68,6 @@ flowchart TB
 
     Agents -->|call| ToolReg
     Agents -->|call| SkillReg
-    Agents -->|call| KnowReg
     ToolReg -->|includes| DBTools
     DBTools -->|read / write| DBase[D-Base]
 
@@ -102,3 +98,8 @@ Hooks are observer/callback functions registered at named points in the agent li
 - `DargusRuntime` with DI wiring, `AgentFactory`, entry-point packaging, health flag, and session-scoped `ToolCache`.
 - Single fixed reasoning model for all Agents.
 - Workflows delegate to hook-aware functions rather than embedding policy directly in Agents.
+
+## Out of Scope
+
+- **Per-Agent model routing.** v1.0.0 uses a single fixed reasoning model for all Agents. A future release could route different Agents (or different PRA phases) to different models via a runtime model router.
+- **Knowledge Retrievers.** A runtime component providing lookup interfaces for project-level knowledge (vocabularies, endpoint mappings, model metadata), arriving with the Knowledge system (see `6_skills_tools_knowledge.md`).

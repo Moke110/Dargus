@@ -18,7 +18,7 @@ The system is open-source, runs privately, and keeps all evidence in a single cu
 2. **Traceability by default.** Every prediction cites evidence and exposes its reasoning mode.
 3. **Uncertainty is first-class.** Predictions are reported as a score pair (DES ± DCS), not a single point estimate.
 4. **Human-in-the-loop.** Ingest and Predict pause for confirmation on duplicates or uncertain plans.
-5. **Modular intelligence.** Agents, Tools, Skills, and Knowledge compose without rewriting orchestration.
+5. **Modular intelligence.** Agents, Tools, and Skills compose without rewriting orchestration.
 6. **Multi-domain cooperation.** Domain Experts with complementary specializations delegate, assess, and synthesize evidence across molecular, cellular, animal, and clinical levels. No single Expert has to reason outside its domain.
 
 ## Top-level architecture
@@ -32,7 +32,7 @@ CLI (one-shot commands + REPL)
             ├── Iris                 ← top-level orchestrator Agent
             ├── Domain Experts
             └── D4Expert
-                └── Tool / Skill / Knowledge layer
+                └── Tool / Skill layer
                     └── D-Base       ← cumulative evidence store
 ```
 
@@ -42,19 +42,28 @@ CLI (one-shot commands + REPL)
 - **AgentFactory** creates and terminates every Agent, including Iris, Domain Experts, and D4Expert.
 - **Iris** is an Agent that dispatches tasks to other Agents through agent communication protocols; it does not own or manage their lifecycle.
 - **Domain Experts** and **D4Expert** are Agents created by AgentFactory.
-- All Agents call **Tools / Skills / Knowledge** to read from and write to **D-Base**.
+- All Agents call **Tools / Skills** to read from and write to **D-Base**.
 - **D-Base** is the cumulative evidence store. There is no separate D-BaseManager; all D-Base access happens through tools, skills, or hooks.
 
-## v1.0.0
+## Design Scope
 
-A complete, self-contained prediction appliance:
+The goal of v1.0.0 is to **successfully finish the Ingest and Predict workflows end-to-end, with no accuracy demand**. A run that completes and produces a structurally valid report counts as success; predictive quality is explicitly not a v1.0.0 criterion.
 
-- D-Base stores structured evidence with vocabularies and dual deduplication.- Agents use a shared **Perceive → Reason → Act** harness with hook points.
-- Ingest converts raw data into validated records.
-- Predict routes requests to Experts, supports delegation, and produces a FinalReport.
-- Benchmark evaluates Predict against held-out records without temporary D-Base copies.
-- CLI provides a REPL and a minimal one-shot command surface (`iris`, `config`, `test`), all routed through `dargus.api`.
+In scope for v1.0.0:
 
-## Out of scope for v1.0.0
+- **Dargus structure**: DargusRuntime and its components, with `dargus.api` as the only interaction interface.
+- **Lifecycle of DargusRuntime and Agents**: entry point, exit point, error report.
+- **D-Base**: fields, read & write, storage, configuration, and lifecycle.
+- **Embedding model**: choice, calling, storage, configuration, and lifecycle.
+- **Reasoning LLM**: configuration, calling, and lifecycle.
+- **Agent harness backbone**: Perceive → Reason → Act loop, system prompt, skill/tool/hook registry and calling, trace report.
+- **Minimal skill/tool/hook set** to define and deploy the Ingest & Predict workflows.
+- **Dargus CLI**: minimal commands to setup, configure, test, and use Dargus; REPL UI and flow update of trace reports.
 
-Multi-model ensembles, knowledge-graph routing, training pipelines, MCP server integration, and environment-aware deployments are deferred to post-v1.0.0 releases. See `x_prospect.md`.
+## Out of Scope
+
+Deferred to post-v1.0.0 releases; details live in the Out of Scope sections of the corresponding design docs:
+
+- Knowledge system (see `6_skills_tools_knowledge.md`).
+- Benchmarking (see `7_workflows.md`).
+- More professional skills, tools, and hooks — multi-model prediction ensembles, advanced Routing Skills, per-Agent model routing, a Train workflow, MCP server integration, schema extension, and operational maturity.

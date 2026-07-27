@@ -24,7 +24,7 @@ The API exposes a **non-interactive core**: every function takes plain arguments
 | `dargus config` | Launch the Dargus configuration menu |
 | `dargus test` | Launch the Dargus test menu |
 
-There are no other one-shot commands. Capabilities formerly exposed as subcommands (predict, ingest, benchmark, status) are reached by asking Iris, in either mode.
+There are no other one-shot commands. Capabilities formerly exposed as subcommands (predict, ingest, status) are reached by asking Iris, in either mode.
 
 ## REPL experience
 
@@ -72,3 +72,7 @@ The LLM API key is read from the `DARGUS_LLM_API_KEY` environment variable, typi
 - `dargus.api` as the sole runtime interaction interface (non-interactive core + CLI interactive wrappers).
 - Config and test menus shared between the one-shot commands and REPL slash commands.
 - API-layer confirmation guard for destructive operations.
+
+## Out of Scope
+
+- **MCP server.** An optional MCP server could expose `dargus.api` and Dargus workflows to external agent platforms, letting Claude Code or other agents query D-Base and run Predict through a standardized protocol. The MCP adapter was removed from the repository in v0.19.0 and will be reintroduced after v1.0.0.

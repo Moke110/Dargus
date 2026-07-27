@@ -58,7 +58,7 @@ All writes to D-Base go through a single component. No Agent, Expert, or workflo
 
 D-Base uses two complementary deduplication strategies:
 
-1. **Exact deduplication (hard gate).** A content hash of the identity fields produces `evidence_id`. If the same ID already exists, the incoming record is skipped. This is the default and cannot be bypassed except in internal benchmark scenarios.
+1. **Exact deduplication (hard gate).** A content hash of the identity fields produces `evidence_id`. If the same ID already exists, the incoming record is skipped. This is the default and cannot be bypassed.
 2. **Semantic deduplication (soft flag).** The embedding tool converts the record to a dense vector and stores it in a separate embeddings sidecar keyed by `evidence_id` and the active embedding-model fingerprint. If cosine similarity to an existing record exceeds a threshold within the same drug/disease/endpoint scope, Dargus raises a `DuplicateReviewRequest`. The final decision is made by the human user, not by the store, any Agent, or an automated workflow.
 
 ## Sidecar fields live outside records
@@ -74,6 +74,7 @@ Three fields live outside the 50-field evidence record, each in its own append-o
 - Single-writer API with per-field updates and summary management.
 - Append-only JSONL shards plus a derived Parquet view.
 
-## Out of scope for v1.0.0
+## Out of Scope
 
-- `D-Base.add_field()`: a researcher-facing function to extend the 50-field schema with new fields. Schema changes affect validation, embedding, and vocabulary registries, so this requires a formal migration path. See `x_prospect.md`.
+- **Schema extension (`D-Base.add_field()`).** A researcher-facing function to extend the 50-field schema with new fields. Schema changes affect validation, embedding, and vocabulary registries, so this requires a formal migration path.
+- **Knowledge graph over D-Base.** D-Base v1.0.0 is a flat keyed-object store. A future release could layer a heterogeneous knowledge graph on top, linking drugs, targets, pathways, diseases, and trials while keeping D-Base as the authoritative evidence source.

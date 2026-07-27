@@ -13,7 +13,6 @@
 Each subclass declares:
 
 - `PERMITTED_TOOLS` — which Tools it may call,
-- `PERMITTED_KNOWLEDGE` — which Knowledge sources it may query,
 - `SUPPORTED_SKILLS` — which Skills it may execute,
 - `SUPPORTED_LEVELS` — which biological levels it handles,
 - `MAX_ROUNDS` — hard upper bound on loops.
@@ -47,7 +46,6 @@ When an Expert receives evidence outside its scope, it creates a `TaskDelegation
 - CLI input (REPL or one-shot `iris` command) → parse intent,
 - `predict` → invoke Predict workflow,
 - `ingest` → invoke Ingest workflow,
-- `benchmark` → invoke Benchmark workflow,
 - collect confirmations when human-in-the-loop is required.
 
 Iris does not centralize evidence retrieval. Each Expert uses its Routing Skill to fetch the evidence it needs from D-Base.
@@ -59,3 +57,8 @@ Iris does not centralize evidence retrieval. Each Expert uses its Routing Skill 
 - Iris as the intent-router and workflow launcher.
 - Typed reports and call traces for every run.
 - Human-in-the-loop confirmation hooks.
+
+## Out of Scope
+
+- **Knowledge permission layer.** A `PERMITTED_KNOWLEDGE` declaration controlling which Knowledge sources an Agent may query arrives with the Knowledge system (see `6_skills_tools_knowledge.md`).
+- **Benchmark dispatch.** Iris routes `benchmark` requests to the Benchmark workflow once it ships (see `7_workflows.md`).

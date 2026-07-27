@@ -77,6 +77,76 @@ tools:
     timeout_ms: 3000
     fallback: empty_list
 
+  dbase_update_status:
+    description: "Append a lifecycle status transition (supersede, retract, holdout) to the status sidecar"
+    domain: core
+    biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
+    parameters:
+      evidence_id:
+        type: string
+        required: true
+        description: "Target evidence record id"
+      status:
+        type: string
+        required: true
+        enum: [active, superseded, retracted, holdout-test, holdout-valid]
+        description: "New lifecycle status"
+      superseded_by:
+        type: string
+        required: false
+        description: "Replacement evidence_id when status is superseded"
+    output:
+      type: object
+      properties:
+        evidence_id: {type: string}
+        status: {type: string}
+    timeout_ms: 3000
+    fallback: empty_list
+
+  dbase_write_summary:
+    description: "Write or replace the LLM summary sidecar entry for a record"
+    domain: core
+    biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
+    parameters:
+      evidence_id:
+        type: string
+        required: true
+        description: "Target evidence record id"
+      summary:
+        type: string
+        required: true
+        description: "LLM summary text"
+    output:
+      type: object
+      properties:
+        evidence_id: {type: string}
+        written: {type: boolean}
+    timeout_ms: 3000
+    fallback: empty_list
+
+  embedding:
+    description: "Embed texts with the project-level embedding model (ToolCache-resident); embed/test/info ops"
+    domain: core
+    biological_levels: [molecular, molecular-sim, cellular, cellular-sim, exvivo, exvivo-sim, animal, animal-sim, rct, epi, rct-sim]
+    parameters:
+      texts:
+        type: array
+        required: false
+        description: "Texts to embed (embed/test ops)"
+      op:
+        type: string
+        required: false
+        default: embed
+        enum: [embed, test, info]
+        description: "Operation: embed texts, self-test, or model info"
+    output:
+      type: object
+      properties:
+        vectors: {type: array}
+        model_name: {type: string}
+    timeout_ms: 60000
+    fallback: empty_list
+
   pubmed_search:
     description: "Search PubMed for biomedical literature"
     domain: literature

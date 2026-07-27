@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any
 from dargus.dbase.dbase import DBase
 from dargus.dbase.sidecar import model_fingerprint
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
+from dargus.models.embedding import EmbeddingModel
 
 if TYPE_CHECKING:
     from dargus.dbase.nlp import DBaseNLP
-    from dargus.models.embedding import EmbeddingModel
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,15 @@ class DuplicateReviewRequest:
 class DBaseManager:
     """Single read/write interface to D-Base (v1.0.0 three-axis, 50-field)."""
 
-    def __init__(self, dbase: DBase, embedding_model: EmbeddingModel | None = None) -> None:
+    def __init__(
+        self,
+        dbase: DBase,
+        embedding_model: EmbeddingModel | None = None,
+        dedup_threshold: float = 0.85,
+    ) -> None:
         self.dbase = dbase
         self._embedding_model = embedding_model
+        self.dedup_threshold = dedup_threshold
         self._nlp: DBaseNLP | None = None
 
     # ── nlp (lazy) ──────────────────────────────────────────────────────────
@@ -225,9 +231,10 @@ class DBaseManager:
                 top_k=5,
                 x_entity=_primary_x_entity(record),
                 disease_id=_primary_disease_id(record),
+                y_type=record.get("y", {}).get("type"),
             )
             for candidate, score in similar:
-                if score >= 0.85:
+                if score >= self.dedup_threshold:
                     return DuplicateReviewRequest(
                         incoming_raw=record,
                         incoming_evidence=record,
@@ -448,6 +455,54 @@ class DBaseManager:
         except Exception:
             return []
 
+    # ── routing skill ───────────────────────────────────────────────────────
+
+    def route(
+        self,
+        query_text: str,
+        biological_level: str | None = None,
+        bg_drugs: list[str] | None = None,
+        disease_id: str | None = None,
+        y_type: str | None = None,
+        top_k: int = 10,
+    ) -> list[tuple[dict, float]]:
+        """Routing Skill: field match + sidecar cosine ranking (design/6).
+
+        Field match first — ``biological_level``, ``bg.drugs`` entity IDs,
+        ``bg.disease_id``, and ``y.type`` filter active records. Then the
+        query is embedded once and ranked by cosine similarity against the
+        vectors in the **active** embedding-model fingerprint sidecar
+        (``sidecars/embeddings-{model_fp}.jsonl``) — no per-record
+        re-embedding. Records without a sidecar vector sort last (score 0).
+        """
+        candidates = self.read_records(
+            level=biological_level,
+            disease_id=disease_id,
+            y_type=y_type,
+        )
+        if bg_drugs:
+            wanted = set(bg_drugs)
+            candidates = [r for r in candidates if _record_has_drug(r, wanted)]
+
+        if not candidates:
+            return []
+
+        fp = self.dbase.sidecars.active_fingerprint()
+        vectors: dict[str, list[float]] = self.dbase.sidecars.read_embeddings(fp) if fp else {}
+
+        query_vector = self.nlp.embed_text(query_text).tolist()
+
+        scored: list[tuple[dict, float]] = []
+        for record in candidates:
+            eid = record.get("evidence_id")
+            vector = vectors.get(eid) or []
+            score = 0.0
+            if len(vector) == len(query_vector) and len(vector) > 0:
+                score = EmbeddingModel.similarity(query_vector, list(vector))
+            scored.append((record, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
@@ -483,3 +538,28 @@ def _primary_x_entity(record: dict) -> str | None:
 def _primary_disease_id(record: dict) -> str | None:
     dids = record.get("bg", {}).get("disease_id") or []
     return dids[0] if dids else None
+
+
+def _as_list(value: Any) -> list:
+    """Normalize parquet-returned values (numpy arrays) to plain lists."""
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return list(value.tolist())
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _record_has_drug(record: dict, wanted: set[str]) -> bool:
+    """True when any x entity or bg drug of the record is in *wanted*."""
+    for v in _as_list((record.get("x") or {}).get("value")):
+        if isinstance(v, dict) and v.get("entity_id") in wanted:
+            return True
+    for d in _as_list((record.get("bg") or {}).get("drugs")):
+        if isinstance(d, dict):
+            if d.get("entity_id") in wanted:
+                return True
+        elif d in wanted:
+            return True
+    return False

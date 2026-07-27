@@ -183,6 +183,9 @@ class DBase:
 
         if not self.parquet_path.exists():
             self.rebuild_view()
+        elif self.read_manifest().get("view_built_at") is None:
+            # view marked stale by a write since the last rebuild
+            self.rebuild_view()
 
         if not self.parquet_path.exists():
             return []

@@ -86,11 +86,22 @@ class ObserverHook:
 
 
 class HookRegistry:
-    """Registry that stores and executes hooks keyed by :class:`HookPoint`."""
+    """Registry that stores and executes hooks keyed by :class:`HookPoint`.
+
+    Enforcement hooks (safety limits and report validation) can never be
+    disabled — only advisory core hooks may be named in ``disabled_hooks``.
+    """
+
+    #: Hooks whose disablement would bypass a security/enforcement gate.
+    ENFORCEMENT_HOOKS = frozenset({"SafetyNetHook", "ReportValidationHook"})
 
     def __init__(self, disabled_hooks: set[str] | None = None) -> None:
         self._hooks: dict[HookPoint, list[Hook]] = {}
-        self._disabled: set[str] = set(disabled_hooks or set())
+        requested = set(disabled_hooks or set())
+        blocked = requested & self.ENFORCEMENT_HOOKS
+        if blocked:
+            raise ValueError(f"Enforcement hooks cannot be disabled: {sorted(blocked)}")
+        self._disabled: set[str] = requested
         # Structured invocation log: hook name, point, timestamp, elapsed, ok
         self.invocation_log: list[dict[str, Any]] = []
 

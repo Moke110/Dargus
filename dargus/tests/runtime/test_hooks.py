@@ -196,10 +196,17 @@ class TestHookRegistry:
         assert calls == ["after"]
 
     def test_disabled_hook_not_registered(self):
-        """Hooks named in disabled_hooks are skipped at registration."""
-        registry = HookRegistry(disabled_hooks={"SafetyNetHook"})
-        registry.register(HookPoint.ROUND_END, SafetyNetHook())
-        assert registry.list_hooks(HookPoint.ROUND_END) == []
+        """Advisory hooks named in disabled_hooks are skipped at registration."""
+        registry = HookRegistry(disabled_hooks={"SkeletonContextHook"})
+        registry.register(HookPoint.PERCEIVE_START, SkeletonContextHook())
+        assert registry.list_hooks(HookPoint.PERCEIVE_START) == []
+
+    def test_enforcement_hooks_cannot_be_disabled(self):
+        """SafetyNetHook / ReportValidationHook disable requests are refused."""
+        with pytest.raises(ValueError, match="Enforcement hooks cannot be disabled"):
+            HookRegistry(disabled_hooks={"SafetyNetHook"})
+        with pytest.raises(ValueError, match="Enforcement hooks cannot be disabled"):
+            HookRegistry(disabled_hooks={"SkeletonContextHook", "ReportValidationHook"})
 
     def test_invocation_log_records_success_and_failure(self):
         """Every hook invocation is recorded with name, point, elapsed, ok."""

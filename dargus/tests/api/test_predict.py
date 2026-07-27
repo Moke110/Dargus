@@ -66,14 +66,12 @@ def test_api_status_returns_dict(minimal_dbase):
     assert "working_dbase" in status
 
 
-def test_api_benchmark_validates_config(minimal_dbase, tmp_path):
-    """dargus.benchmark() raises NotImplementedError (workflow removed in v0.15.2)."""
+def test_api_benchmark_validates_config(minimal_dbase):
+    """dargus.benchmark() aborts when the holdout selection matches zero records."""
     import dargus
 
-    try:
+    with pytest.raises(ValueError, match="zero records"):
         dargus.benchmark(strip={"source.type": "benchmark"})
-    except NotImplementedError:
-        pass  # expected: bench-full-stack removed in v0.15.2
 
 
 def test_api_predict_single_agent_valid(minimal_dbase):

@@ -1,7 +1,15 @@
 """Benchmark workflow — measure predict accuracy against holdout ground truth.
 
-Marks holdout records, runs predict on the remaining active records, compares
-predictions to ground truth, and restores holdout state.
+Design (design/7_workflows.md §Benchmark):
+- Matching records are temporarily marked ``holdout-test`` via the status
+  sidecar.
+- Predict reads only ``active`` records, so holdout records cannot leak
+  into inference.
+- Predictions are compared against the held-out ground truth (the y-values
+  of the held-out records themselves).
+- After Benchmark finishes, all holdout records are restored to ``active``
+  (also on error).
+- No temporary D-Base is created; zero matched holdout records aborts.
 """
 
 from __future__ import annotations
@@ -31,22 +39,28 @@ def run_benchmark(task_spec: dict[str, Any]) -> dict[str, Any]:
     """Execute benchmark workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates BenchmarkSession
-    2. Mark holdout-test records (exclude from query scope)
-    3. Call run_predict using active records
-    4. Compare predictions to holdout ground truth
+    2. Resolve holdout records (explicit ``holdout_ids`` or a ``holdout``
+       filter dict) and flip them to ``holdout-test`` in the status sidecar
+    3. Run predict on the remaining active records
+    4. Compare predictions to the held-out ground truth
     5. Compute metrics: accuracy, precision, recall, f1
-    6. Restore holdout records to active state
+    6. Restore holdout records to ``active``
     7. Report BenchmarkResult with metrics
 
     Args:
         task_spec: Dict with keys ``workflow`` (must be ``"benchmark"``),
-            ``holdout_ids``, optional ``metric``, ``max_rounds``,
-            ``require_confirmation``.
+            ``holdout_ids`` (explicit evidence_ids) or ``holdout`` (filter
+            dict with optional ``drug_ids`` / ``disease_id`` / ``y_type`` /
+            ``level``), plus predict inputs ``drug_ids`` / ``disease_id`` /
+            ``endpoints``, optional ``max_rounds``, ``require_confirmation``.
 
     Returns:
         BenchmarkResult dict with keys: ``workflow``, ``status``,
         ``accuracy``, ``precision``, ``recall``, ``f1``, ``n_test``,
         ``session``.
+
+    Raises:
+        ValueError: when the holdout selection matches zero records.
     """
     task_spec.setdefault("workflow", "benchmark")
     max_rounds = int(task_spec.get("max_rounds", 5))
@@ -65,27 +79,35 @@ def run_benchmark(task_spec: dict[str, Any]) -> dict[str, Any]:
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Mark holdout records -------------------------------------------------
-    holdout_ids = task_spec.get("holdout_ids", [])
+    # ---- Mark holdout records in the status sidecar ---------------------------
+    manager = _manager()
+    holdout_records = _resolve_holdout_records(manager, task_spec)
+    holdout_ids = [r["evidence_id"] for r in holdout_records]
+    if not holdout_ids:
+        raise ValueError(
+            "Benchmark holdout selection matched zero records — aborting. "
+            "Provide holdout_ids or a holdout filter that matches D-Base records."
+        )
     logger.info("Marking %d records as holdout-test", len(holdout_ids))
-    _mark_holdout(holdout_ids)
+    _mark_holdout(manager, holdout_ids)
 
-    # ---- Run predict workflow on active records --------------------------------
-    predict_spec = {
-        "workflow": "predict",
-        "drug_ids": task_spec.get("drug_ids", []),
-        "disease_id": task_spec.get("disease_id", "unknown"),
-        "endpoints": task_spec.get("endpoints", []),
-        "max_rounds": task_spec.get("max_rounds", 5),
-    }
-    predict_result = _run_predict_standalone(predict_spec)
+    try:
+        # ---- Run predict on active records only --------------------------------
+        predict_spec = {
+            "workflow": "predict",
+            "drug_ids": task_spec.get("drug_ids", []),
+            "disease_id": task_spec.get("disease_id", "unknown"),
+            "endpoints": task_spec.get("endpoints", []),
+            "max_rounds": task_spec.get("max_rounds", 5),
+        }
+        predict_result = _run_predict_standalone(predict_spec)
 
-    # ---- Compare predictions to ground truth ----------------------------------
-    ground_truth = _load_ground_truth(holdout_ids)
-    metrics = _compute_metrics(predict_result.get("report", {}), ground_truth)
-
-    # ---- Restore holdout state ------------------------------------------------
-    _restore_holdout(holdout_ids)
+        # ---- Compare predictions to held-out ground truth ---------------------
+        ground_truth = _load_ground_truth(holdout_records)
+        metrics = _compute_metrics(predict_result, ground_truth)
+    finally:
+        # ---- Restore holdout state (even on failure) --------------------------
+        _restore_holdout(manager, holdout_ids)
 
     # ---- Build FinalReport ----------------------------------------------------
     final_report: dict[str, Any] = {
@@ -112,6 +134,7 @@ def run_benchmark(task_spec: dict[str, Any]) -> dict[str, Any]:
         "recall": metrics["recall"],
         "f1": metrics["f1"],
         "n_test": len(holdout_ids),
+        "report": final_report,
         "session": ctx.session,
     }
 
@@ -121,52 +144,133 @@ def run_benchmark(task_spec: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _mark_holdout(holdout_ids: list[str]) -> None:
-    """Mark records as holdout-test (excluded from query scope)."""
-    # Stub: in a real implementation this would update D-Base metadata
-    logger.info("Holdout marked: %s", holdout_ids)
+def _manager() -> Any:
+    """DBaseManager over the global working D-Base."""
+    from dargus.dbase import DBase
+    from dargus.dbase.manager import DBaseManager
+
+    return DBaseManager(DBase.global_instance())
 
 
-def _restore_holdout(holdout_ids: list[str]) -> None:
+def _resolve_holdout_records(manager: Any, task_spec: dict[str, Any]) -> list[dict]:
+    """Resolve the holdout set: explicit ids, or a filter dict.
+
+    Explicit ``holdout_ids`` win. Otherwise the ``holdout`` filter (keys:
+    ``drug_ids`` → x_entity, ``disease_id``, ``y_type``, ``level``) selects
+    matching records, optionally capped by ``max_records`` / ``fraction``.
+    Only active records are candidates.
+    """
+    explicit = task_spec.get("holdout_ids") or []
+    if explicit:
+        records = []
+        for eid in explicit:
+            record = manager.read_record(eid)
+            if record is not None:
+                records.append(record)
+        return records
+
+    holdout_filter = task_spec.get("holdout") or {}
+    drug_ids = holdout_filter.get("drug_ids") or task_spec.get("drug_ids") or []
+    candidates = manager.read_records(
+        x_entity=drug_ids[0] if len(drug_ids) == 1 else None,
+        disease_id=holdout_filter.get("disease_id") or task_spec.get("disease_id"),
+        y_type=holdout_filter.get("y_type"),
+        level=holdout_filter.get("level"),
+        status="active",
+    )
+    if len(drug_ids) > 1:
+        wanted = set(drug_ids)
+        candidates = [
+            r
+            for r in candidates
+            if any(v.get("entity_id") in wanted for v in (r.get("x", {}).get("value") or []))
+        ]
+
+    max_records = holdout_filter.get("max_records")
+    if max_records is not None:
+        candidates = candidates[: int(max_records)]
+    fraction = holdout_filter.get("fraction")
+    if fraction is not None and 0.0 < float(fraction) < 1.0:
+        n = max(1, int(len(candidates) * float(fraction)))
+        candidates = candidates[:n]
+    return candidates
+
+
+def _mark_holdout(manager: Any, holdout_ids: list[str]) -> None:
+    """Mark records as holdout-test (excluded from Predict's active scope)."""
+    for eid in holdout_ids:
+        manager.update_status(eid, "holdout-test")
+
+
+def _restore_holdout(manager: Any, holdout_ids: list[str]) -> None:
     """Restore holdout records to active state."""
-    logger.info("Holdout restored: %s", holdout_ids)
+    for eid in holdout_ids:
+        manager.update_status(eid, "active")
 
 
-def _load_ground_truth(holdout_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Load ground truth labels for holdout records (stub)."""
-    # Stub: return synthetic ground truth
-    return {
-        rid: {"actual_efficacy": 0.5 + (hash(rid) % 50) / 100.0, "outcome": "positive"}
-        for rid in holdout_ids
-    }
+def _load_ground_truth(holdout_records: list[dict]) -> dict[str, dict[str, Any]]:
+    """Ground truth for a held-out record is its own y readout.
+
+    The primary y value thresholded at 0.5 gives the binary outcome used by
+    the classification metrics.
+    """
+    ground_truth: dict[str, dict[str, Any]] = {}
+    for record in holdout_records:
+        eid = record.get("evidence_id")
+        if not eid:
+            continue
+        y_values = record.get("y", {}).get("value") or []
+        actual = y_values[0] if y_values else 0.0
+        try:
+            actual = float(actual)
+        except (TypeError, ValueError):
+            actual = 0.0
+        ground_truth[eid] = {
+            "actual_efficacy": actual,
+            "outcome": "positive" if actual >= 0.5 else "negative",
+            "y_type": record.get("y", {}).get("type"),
+        }
+    return ground_truth
 
 
 def _run_predict_standalone(predict_spec: dict[str, Any]) -> dict[str, Any]:
-    """Run predict workflow in a self-contained stub environment.
-
-    Uses the stubs built into ``run_predict`` (no RuntimeContext needed).
-    """
+    """Run the predict workflow (self-contained; no RuntimeContext needed)."""
     from dargus.workflows.predict import run_predict
 
     return run_predict(predict_spec)
 
 
 def _compute_metrics(
-    report: dict[str, Any], ground_truth: dict[str, dict[str, Any]]
+    predict_result: dict[str, Any], ground_truth: dict[str, dict[str, Any]]
 ) -> dict[str, float]:
     """Compute accuracy, precision, recall, f1 against ground truth.
 
-    Stub implementation: returns deterministic metrics based on report content.
+    The predicted binary outcome is the report's ``efficacy_score``
+    thresholded at 0.5 (``None`` — insufficient data — counts as negative).
+    The single predicted label is evaluated against every held-out record.
     """
     n = len(ground_truth)
     if n == 0:
         return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0}
 
-    # Stub: derive mock metrics from hash of ground truth keys
-    base = sum(hash(k) for k in ground_truth) % 100
-    accuracy = 0.5 + base / 200.0
-    precision = 0.45 + base / 220.0
-    recall = 0.5 + base / 200.0
+    score = (predict_result.get("report") or {}).get("efficacy_score")
+    predicted_positive = score is not None and float(score) >= 0.5
+
+    tp = fp = tn = fn = 0
+    for truth in ground_truth.values():
+        actual_positive = truth.get("outcome") == "positive"
+        if predicted_positive and actual_positive:
+            tp += 1
+        elif predicted_positive and not actual_positive:
+            fp += 1
+        elif not predicted_positive and actual_positive:
+            fn += 1
+        else:
+            tn += 1
+
+    accuracy = (tp + tn) / n
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
     return {

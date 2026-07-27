@@ -251,22 +251,31 @@ class FourDExpert(Expert):
                 "Preclinical efficacy signal conflicts with clinical trial outcomes"
             )
 
-        # Compute efficacy range
-        if confidence_scores:
+        # Compute DES ± DCS (design/4.1): efficacy_score = midpoint of the
+        # experts' confidence bounds, confidence_score = half-width (how wide
+        # the uncertainty band is). No supporting evidence means we refuse to
+        # fake precision: scores stay unset and the level is
+        # ``insufficient_data``.
+        if confidence_scores and supporting_records:
             efficacy_low = min(confidence_scores)
             efficacy_up = max(confidence_scores)
-            avg_conf = sum(confidence_scores) / len(confidence_scores)
+            efficacy_score: float | None = (efficacy_low + efficacy_up) / 2
+            confidence_score: float | None = (efficacy_up - efficacy_low) / 2
         else:
-            efficacy_low = 0.0
-            efficacy_up = 1.0
-            avg_conf = 0.0
+            efficacy_score = None
+            confidence_score = None
 
-        if avg_conf > 0.6:
-            confidence_level = "high"
-        elif avg_conf > 0.3:
-            confidence_level = "moderate"
+        if efficacy_score is None:
+            confidence_level = "insufficient_data"
         else:
-            confidence_level = "low"
+            assert confidence_score is not None
+            avg_conf = 1.0 - confidence_score
+            if avg_conf > 0.6:
+                confidence_level = "high"
+            elif avg_conf > 0.3:
+                confidence_level = "moderate"
+            else:
+                confidence_level = "low"
 
         # Consensus summary
         expert_names = [n for n in all_reports if n != "FourDExpert"]
@@ -279,8 +288,8 @@ class FourDExpert(Expert):
             drug_id=drug_id,
             disease_id=disease_id,
             endpoint=endpoint,
-            efficacy_low=efficacy_low,
-            efficacy_up=efficacy_up,
+            efficacy_score=efficacy_score,
+            confidence_score=confidence_score,
             confidence_level=confidence_level,
             reasoning_mode="Iris-expert",
             expert_consensus=consensus,

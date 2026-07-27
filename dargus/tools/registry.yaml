@@ -108,8 +108,8 @@ tools:
     output:
       type: object
       properties:
-        efficacy_low: {type: float}
-        efficacy_up: {type: float}
+        efficacy_score: {type: float}
+        confidence_score: {type: float}
     timeout_ms: 30000
     fallback: null_result
 

@@ -28,13 +28,17 @@ def test_api_predict_returns_prediction_matrix(minimal_dbase):
     assert "headache" in result["aspirin"]
     assert "efficacy" in result["aspirin"]["headache"]
     entry = result["aspirin"]["headache"]["efficacy"]
-    assert "efficacy_low" in entry
-    assert "efficacy_up" in entry
+    assert "efficacy_score" in entry
+    assert "confidence_score" in entry
     assert "supporting_records" in entry
     assert "reasoning_mode" in entry
     assert "confidence_level" in entry
-    assert 0.0 <= entry["efficacy_low"] <= 1.0
-    assert 0.0 <= entry["efficacy_up"] <= 1.0
+    if entry["confidence_level"] == "insufficient_data":
+        assert entry["efficacy_score"] is None
+        assert entry["confidence_score"] is None
+    else:
+        assert 0.0 <= entry["efficacy_score"] <= 1.0
+        assert 0.0 <= entry["confidence_score"] <= 1.0
 
 
 def test_api_train_returns_training_report(minimal_dbase, tmp_path):

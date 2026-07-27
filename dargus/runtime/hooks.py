@@ -272,20 +272,24 @@ class AcceptanceGateHook:
         if not isinstance(report, dict):
             raise ValueError("FinalReport must be a dict")
 
-        # efficacy_low
-        if "efficacy_low" in report:
-            val = report["efficacy_low"]
-            if not isinstance(val, (int, float)) or not (0 <= val <= 1):
-                raise ValueError(f"efficacy_low must be in [0, 1], got {val!r}")
+        # DES ± DCS: both scores must be present and in [0, 1], except when
+        # confidence_level is "insufficient_data" — then both must be unset.
+        if report.get("confidence_level") == "insufficient_data":
+            for key in ("efficacy_score", "confidence_score"):
+                if report.get(key) is not None:
+                    raise ValueError(
+                        f"{key} must be unset when confidence_level is "
+                        f"insufficient_data, got {report[key]!r}"
+                    )
+        else:
+            for key in ("efficacy_score", "confidence_score"):
+                if key in report:
+                    val = report[key]
+                    if not isinstance(val, (int, float)) or not (0 <= val <= 1):
+                        raise ValueError(f"{key} must be in [0, 1], got {val!r}")
 
-        # efficacy_up
-        if "efficacy_up" in report:
-            val = report["efficacy_up"]
-            if not isinstance(val, (int, float)) or not (0 <= val <= 1):
-                raise ValueError(f"efficacy_up must be in [0, 1], got {val!r}")
-
-        # supporting_records
-        if "supporting_records" in report:
+        # supporting_records (insufficient_data reports may cite zero records)
+        if "supporting_records" in report and report.get("confidence_level") != "insufficient_data":
             records = report["supporting_records"]
             if not isinstance(records, list) or len(records) == 0:
                 raise ValueError(

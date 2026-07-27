@@ -486,8 +486,8 @@ class TestAcceptanceGateHook:
     def test_valid_report_passes(self):
         hook = AcceptanceGateHook()
         report = {
-            "efficacy_low": 0.2,
-            "efficacy_up": 0.8,
+            "efficacy_score": 0.5,
+            "confidence_score": 0.3,
             "supporting_records": [{"pmid": "123"}],
         }
         ctx = _make_ctx(extra={"FinalReport": report})
@@ -508,7 +508,7 @@ class TestAcceptanceGateHook:
 
     def test_finds_report_in_session(self):
         hook = AcceptanceGateHook()
-        report = {"efficacy_low": 0.2, "efficacy_up": 0.8}
+        report = {"efficacy_score": 0.2, "confidence_score": 0.1}
         ctx = _make_ctx(session={"FinalReport": report})
         result = hook(ctx)
         assert result is ctx
@@ -519,39 +519,63 @@ class TestAcceptanceGateHook:
         with pytest.raises(ValueError, match="FinalReport must be a dict"):
             hook(ctx)
 
-    def test_efficacy_low_negative_raises(self):
+    def test_efficacy_score_negative_raises(self):
         hook = AcceptanceGateHook()
-        report = {"efficacy_low": -0.1}
+        report = {"efficacy_score": -0.1}
         ctx = _make_ctx(extra={"FinalReport": report})
-        with pytest.raises(ValueError, match="efficacy_low must be in"):
+        with pytest.raises(ValueError, match="efficacy_score must be in"):
             hook(ctx)
 
-    def test_efficacy_low_above_one_raises(self):
+    def test_efficacy_score_above_one_raises(self):
         hook = AcceptanceGateHook()
-        report = {"efficacy_low": 1.5}
+        report = {"efficacy_score": 1.5}
         ctx = _make_ctx(extra={"FinalReport": report})
-        with pytest.raises(ValueError, match="efficacy_low must be in"):
+        with pytest.raises(ValueError, match="efficacy_score must be in"):
             hook(ctx)
 
-    def test_efficacy_up_negative_raises(self):
+    def test_confidence_score_negative_raises(self):
         hook = AcceptanceGateHook()
-        report = {"efficacy_up": -0.5}
+        report = {"confidence_score": -0.5}
         ctx = _make_ctx(extra={"FinalReport": report})
-        with pytest.raises(ValueError, match="efficacy_up must be in"):
+        with pytest.raises(ValueError, match="confidence_score must be in"):
             hook(ctx)
 
-    def test_efficacy_up_above_one_raises(self):
+    def test_confidence_score_above_one_raises(self):
         hook = AcceptanceGateHook()
-        report = {"efficacy_up": 2.0}
+        report = {"confidence_score": 2.0}
         ctx = _make_ctx(extra={"FinalReport": report})
-        with pytest.raises(ValueError, match="efficacy_up must be in"):
+        with pytest.raises(ValueError, match="confidence_score must be in"):
             hook(ctx)
 
-    def test_efficacy_low_non_numeric_raises(self):
+    def test_efficacy_score_non_numeric_raises(self):
         hook = AcceptanceGateHook()
-        report: dict[str, Any] = {"efficacy_low": "high"}
+        report: dict[str, Any] = {"efficacy_score": "high"}
         ctx = _make_ctx(extra={"FinalReport": report})
-        with pytest.raises(ValueError, match="efficacy_low must be in"):
+        with pytest.raises(ValueError, match="efficacy_score must be in"):
+            hook(ctx)
+
+    def test_insufficient_data_waives_scores(self):
+        """insufficient_data reports pass with both scores unset."""
+        hook = AcceptanceGateHook()
+        report: dict[str, Any] = {
+            "confidence_level": "insufficient_data",
+            "efficacy_score": None,
+            "confidence_score": None,
+            "supporting_records": [],
+        }
+        ctx = _make_ctx(extra={"FinalReport": report})
+        result = hook(ctx)
+        assert result is ctx
+
+    def test_insufficient_data_with_scores_set_raises(self):
+        """insufficient_data reports must NOT carry DES/DCS values."""
+        hook = AcceptanceGateHook()
+        report = {
+            "confidence_level": "insufficient_data",
+            "efficacy_score": 0.5,
+        }
+        ctx = _make_ctx(extra={"FinalReport": report})
+        with pytest.raises(ValueError, match="must be unset"):
             hook(ctx)
 
     def test_empty_supporting_records_raises(self):
@@ -568,8 +592,8 @@ class TestAcceptanceGateHook:
         with pytest.raises(ValueError, match="supporting_records must be a non-empty"):
             hook(ctx)
 
-    def test_missing_both_efficacy_fields_passes(self):
-        """Report without efficacy fields is valid (optional fields)."""
+    def test_missing_both_score_fields_passes(self):
+        """Report without score fields is valid (optional fields)."""
         hook = AcceptanceGateHook()
         report: dict[str, Any] = {"supporting_records": [{"a": 1}]}
         ctx = _make_ctx(extra={"FinalReport": report})
@@ -579,8 +603,8 @@ class TestAcceptanceGateHook:
     def test_boundary_values_pass(self):
         hook = AcceptanceGateHook()
         report = {
-            "efficacy_low": 0.0,
-            "efficacy_up": 1.0,
+            "efficacy_score": 0.0,
+            "confidence_score": 1.0,
             "supporting_records": [{"x": "y"}],
         }
         ctx = _make_ctx(extra={"FinalReport": report})
@@ -705,8 +729,8 @@ class TestHookChainIntegration:
 
         # Set a valid report
         ctx.extra["FinalReport"] = {
-            "efficacy_low": 0.3,
-            "efficacy_up": 0.9,
+            "efficacy_score": 0.6,
+            "confidence_score": 0.3,
             "supporting_records": [{"id": 1}],
         }
         ctx = registry.run(HookPoint.SESSION_END, ctx)
@@ -727,7 +751,7 @@ class TestHookChainIntegration:
         registry.register(HookPoint.SESSION_END, AcceptanceGateHook())
         registry.register(HookPoint.SESSION_END, _TaggedResultHook())
 
-        ctx = _make_ctx(extra={"FinalReport": {"efficacy_low": 2.0}})  # invalid
+        ctx = _make_ctx(extra={"FinalReport": {"efficacy_score": 2.0}})  # invalid
         with pytest.raises(RuntimeError):
             registry.run(HookPoint.SESSION_END, ctx)
         assert "result_hook" not in calls  # never reached

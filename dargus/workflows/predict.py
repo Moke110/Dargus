@@ -117,8 +117,8 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
         "workflow": "predict",
         "status": ctx.extra.get("result", {}).get("status", "completed"),
         "rounds_completed": round_num,
-        "efficacy_low": final_report.get("efficacy_low"),
-        "efficacy_up": final_report.get("efficacy_up"),
+        "efficacy_score": final_report.get("efficacy_score"),
+        "confidence_score": final_report.get("confidence_score"),
         "drug_ids": final_report.get("drug_ids"),
         "disease_id": final_report.get("disease_id"),
         "endpoints": final_report.get("endpoints"),
@@ -209,16 +209,17 @@ def _execute_predict_round(ctx: HookContext, d4: Any, round_num: int) -> dict[st
 def _build_final_report(round_report: dict[str, Any], task_spec: dict[str, Any]) -> dict[str, Any]:
     """Convert the last round's synthesized report into a validated FinalReport.
 
-    Supports ``_efficacy_low_override`` and ``_efficacy_up_override`` keys
-    in *task_spec* for injection of invalid values during testing.
+    Supports ``_efficacy_score_override`` and ``_confidence_score_override``
+    keys in *task_spec* for injection of invalid values during testing.
     """
     return {
         "drug_ids": task_spec.get("drug_ids", []),
         "disease_id": task_spec.get("disease_id", "unknown"),
         "endpoints": task_spec.get("endpoints", []),
-        "efficacy_low": task_spec.get("_efficacy_low_override", 0.3),
-        "efficacy_up": task_spec.get("_efficacy_up_override", 0.7),
+        "efficacy_score": task_spec.get("_efficacy_score_override", 0.5),
+        "confidence_score": task_spec.get("_confidence_score_override", 0.2),
         "supporting_records": task_spec.get("_supporting_records_override", ["stub-record-1"]),
+        "confidence_level": task_spec.get("_confidence_level_override", "moderate"),
         "overall_conclusion": round_report.get("overall_conclusion", "no conclusion"),
         "reasoning_mode": "workflow-hook-orchestrated",
     }

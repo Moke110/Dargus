@@ -77,8 +77,8 @@ def test_final_report_structure():
         drug_id="DRUG_A",
         disease_id="DISEASE_X",
         endpoint="primary_endpoint_change",
-        efficacy_low=0.2,
-        efficacy_up=0.8,
+        efficacy_score=0.5,
+        confidence_score=0.3,
         confidence_level="moderate",
         reasoning_mode="Iris-expert",
         expert_consensus="Multiple experts agree on moderate efficacy signal",
@@ -92,9 +92,25 @@ def test_final_report_structure():
         per_expert_reports={},
     )
     assert fr.drug_id == "DRUG_A"
-    assert fr.efficacy_low == 0.2
-    assert fr.efficacy_up == 0.8
+    assert fr.efficacy_score == 0.5
+    assert fr.confidence_score == 0.3
     assert len(fr.contradictions) == 1
+
+
+def test_final_report_insufficient_data_unsets_scores():
+    """DES/DCS are None when confidence_level is insufficient_data."""
+    fr = FinalReport(
+        drug_id="DRUG_A",
+        disease_id="DISEASE_X",
+        endpoint="primary_endpoint_change",
+        efficacy_score=None,
+        confidence_score=None,
+        confidence_level="insufficient_data",
+        supporting_records=[],
+    )
+    assert fr.efficacy_score is None
+    assert fr.confidence_score is None
+    assert fr.confidence_level == "insufficient_data"
 
 
 def test_expert_context_carries_guidance():

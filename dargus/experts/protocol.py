@@ -50,14 +50,20 @@ class ExpertReport:
 
 @dataclass
 class FinalReport:
-    """Final synthesized report from 4DExpert after convergence."""
+    """Final synthesized report from 4DExpert after convergence.
+
+    Scores follow the DES ± DCS contract (design/4.1): ``efficacy_score``
+    (DES) and ``confidence_score`` (DCS), both 0–1 — or both ``None`` when
+    ``confidence_level`` is ``"insufficient_data"`` (e.g. no supporting
+    evidence in D-Base).
+    """
 
     drug_id: str
     disease_id: str
     endpoint: str
 
-    efficacy_low: float
-    efficacy_up: float
+    efficacy_score: float | None
+    confidence_score: float | None
     confidence_level: str
     reasoning_mode: str = "Iris-expert"
 

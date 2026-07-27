@@ -52,6 +52,34 @@ def test_fourd_expert_conclude_returns_final_report():
     assert isinstance(result, FinalReport)
     assert result.drug_id == "DRUG_A"
     assert result.disease_id == "DISEASE_X"
+    # DES = midpoint of expert bounds (0.3..0.7), DCS = half-width
+    assert result.efficacy_score == pytest.approx(0.5)
+    assert result.confidence_score == pytest.approx(0.2)
+    assert result.confidence_level in ("low", "moderate", "high")
+
+
+def test_fourd_expert_conclude_insufficient_data_when_no_evidence():
+    """No supporting evidence → scores unset, insufficient_data (no fake 0.0/1.0)."""
+    expert = FourDExpert()
+    empty_report = ExpertReport(
+        expert="MoleculeExpert",
+        round=1,
+        findings=[],
+        confidence=ConfidenceInterval(low=0.0, high=1.0, sources=[]),
+        delegations=[],
+        data_gaps=["no evidence"],
+        bias_notes=[],
+    )
+    result = expert.conclude(
+        drug_id="DRUG_C",
+        disease_id="DISEASE_Z",
+        endpoint="primary_endpoint_change",
+        all_reports={"MoleculeExpert": [empty_report]},
+    )
+    assert result.confidence_level == "insufficient_data"
+    assert result.efficacy_score is None
+    assert result.confidence_score is None
+    assert result.supporting_records == []
 
 
 def test_fourd_expert_conclude_synthesizes_contradictions():

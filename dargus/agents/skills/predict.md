@@ -9,8 +9,8 @@ input_schema:
   disease_id: {type: string, required: true}
   endpoints: {type: array, required: false}
 output_schema:
-  efficacy_low: {type: float}
-  efficacy_up: {type: float}
+  efficacy_score: {type: float}
+  confidence_score: {type: float}
   supporting_records: {type: array}
   overall_conclusion: {type: string}
 timeout_ms: 300000
@@ -31,7 +31,7 @@ Assess the efficacy of a candidate drug for a target disease across clinical end
    - clinic: clinical trial data, epidemiological evidence
 4. Collect ExpertReports from each delegation
 5. Synthesize into unified D4Report with:
-   - efficacy_low / efficacy_up (95% CI, both in [0,1])
+   - efficacy_score / confidence_score (DES ± DCS, both in [0,1]; unset when confidence_level is insufficient_data)
    - supporting_records (list of D-Base record IDs)
    - overall_conclusion (text summary)
 6. Submit FinalReport for acceptance gate validation

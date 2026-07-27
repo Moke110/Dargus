@@ -195,8 +195,8 @@ class Iris(BaseAgent):
                 }
                 final = director.conclude(drug_id, disease_id, endpoint, all_reports)
                 result[drug_id][disease_id][endpoint] = {
-                    "efficacy_low": final.efficacy_low,
-                    "efficacy_up": final.efficacy_up,
+                    "efficacy_score": final.efficacy_score,
+                    "confidence_score": final.confidence_score,
                     "confidence_level": final.confidence_level,
                     "reasoning_mode": "Iris-expert",
                     "supporting_records": final.supporting_records,
@@ -246,8 +246,8 @@ class Iris(BaseAgent):
 
     def _empty_pred(self) -> dict[str, Any]:
         return {
-            "efficacy_low": 0.0,
-            "efficacy_up": 1.0,
+            "efficacy_score": None,
+            "confidence_score": None,
             "supporting_records": [],
             "reasoning_mode": self.name,
             "confidence_level": "insufficient_data",
@@ -320,9 +320,15 @@ Return ONLY valid JSON:
             for drug, diseases in result.items():
                 for disease_name, eps in diseases.items():
                     for ep, pred in eps.items():
-                        ci = f"[{pred['efficacy_low']:.3f}, {pred['efficacy_up']:.3f}]"
+                        des = pred.get("efficacy_score")
+                        dcs = pred.get("confidence_score")
+                        if des is None or dcs is None:
+                            score = "insufficient data"
+                        else:
+                            score = f"DES {des:.3f} ± DCS {dcs:.3f}"
                         conf = pred.get("confidence_level", "unknown")
-                        lines.append(f"  {drug} / {disease_name} / {ep}: {ci} (confidence: {conf})")
+                        label = f"{drug} / {disease_name} / {ep}"
+                        lines.append(f"  {label}: {score} (confidence: {conf})")
             return "\n".join(lines)
 
         if intent == "status":

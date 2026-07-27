@@ -51,8 +51,8 @@ def test_run_predict_completes_and_returns_predict_result(valid_predict_spec):
     assert "session" in result
 
     report = result["report"]
-    assert "efficacy_low" in report
-    assert "efficacy_up" in report
+    assert "efficacy_score" in report
+    assert "confidence_score" in report
     assert "supporting_records" in report
     assert "overall_conclusion" in report
 
@@ -95,28 +95,59 @@ def test_run_predict_user_confirmation_logs(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_acceptance_gate_raises_on_invalid_efficacy_low():
-    """AcceptanceGateHook should raise ValueError when efficacy_low is out of [0,1]."""
+def test_acceptance_gate_raises_on_invalid_efficacy_score():
+    """AcceptanceGateHook should raise ValueError when efficacy_score is out of [0,1]."""
     gate = AcceptanceGateHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
-        extra={"FinalReport": {"efficacy_low": -0.5, "efficacy_up": 0.5}},
+        extra={"FinalReport": {"efficacy_score": -0.5, "confidence_score": 0.5}},
     )
-    with pytest.raises(ValueError, match="efficacy_low must be in"):
+    with pytest.raises(ValueError, match="efficacy_score must be in"):
         gate(ctx)
 
 
-def test_acceptance_gate_raises_on_invalid_efficacy_up():
-    """AcceptanceGateHook should raise ValueError when efficacy_up is out of [0,1]."""
+def test_acceptance_gate_raises_on_invalid_confidence_score():
+    """AcceptanceGateHook should raise ValueError when confidence_score is out of [0,1]."""
     gate = AcceptanceGateHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
-        extra={"FinalReport": {"efficacy_low": 0.5, "efficacy_up": 1.5}},
+        extra={"FinalReport": {"efficacy_score": 0.5, "confidence_score": 1.5}},
     )
-    with pytest.raises(ValueError, match="efficacy_up must be in"):
+    with pytest.raises(ValueError, match="confidence_score must be in"):
         gate(ctx)
+
+
+def test_acceptance_gate_waives_scores_on_insufficient_data():
+    """insufficient_data reports must have both scores unset — and pass then."""
+    gate = AcceptanceGateHook()
+    ctx = HookContext(
+        runtime=None,
+        task_spec={},
+        extra={
+            "FinalReport": {
+                "confidence_level": "insufficient_data",
+                "efficacy_score": None,
+                "confidence_score": None,
+                "supporting_records": [],
+            }
+        },
+    )
+    assert gate(ctx) is not None
+
+    ctx_bad = HookContext(
+        runtime=None,
+        task_spec={},
+        extra={
+            "FinalReport": {
+                "confidence_level": "insufficient_data",
+                "efficacy_score": 0.5,
+            }
+        },
+    )
+    with pytest.raises(ValueError, match="must be unset"):
+        gate(ctx_bad)
 
 
 def test_acceptance_gate_raises_on_empty_supporting_records():
@@ -127,8 +158,8 @@ def test_acceptance_gate_raises_on_empty_supporting_records():
         task_spec={},
         extra={
             "FinalReport": {
-                "efficacy_low": 0.5,
-                "efficacy_up": 0.8,
+                "efficacy_score": 0.5,
+                "confidence_score": 0.2,
                 "supporting_records": [],
             }
         },
@@ -145,8 +176,8 @@ def test_acceptance_gate_passes_on_valid_report():
         task_spec={},
         extra={
             "FinalReport": {
-                "efficacy_low": 0.5,
-                "efficacy_up": 0.8,
+                "efficacy_score": 0.5,
+                "confidence_score": 0.2,
                 "supporting_records": ["rec-1"],
             }
         },
@@ -171,8 +202,8 @@ def test_acceptance_gate_noop_on_missing_report():
 def test_build_final_report_has_expected_keys():
     spec = {"drug_ids": ["DB1"], "disease_id": "Cancer", "endpoints": ["survival"]}
     report = _build_final_report({"overall_conclusion": "test"}, spec)
-    assert report["efficacy_low"] == 0.3
-    assert report["efficacy_up"] == 0.7
+    assert report["efficacy_score"] == 0.5
+    assert report["confidence_score"] == 0.2
     assert report["supporting_records"] == ["stub-record-1"]
     assert report["overall_conclusion"] == "test"
 
@@ -183,13 +214,13 @@ def test_build_final_report_overrides_from_task_spec():
         "drug_ids": ["DB1"],
         "disease_id": "Cancer",
         "endpoints": ["survival"],
-        "_efficacy_low_override": 0.1,
-        "_efficacy_up_override": 0.9,
+        "_efficacy_score_override": 0.1,
+        "_confidence_score_override": 0.9,
         "_supporting_records_override": ["custom-rec"],
     }
     report = _build_final_report({"overall_conclusion": "test"}, spec)
-    assert report["efficacy_low"] == 0.1
-    assert report["efficacy_up"] == 0.9
+    assert report["efficacy_score"] == 0.1
+    assert report["confidence_score"] == 0.9
     assert report["supporting_records"] == ["custom-rec"]
 
 
@@ -245,29 +276,29 @@ def test_user_confirmation_gate_append_without_require(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_low():
-    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_low."""
+def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_score():
+    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_score."""
     spec = {
         "workflow": "predict",
         "drug_ids": ["DB00001"],
         "disease_id": "Alzheimer",
         "max_rounds": 1,
-        "_efficacy_low_override": -0.5,
+        "_efficacy_score_override": -0.5,
     }
-    with pytest.raises(RuntimeError, match="efficacy_low must be in"):
+    with pytest.raises(RuntimeError, match="efficacy_score must be in"):
         run_predict(spec)
 
 
-def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_up():
-    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_up."""
+def test_run_predict_acceptance_gate_failure_on_invalid_confidence_score():
+    """I5: AcceptanceGateHook fires and raises ValueError for invalid confidence_score."""
     spec = {
         "workflow": "predict",
         "drug_ids": ["DB00001"],
         "disease_id": "Alzheimer",
         "max_rounds": 1,
-        "_efficacy_up_override": 1.5,
+        "_confidence_score_override": 1.5,
     }
-    with pytest.raises(RuntimeError, match="efficacy_up must be in"):
+    with pytest.raises(RuntimeError, match="confidence_score must be in"):
         run_predict(spec)
 
 

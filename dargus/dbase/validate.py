@@ -1,7 +1,7 @@
 """D-Base v1.0.0 three-axis validator.
 
 Implements the design/2.1.x validation rules on the x/y/bg record shape.
-Hard failures reject the write; soft failures set needs_curation=true.
+Hard failures reject the write; soft failures are logged as warnings.
 
 Usage:
     from dargus.dbase.validate import validate_evidence, compute_evidence_id

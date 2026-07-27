@@ -29,7 +29,6 @@ class DBase:
         self.vocab_path = self.dbase_dir / "vocabularies.json"
         self.manifest_path = self.dbase_dir / "manifest.json"
         self.parquet_path = self.views_dir / "dbase.parquet"
-        self.quarantine_path = self.dbase_dir / "migration_quarantine.jsonl"
 
         self._vocab: VocabularyManager | None = None
         self._sidecars: SidecarStore | None = None

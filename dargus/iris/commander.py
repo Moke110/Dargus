@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-import warnings
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
@@ -25,11 +24,6 @@ class Iris(BaseAgent):
     PERMITTED_TOOLS = [
         "dbase_query",
         "pubmed_search",
-        "iris_search",
-        "iris_analog",
-        "iris_bayes",
-        "iris_gnn",
-        "iris_llm",
     ]
     PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []  # Iris orchestrates; doesn't execute skills directly
@@ -185,44 +179,6 @@ class Iris(BaseAgent):
                         factory.terminate(agent)
         return result
 
-    def infer(
-        self,
-        drug_ids: list[str],
-        disease_id: str,
-        endpoints: list[str] | None = None,
-        datadir: str | None = None,
-        confirm_callback: Callable[[dict[str, Any]], bool] | None = None,
-    ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Deprecated: use Iris.predict() instead."""
-        warnings.warn(
-            "Iris.infer() is deprecated, use Iris.predict() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        new_result = self.predict(
-            drug_ids=drug_ids,
-            disease_id=disease_id,
-            endpoints=endpoints or [],
-        )
-        old_result: dict[str, dict[str, dict[str, Any]]] = {}
-        for drug, diseases in new_result.items():
-            old_result[drug] = {}
-            for _disease, eps in diseases.items():
-                old_result[drug].update(eps)
-        return old_result
-
-    def benchmark(
-        self,
-        strip: dict[str, Any],
-        split: dict[str, Any] | None = None,
-        output_dir: str | None = None,
-    ) -> dict[str, Any]:
-        """Run the bench-full-stack workflow (deprecated in v0.15.2)."""
-        raise NotImplementedError(
-            "bench-full-stack workflow removed in v0.15.2. "
-            "Use 'dargus test-dbase' for single-evidence testing."
-        )
-
     def _empty_pred(self) -> dict[str, Any]:
         return {
             "efficacy_score": None,
@@ -235,18 +191,8 @@ class Iris(BaseAgent):
     def process_query(self, query: str) -> str:
         """Parse NL query via LLM and route to predict/status."""
         import json
-        from pathlib import Path
 
-        import yaml
-
-        from dargus.models.compat import llm_from_config
-
-        config = self.config
-        if not config:
-            config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
-            if config_path.exists():
-                with config_path.open("r", encoding="utf-8") as fh:
-                    config = yaml.safe_load(fh) or {}
+        from dargus.models.reasoning import Message
 
         SYSTEM_PROMPT = """You are Iris, the clinical efficacy prediction assistant for Dargus.
 Available actions: "predict", "status", "clarify", "chat".
@@ -256,8 +202,8 @@ Return ONLY valid JSON:
 {"intent": "clarify", "question": "Which disease are you interested in?"}
 {"intent": "chat", "message": "I can help you predict drug efficacy..."}"""
 
-        backend = llm_from_config(config)
-        if backend is None:
+        llm = self._reasoning_llm
+        if llm is None:
             return (
                 "Iris: No LLM backend configured.\n\n"
                 "Set your API key with:\n"
@@ -269,8 +215,10 @@ Return ONLY valid JSON:
             )
 
         try:
-            raw = backend.complete(SYSTEM_PROMPT + "\n\nUser query: " + query)
-            parsed = json.loads(raw.strip())
+            response = llm.chat(
+                [Message(role="user", content=SYSTEM_PROMPT + "\n\nUser query: " + query)]
+            )
+            parsed = json.loads(response.content.strip())
         except Exception:
             return (
                 "Iris: I had trouble understanding that. Could you rephrase?\n\n"

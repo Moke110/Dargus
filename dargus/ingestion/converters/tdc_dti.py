@@ -44,12 +44,19 @@ class TdcDtiConverter(BaseConverter):
                 readout = float(row[readout_col]) if readout_col else 0.0
             except (ValueError, TypeError):
                 continue
+            entity_id = drug if ":" in drug else f"chembl:{drug}"
             rows.append(
                 {
-                    "drug_id": drug,
-                    "target_id": target,
-                    "assay_type": self.assay_name,
-                    "readout": readout,
+                    "x": {
+                        "type": "drug",
+                        "value": [{"entity_id": entity_id, "entity_label": drug}],
+                    },
+                    "y": {
+                        "type": self.assay_name,
+                        "category": "pk_adme",
+                        "value": [readout],
+                    },
+                    "bg": {"genes": [target]},
                 }
             )
         return rows

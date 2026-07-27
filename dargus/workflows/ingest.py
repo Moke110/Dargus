@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from dargus.runtime.hooks import (
@@ -42,26 +41,6 @@ class IngestionReport:
 
 
 TrainingReport = IngestionReport  # backward compat alias
-
-
-def ingest_report(datadir: str, disease_kb_dir: str | None = None):
-    """Generate an ingestion report without writing to D-Base.
-
-    Backward-compat wrapper.  In the new hook-based ingest this is a
-    thin stub that returns a summary from the source directory.
-    """
-    from dargus.experts.types import IngestionSummary
-
-    ddir = Path(datadir)
-    n_files = len(list(ddir.glob("*.yaml"))) if ddir.is_dir() else 0
-    return IngestionSummary(
-        total_instances=n_files,
-        per_level={},
-        duplicates=0,
-        errors=0,
-        total_instances_before=0,
-        total_instances_after=0,
-    )
 
 
 # ---------------------------------------------------------------------------

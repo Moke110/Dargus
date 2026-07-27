@@ -31,14 +31,21 @@ class TopClinicalConverter(BaseConverter):
             phase = self._normalize_phase(str(row.get("phase", "")))
             for disease in diseases:
                 for drug in drugs:
+                    entity_id = drug if ":" in drug else f"chembl:{drug}"
                     rows.append(
                         {
                             "biological_level": "rct",
-                            "drug_id": drug,
-                            "disease_id": disease,
-                            "endpoint": "trial_success",
-                            "fold_change": label_val,
-                            "phase": phase,
+                            "x": {
+                                "type": "drug",
+                                "value": [{"entity_id": entity_id, "entity_label": drug}],
+                            },
+                            "y": {
+                                "type": "trial_success",
+                                "category": "clinic_efficacy_primary",
+                                "value": [label_val],
+                            },
+                            "bg": {"disease_id": [disease]},
+                            "clinical_design": {"phase": phase} if phase else {},
                         }
                     )
         return rows

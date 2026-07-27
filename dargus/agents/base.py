@@ -70,13 +70,9 @@ class BaseAgent(ABC):
         )
         self._hook_registry: HookRegistry | None = hook_registry
 
-        # Reasoning LLM: DI (ReasoningLLM) takes priority over config-based LLM
-        if reasoning_llm is not None:
-            self._reasoning_llm: ReasoningLLM | None = reasoning_llm
-            self._llm = None  # old-style LLM unused when ReasoningLLM is injected
-        else:
-            self._reasoning_llm = None
-            self._llm = self._init_llm()
+        # Reasoning LLM comes only from DI (the runtime's single model);
+        # without it the agent runs in deterministic stub mode.
+        self._reasoning_llm: ReasoningLLM | None = reasoning_llm
 
         self._validate_permissions()
 
@@ -94,15 +90,6 @@ class BaseAgent(ABC):
                     f"{self.name}: skill '{skill_name}' requires tools {missing} "
                     f"not in PERMITTED_TOOLS={self.PERMITTED_TOOLS}"
                 )
-
-    def _init_llm(self):
-        """Create LLM client from config. Returns None if no LLM configured."""
-        try:
-            from dargus.models.compat import llm_from_config
-
-            return llm_from_config(self.config)
-        except Exception:
-            return None
 
     @staticmethod
     def _load_default_config() -> dict[str, Any]:
@@ -255,12 +242,7 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def _llm_call(self, system_prompt: str, user_prompt: str) -> str:
-        """Send a prompt to the configured LLM. Falls back to deterministic stub.
-
-        When a :class:`ReasoningLLM` is injected (DI path), it is used in
-        preference to the config-based old-style LLM.
-        """
-        # DI path — ReasoningLLM from Phase A
+        """Send a prompt to the injected ReasoningLLM; stub when none is wired."""
         if self._reasoning_llm is not None:
             try:
                 response = self._reasoning_llm.chat(
@@ -274,20 +256,8 @@ class BaseAgent(ABC):
                 logger.exception("%s: ReasoningLLM call failed", self.name)
                 return json.dumps({"error": "llm_call_failed"})
 
-        # Legacy path — config-based LLM
-        if self._llm is None:
-            logger.warning("%s: no LLM configured, using stub", self.name)
-            return self._llm_stub(system_prompt, user_prompt)
-        try:
-            return self._llm.chat(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-            )
-        except Exception:
-            logger.exception("%s: LLM call failed", self.name)
-            return self._llm_stub(system_prompt, user_prompt)
+        logger.warning("%s: no LLM configured, using stub", self.name)
+        return self._llm_stub(system_prompt, user_prompt)
 
     def _llm_stub(self, system_prompt: str, user_prompt: str) -> str:
         """Deterministic stub when no LLM is available."""

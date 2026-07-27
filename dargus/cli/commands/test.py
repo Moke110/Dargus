@@ -96,7 +96,7 @@ def _run_test_dbase() -> None:
     print("  ────────────────────────────────")
     print(f"  Evidence ID:     {result['evidence_id']}")
     print(f"  Biological level: {result.get('biological_level', '?')}")
-    print(f"  Readout type:     {result.get('readout_type', '?')}")
+    print(f"  Y type:           {result.get('y_type', '?')}")
     print(f"  Status:           {result['status']}")
 
 

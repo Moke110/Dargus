@@ -91,14 +91,6 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
     return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
 
 
-def train(*args: Any, **kwargs: Any) -> Any:
-    """Deprecated: use :func:`ingest` instead."""
-    import warnings
-
-    warnings.warn("'train' is deprecated, use 'ingest' instead", DeprecationWarning, stacklevel=2)
-    return ingest(*args, **kwargs)
-
-
 def query_dbase(
     disease_id: str | None = None,
     drug_ids: list[str] | None = None,
@@ -190,47 +182,6 @@ def benchmark(
         "n_test": result.get("n_test", 0),
         "status": result.get("status"),
     }
-
-
-def predict_single_agent(
-    agent_name: str,
-    drug_ids: list[str],
-    disease_id: str,
-) -> dict:
-    """Run a single Iris-* agent standalone (search, llm, analog, bayes, or gnn).
-
-    Args:
-        agent_name: One of ``"iris-search"``, ``"iris-llm"``, ``"iris-analog"``,
-                    ``"iris-bayes"``, ``"iris-gnn"``.
-        drug_ids: Drug identifiers to predict for.
-        disease_id: Target disease identifier.
-
-    Returns:
-        PredictionMatrix for the single agent's output.
-    """
-    from dargus.dbase import DBase
-    from dargus.iris.analog import IrisAnalog
-    from dargus.iris.bayes import IrisBayes
-    from dargus.iris.gnn import IrisGnn
-    from dargus.iris.llm import IrisLlm
-    from dargus.iris.search import IrisSearch
-
-    name = agent_name.lower()
-    mapping: dict[str, Any] = {
-        "iris-search": IrisSearch,
-        "iris-llm": IrisLlm,
-        "iris-analog": IrisAnalog,
-        "iris-bayes": IrisBayes,
-        "iris-gnn": IrisGnn,
-    }
-    agent_cls = mapping.get(name)
-    if agent_cls is None:
-        valid = sorted(mapping.keys())
-        raise ValueError(f"Unknown agent: {agent_name!r}. Valid: {valid}")
-
-    dbase = DBase.global_instance()
-    agent = agent_cls()
-    return agent.predict(dbase, drug_ids or [], disease_id or "", [])
 
 
 def query_expert(expert_name: str) -> dict:
@@ -373,7 +324,7 @@ def set_api_key(provider: str, key: str) -> str:
 
 
 def test_llm_connection(model: str, base_url: str, api_key: str | None = None) -> dict[str, Any]:
-    """Test LLM connection.
+    """Test LLM connection against an OpenAI-compatible endpoint.
 
     Args:
         model: Model name.
@@ -384,12 +335,31 @@ def test_llm_connection(model: str, base_url: str, api_key: str | None = None) -
         Dict with keys: ok, model, latency_ms, error.
     """
     import os
+    import time
 
-    from dargus.models.compat import DargusLLM, check_llm_connection
+    import httpx
 
     key = api_key or os.environ.get("DARGUS_LLM_API_KEY")
-    llm = DargusLLM(model=model, base_url=base_url, api_key=key)
-    return check_llm_connection(llm)
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with just: OK"}],
+        "temperature": 0.0,
+        "max_tokens": 8,
+    }
+
+    t0 = time.monotonic()
+    try:
+        response = httpx.post(url, headers=headers, json=body, timeout=30.0)
+        response.raise_for_status()
+        response.json()["choices"][0]["message"]["content"]
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": True, "model": model, "latency_ms": latency_ms}
+    except Exception as exc:
+        return {"ok": False, "model": model, "error": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +466,7 @@ def test_write_evidence(raw: dict, source_id: str = "test-dbase:cli") -> dict[st
         source_id: Source identifier for metadata.
 
     Returns:
-        Dict with keys: evidence_id, biological_level, readout_type, status.
+        Dict with keys: evidence_id, biological_level, y_type, status.
     """
     from dargus.dbase import DBase
     from dargus.dbase.manager import DBaseManager
@@ -513,7 +483,7 @@ def test_write_evidence(raw: dict, source_id: str = "test-dbase:cli") -> dict[st
     return {
         "evidence_id": evidence["evidence_id"],
         "biological_level": evidence.get("biological_level", "?"),
-        "readout_type": evidence.get("readout_type", "?"),
+        "y_type": (evidence.get("y") or {}).get("type", "?"),
         "status": "added" if wrote is True else "duplicate — skipped",
     }
 

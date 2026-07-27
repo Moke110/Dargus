@@ -125,11 +125,16 @@ def test_manager_build_evidence():
         manager = DBaseManager(dbase)
         record = manager.build_evidence(
             {
-                "drug_id": "chembl:CHEMBL25",
-                "readout_type": "ic50",
-                "readout_category": "binding",
-                "readout_value": 5.0,
-                "readout_unit": "nM",
+                "x": {
+                    "type": "drug",
+                    "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
+                },
+                "y": {
+                    "type": "ic50",
+                    "category": "binding",
+                    "value": [5.0],
+                    "unit": "nM",
+                },
                 "biological_level": "molecular",
             },
             source_metadata={

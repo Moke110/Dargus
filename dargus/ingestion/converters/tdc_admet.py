@@ -24,13 +24,19 @@ class TdcAdmetConverter(BaseConverter):
             drug = str(row.get("Drug", row.get("Drug_ID", "")))
             if not drug:
                 continue
-            result: dict[str, Any] = {
-                "drug_id": drug,
-                "assay_type": self.assay_name,
-                "readout": float(row["Y"]),
-            }
+            entity_id = drug if ":" in drug else f"chembl:{drug}"
+            entity: dict[str, Any] = {"entity_id": entity_id, "entity_label": drug}
             smiles = row.get("SMILES", row.get("smiles", None))
             if pd.notna(smiles):
-                result["smiles"] = str(smiles)
-            rows.append(result)
+                entity["smiles"] = str(smiles)
+            rows.append(
+                {
+                    "x": {"type": "drug", "value": [entity]},
+                    "y": {
+                        "type": self.assay_name,
+                        "category": "pk_adme",
+                        "value": [float(row["Y"])],
+                    },
+                }
+            )
         return rows

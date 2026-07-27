@@ -148,7 +148,7 @@ def _print_troubleshooting(result: dict, base_url: str) -> None:
     if "404" in error:
         print()
         print("  Troubleshooting: HTTP 404 — endpoint not found.")
-        print("  DargusLLM POSTs to:  <base_url>/chat/completions")
+        print("  The client POSTs to:  <base_url>/chat/completions")
         print(f"  Full URL attempted:   {base_url}/chat/completions")
         print("  Make sure base_url points to an OpenAI-compatible API root.")
         print("  Examples:")

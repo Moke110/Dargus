@@ -41,11 +41,11 @@ def test_api_predict_returns_prediction_matrix(minimal_dbase):
         assert 0.0 <= entry["confidence_score"] <= 1.0
 
 
-def test_api_train_returns_training_report(minimal_dbase, tmp_path):
-    """dargus.train() returns an IngestionReport."""
+def test_api_ingest_returns_ingestion_report(minimal_dbase, tmp_path):
+    """dargus.ingest() returns an IngestionReport."""
     datadir = tmp_path / "test_data"
     datadir.mkdir()
-    report = dargus.train(datadir=str(datadir))
+    report = dargus.ingest(datadir=str(datadir))
     assert hasattr(report, "n_records")
     assert hasattr(report, "n_skipped")
     assert hasattr(report, "dbase_size")
@@ -72,28 +72,6 @@ def test_api_benchmark_validates_config(minimal_dbase):
 
     with pytest.raises(ValueError, match="zero records"):
         dargus.benchmark(strip={"source.type": "benchmark"})
-
-
-def test_api_predict_single_agent_valid(minimal_dbase):
-    """dargus.predict_single_agent() runs an Iris-* agent standalone."""
-    import dargus
-
-    result = dargus.predict_single_agent(
-        agent_name="iris-search",
-        drug_ids=["aspirin"],
-        disease_id="headache",
-    )
-    assert isinstance(result, dict)
-
-
-def test_api_predict_single_agent_invalid_name(minimal_dbase):
-    """dargus.predict_single_agent() raises ValueError for unknown agent."""
-    with pytest.raises(ValueError, match="Unknown agent"):
-        dargus.predict_single_agent(
-            agent_name="nonexistent",
-            drug_ids=["aspirin"],
-            disease_id="headache",
-        )
 
 
 def test_api_query_expert_returns_stub():

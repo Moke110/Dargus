@@ -23,14 +23,23 @@ class GdscConverter(BaseConverter):
                 readout = float(row["LN_IC50"])
             except (ValueError, TypeError):
                 continue
+            drug_id = str(row["DRUG_ID"])
+            entity_id = drug_id if ":" in drug_id else f"chembl:{drug_id}"
             rows.append(
                 {
                     "biological_level": "cellular",
-                    "drug_id": str(row["DRUG_ID"]),
+                    "x": {
+                        "type": "drug",
+                        "value": [{"entity_id": entity_id, "entity_label": drug_id}],
+                    },
+                    "y": {
+                        "type": "ln_ic50",
+                        "category": "pk_adme",
+                        "value": [readout],
+                        "assay": "gdsc2_ln_ic50",
+                    },
+                    "bg": {"disease_id": [str(row["TCGA_DESC"]).upper()]},
                     "cell_line_id": str(row["CELL_LINE_NAME"]),
-                    "disease_id": str(row["TCGA_DESC"]).upper(),
-                    "assay_type": "gdsc2_ln_ic50",
-                    "readout": readout,
                 }
             )
         return rows

@@ -124,9 +124,8 @@ class DBaseManager:
         result = validate_evidence(record)
         if not result.ok:
             raise ValueError(f"Validation failed: {'; '.join(result.hard_errors)}")
-
-        if result.soft_warnings:
-            record["needs_curation"] = True
+        for warning in result.soft_warnings:
+            logger.info("soft validation warning for incoming record: %s", warning)
 
         eid = compute_evidence_id(record)
         record["evidence_id"] = eid
@@ -282,39 +281,21 @@ class DBaseManager:
         x_unit = x_raw.get("unit")
         x_vals = x_raw.get("value")
         if x_vals is None:
-            # shorthand: drug_id / drug → single drug data point
-            drug_id = raw_input.get("drug_id") or raw_input.get("drug")
-            if drug_id:
-                entity_id = str(drug_id) if ":" in str(drug_id) else f"chembl:{drug_id}"
-                label = raw_input.get("drug_label") or str(drug_id)
-                x_vals = [{"entity_id": entity_id, "entity_label": label}]
-                x_type = "drug"
-            else:
-                x_vals = []
+            x_vals = []
         evidence["x"] = {"type": x_type, "value": x_vals}
         if x_unit:
             evidence["x"]["unit"] = x_unit
 
         # y axis
         y_raw = raw_input.get("y", {})
-        y_type = y_raw.get("type") or raw_input.get("readout_type", "")
-        y_cat = y_raw.get("category") or raw_input.get("readout_category", "")
-        y_unit = y_raw.get("unit") or raw_input.get("readout_unit")
+        y_type = y_raw.get("type", "")
+        y_cat = y_raw.get("category", "")
+        y_unit = y_raw.get("unit")
         y_to_basis = y_raw.get("to_basis")
         y_vals = y_raw.get("value")
         if y_vals is None:
-            rv = raw_input.get("readout_value")
-            if rv is not None:
-                y_vals = [rv] if not isinstance(rv, list) else rv
-            else:
-                y_vals = []
+            y_vals = []
         y_dispersion = y_raw.get("dispersion") or []
-        # shorthand: flat ci95 lower/upper → y.dispersion entries of type CI95
-        if not y_dispersion:
-            ci_low = raw_input.get("ci95_lower")
-            ci_up = raw_input.get("ci95_upper")
-            if ci_low is not None and ci_up is not None:
-                y_dispersion = [{"type": "CI95", "value": [ci_low, ci_up]}]
         y_n = y_raw.get("n_total") or []
         if not y_n and raw_input.get("n_total") is not None:
             n = raw_input["n_total"]
@@ -324,9 +305,9 @@ class DBaseManager:
             pv = raw_input["p_value"]
             y_pval = [pv] if not isinstance(pv, (list, tuple)) else list(pv)
         y_events = y_raw.get("events") or []
-        y_dir = y_raw.get("direction") or raw_input.get("readout_direction")
+        y_dir = y_raw.get("direction")
         y_eff = y_raw.get("effect")
-        y_assay = y_raw.get("assay") or raw_input.get("assay_platform")
+        y_assay = y_raw.get("assay")
 
         evidence["y"] = {"type": y_type, "category": y_cat, "value": y_vals}
         if y_unit:
@@ -366,16 +347,6 @@ class DBaseManager:
         for key in ("dose_value", "dose_unit", "duration_value", "duration_unit", "phenotype"):
             if key in bg_raw and bg_raw[key] is not None:
                 evidence["bg"][key] = bg_raw[key]
-        # exposure shorthand: raw_input["exposure"] = {"dose": {value, unit}, "duration": {...}}
-        exposure = raw_input.get("exposure") or {}
-        dose = exposure.get("dose") or {}
-        if "dose_value" not in evidence["bg"] and dose.get("value") is not None:
-            evidence["bg"]["dose_value"] = dose["value"]
-            evidence["bg"]["dose_unit"] = dose.get("unit")
-        duration = exposure.get("duration") or {}
-        if "duration_value" not in evidence["bg"] and duration.get("value") is not None:
-            evidence["bg"]["duration_value"] = duration["value"]
-            evidence["bg"]["duration_unit"] = duration.get("unit")
 
         # sample fields
         ec = raw_input.get("experimental_context") or {}
@@ -419,8 +390,8 @@ class DBaseManager:
         result = validate_evidence(evidence)
         if not result.ok:
             raise ValueError(f"build_evidence validation failed: {'; '.join(result.hard_errors)}")
-        if result.soft_warnings:
-            evidence["needs_curation"] = True
+        for warning in result.soft_warnings:
+            logger.info("soft validation warning for built evidence: %s", warning)
 
         evidence["evidence_id"] = compute_evidence_id(evidence)
         return evidence
@@ -513,13 +484,13 @@ class DBaseManager:
         """Extract a field from a three-axis evidence dict."""
         if field_name in record:
             return record[field_name]
-        if field_name in ("drug_id", "x_entity"):
+        if field_name == "x_entity":
             xv = record.get("x", {}).get("value") or []
             if xv:
                 return xv[0].get("entity_id")
-        if field_name in ("endpoint", "y_type"):
+        if field_name == "y_type":
             return record.get("y", {}).get("type")
-        if field_name in ("fold_change", "y_value"):
+        if field_name == "y_value":
             yv = record.get("y", {}).get("value") or []
             return yv[0] if yv else None
         if field_name == "disease_id":

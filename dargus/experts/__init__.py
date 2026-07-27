@@ -1,4 +1,4 @@
-"""Dargus expert system v0.15.0."""
+"""Dargus expert system v1.0.0."""
 
 from dargus.experts.base import Expert
 from dargus.experts.bioinfo import BioinfoExpert
@@ -14,15 +14,6 @@ from dargus.experts.protocol import (
     FinalReport,
     TaskDelegation,
 )
-from dargus.experts.types import (
-    AnalysisReport,
-    CurateResult,
-    ExtractedInstance,
-    ExtractionReport,
-    IngestionResult,
-    IngestionSummary,
-    PlanProposal,
-)
 
 __all__ = [
     "Expert",
@@ -37,11 +28,4 @@ __all__ = [
     "ConfidenceInterval",
     "FinalReport",
     "ExpertContext",
-    "AnalysisReport",
-    "CurateResult",
-    "ExtractedInstance",
-    "ExtractionReport",
-    "IngestionResult",
-    "IngestionSummary",
-    "PlanProposal",
 ]

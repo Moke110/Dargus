@@ -87,6 +87,15 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
     Returns:
         IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
     """
+    if reset:
+        from dargus.dbase import DBase
+        from dargus.dbase.manager import DBaseManager
+
+        dbase = DBase.global_instance()
+        manager = DBaseManager(dbase)
+        manager.reset()
+        logger.info("API: D-Base reset before ingestion")
+
     iris = _create_iris_with_lm()
     return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
 

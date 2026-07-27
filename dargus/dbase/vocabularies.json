@@ -1,6 +1,6 @@
 {
   "biological_level": {
-    "description": "Biological evidence level (11 values). is_clinical=1 for rct,epi.",
+    "description": "Biological evidence level (11 values). is_clinical=1 for rct,epi only.",
     "values": [
       {"value": "molecular", "is_clinical": 0, "is_sim": 0},
       {"value": "molecular-sim", "is_clinical": 0, "is_sim": 1},
@@ -12,7 +12,7 @@
       {"value": "animal-sim", "is_clinical": 0, "is_sim": 1},
       {"value": "rct", "is_clinical": 1, "is_sim": 0},
       {"value": "epi", "is_clinical": 1, "is_sim": 0},
-      {"value": "rct-sim", "is_clinical": 1, "is_sim": 1}
+      {"value": "rct-sim", "is_clinical": 0, "is_sim": 1}
     ]
   },
 
@@ -35,7 +35,7 @@
   },
 
   "y_category": {
-    "description": "Readout/endpoint category (23 values).",
+    "description": "Endpoint category (23 values).",
     "values": [
       "clinic_efficacy_primary",
       "clinic_efficacy_secondary",
@@ -68,35 +68,34 @@
     "values": ["beneficial", "harmful", "neutral"]
   },
 
+  "y_to_basis": {
+    "description": "How y.value relates to its baseline (5 values).",
+    "values": ["absolute", "change", "fold_change", "log2_fold_change", "log10_fold_change"]
+  },
+
   "y_dispersion_type": {
-    "description": "Dispersion measure type (5 values).",
+    "description": "Source-reported dispersion type for y.dispersion (5 values).",
     "values": ["SD", "SEM", "IQR", "CI95", "range"]
   },
 
-  "y_effect_type": {
-    "description": "Effect size type (16 values). log_or/log_rr/log_hr require scale=log.",
+  "y_effect_value_type": {
+    "description": "Normalized effect-measure type for y.effect.value_type (16 values).",
     "values": [
-      "cohens_d", "hedges_g", "smd", "raw_mean_diff", "ratio",
-      "odds_ratio", "risk_ratio", "hazard_ratio",
-      "log_or", "log_rr", "log_hr",
-      "correlation", "AUC", "IC50", "EC50", "other"
+      "OR", "RR", "HR", "RD", "MD", "SMD", "IRR", "NNT", "NNH",
+      "cohens_d", "hedges_g", "glass_delta", "pearson_r",
+      "log_OR", "log_RR", "log_HR"
     ],
-    "log_types": ["log_or", "log_rr", "log_hr"]
+    "log_types": ["log_OR", "log_RR", "log_HR"]
   },
 
-  "y_effect_scale": {
-    "description": "Effect scale (2 values).",
-    "values": ["linear", "log"]
-  },
-
-  "y_basis": {
-    "description": "What the y.value represents (3 values).",
-    "values": ["absolute", "change_from_baseline", "ratio_to_baseline"]
+  "y_effect_dispersion_type": {
+    "description": "Dispersion type for y.effect.dispersion_type (6 values).",
+    "values": ["CI95", "SD", "SEM", "SE", "IQR", "range"]
   },
 
   "source_type": {
-    "description": "Source identifier type (6 values).",
-    "values": ["doi", "pmid", "pmcid", "db_accession", "file_path", "url"]
+    "description": "Source category for sources[*].type (5 values).",
+    "values": ["database", "journal", "simulation_model", "seminar", "book"]
   },
 
   "comparator_type": {
@@ -115,7 +114,7 @@
   },
 
   "population": {
-    "description": "Generic population strata (6 values, extensible).",
+    "description": "Target population strata (5 values).",
     "values": ["adults", "elderly_65_plus", "pediatric", "pregnant", "other"]
   },
 
@@ -130,8 +129,8 @@
   },
 
   "status": {
-    "description": "Record status (3 values).",
-    "values": ["active", "superseded", "retracted"]
+    "description": "Lifecycle status (5 values). Sidecar field, not part of the 50-field record.",
+    "values": ["active", "superseded", "retracted", "holdout-test", "holdout-valid"]
   },
 
   "x_value_control_labels": {
@@ -166,7 +165,7 @@
 
   "count_design_rules": {
     "description": "xy.count constraints by evidence_design.",
-    "descriptive": {"min": 0, "max": 0},
+    "descriptive": {"min": 1, "max": 1},
     "two_arm_comparison": {"min": 2, "max": 2},
     "dose_response_curve": {"min": 3},
     "continuous_trajectory": {"min": 3}

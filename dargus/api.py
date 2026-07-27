@@ -129,7 +129,7 @@ def query_dbase(
     mgr = DBaseManager(dbase)
     return mgr.read_records(
         disease_id=disease_id,
-        drug_id=drug_ids[0] if drug_ids and len(drug_ids) == 1 else None,
+        x_entity=drug_ids[0] if drug_ids and len(drug_ids) == 1 else None,
     )
 
 

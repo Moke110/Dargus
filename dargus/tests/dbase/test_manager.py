@@ -1,4 +1,4 @@
-"""Tests for DBaseManager v0.15.5 — three-axis evidence dict API."""
+"""Tests for DBaseManager v1.0.0 — three-axis evidence dict API (50-field schema)."""
 
 import tempfile
 
@@ -9,33 +9,37 @@ from dargus.dbase.manager import DBaseManager
 
 
 def _make_evidence(**overrides):
-    """Return a valid three-axis evidence dict (descriptive = xy.count 0)."""
+    """Return a valid v1.0.0 three-axis evidence dict (descriptive, xy.count=1)."""
     e = {
         "biological_level": "molecular",
         "evidence_design": "descriptive",
-        "xy": {"count": 0},
-        "x": {"type": "drug", "unit": None, "value": []},
+        "xy": {"count": 1},
+        "x": {
+            "type": "drug",
+            "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
+        },
         "y": {
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
         },
-        "bg": {"disease_id": [], "drugs": [], "genes": [], "model": None},
-        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+        "bg": {"disease_id": [], "drugs": [], "genes": []},
+        "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
+        "source_entry": "10.1234/test",
+        "source_time": "2026-01-01",
     }
     e.update(overrides)
     return e
 
 
 def _make_pairwise(**overrides):
-    """Return a valid three-axis pairwise evidence dict."""
+    """Return a valid v1.0.0 three-axis pairwise evidence dict."""
     e = {
         "biological_level": "rct",
         "evidence_design": "two_arm_comparison",
         "xy": {"count": 2},
         "x": {
             "type": "drug",
-            "unit": None,
             "value": [
                 {
                     "entity_id": "chembl:CHEMBL25",
@@ -50,12 +54,15 @@ def _make_pairwise(**overrides):
             "category": "clinic_efficacy_primary",
             "unit": "%",
             "value": [-0.8, 0.1],
-            "ci95": [{"lower": -1.2, "upper": -0.4}, {"lower": -0.1, "upper": 0.3}],
+            "dispersion": [
+                {"type": "CI95", "value": [-1.2, -0.4]},
+                {"type": "CI95", "value": [-0.1, 0.3]},
+            ],
             "n_total": [500, 500],
             "direction": "beneficial",
-            "effect": {"value": -0.9, "type": "raw_mean_diff"},
+            "effect": {"value": -0.9, "value_type": "MD"},
         },
-        "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": [], "model": None},
+        "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
         "clinical_design": {
             "comparator_type": "placebo",
             "blinding": "double",
@@ -66,7 +73,9 @@ def _make_pairwise(**overrides):
             "study_id": "clinicaltrials:NCT01234567",
         },
         "sex": "mixed",
-        "sources": [{"rank": 1, "type": "pmid", "id": "34567890"}],
+        "sources": [{"rank": 1, "type": "journal", "name": "PMID 34567890"}],
+        "source_entry": "PMID:34567890",
+        "source_time": "2025-11-20",
     }
     e.update(overrides)
     return e
@@ -123,10 +132,14 @@ def test_manager_build_evidence():
                 "readout_unit": "nM",
                 "biological_level": "molecular",
             },
-            source_metadata={"type": "doi", "id": "10.1234/test"},
+            source_metadata={
+                "type": "journal",
+                "name": "10.1234/test",
+                "entry": "10.1234/test",
+                "time": "2026-01-01",
+            },
         )
         assert record["evidence_id"].startswith("ev_")
-        # schema_version is store-level (manifest.json), not per-row in v0.15.5
         assert "schema_version" not in record
         assert "x" in record
         assert "y" in record
@@ -142,17 +155,17 @@ def test_manager_write_record_rejects_invalid():
             manager.write_record(_make_evidence(biological_level="invalid_level"))
 
 
-def test_manager_read_records_with_compat_aliases():
+def test_manager_read_records_by_filters():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
         manager = DBaseManager(dbase)
         manager.write_record(_make_evidence())
-        # compat alias: readout_type -> y_type
-        records = manager.read_records(readout_type="logP")
+        records = manager.read_records(y_type="logP")
         assert len(records) >= 1
-        # compat alias: template_id is ignored (deprecated)
-        records2 = manager.read_records(template_id="ic50")
-        assert len(records2) >= 1  # template_id ignored, returns all
+        records = manager.read_records(x_entity="chembl:CHEMBL25")
+        assert len(records) >= 1
+        records = manager.read_records(level="molecular")
+        assert len(records) >= 1
 
 
 def test_manager_build_evidence_from_three_axis_raw():
@@ -163,21 +176,29 @@ def test_manager_build_evidence_from_three_axis_raw():
         record = manager.build_evidence(
             {
                 "biological_level": "cellular",
-                "xy": {"count": 0},
-                "x": {"type": "drug", "value": []},
+                "xy": {"count": 1},
+                "x": {
+                    "type": "drug",
+                    "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
+                },
                 "y": {
                     "type": "cell_viability",
                     "category": "viability",
                     "value": [0.5],
                     "unit": "fraction",
                 },
-                "bg": {"disease_id": [], "drugs": [], "genes": [], "model": None},
+                "bg": {"disease_id": [], "drugs": [], "genes": []},
             },
-            source_metadata={"type": "pmid", "id": "12345678"},
+            source_metadata={
+                "type": "journal",
+                "name": "PMID 12345678",
+                "entry": "PMID:12345678",
+                "time": "2025-05-01",
+            },
         )
         assert record["evidence_id"].startswith("ev_")
         assert record["y"]["type"] == "cell_viability"
-        assert record["xy"]["count"] == 0
+        assert record["xy"]["count"] == 1
 
 
 def test_manager_duplicate_detection():
@@ -223,3 +244,35 @@ def test_compute_evidence_id_distinct():
         "y": {**_make_evidence()["y"], "type": "clogP"},
     }
     assert compute_evidence_id(e1) != compute_evidence_id(e2)
+
+
+def test_identity_includes_provenance():
+    """source_entry / source_time changes alter the evidence_id."""
+    from dargus.dbase.validate import compute_evidence_id
+
+    e1 = _make_evidence()
+    e2 = {**_make_evidence(), "source_entry": "10.1234/other"}
+    e3 = {**_make_evidence(), "source_time": "2024-06-30"}
+    assert compute_evidence_id(e1) != compute_evidence_id(e2)
+    assert compute_evidence_id(e1) != compute_evidence_id(e3)
+
+
+def test_identity_includes_bg_dose():
+    """bg.dose_value participates in identity per design/2.1.1."""
+    from dargus.dbase.validate import compute_evidence_id
+
+    e1 = _make_evidence()
+    e2 = _make_evidence()
+    e2["bg"] = {**e2["bg"], "dose_value": 10.0, "dose_unit": "mg/kg"}
+    assert compute_evidence_id(e1) != compute_evidence_id(e2)
+
+
+def test_rct_sim_is_non_clinical():
+    """rct-sim derives is_clinical=0 per design/2.1.2."""
+    e = _make_pairwise(biological_level="rct-sim", clinical_design=None)
+    del e["clinical_design"]
+    from dargus.dbase.validate import validate_evidence
+
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+    assert e["is_clinical"] == 0

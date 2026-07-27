@@ -1,6 +1,6 @@
-"""D-Base v0.15.5 three-axis validator.
+"""D-Base v1.0.0 three-axis validator.
 
-Implements spec §6 validation rules on the x/y/bg record shape.
+Implements the design/2.1.x validation rules on the x/y/bg record shape.
 Hard failures reject the write; soft failures set needs_curation=true.
 
 Usage:
@@ -8,8 +8,6 @@ Usage:
     result = validate_evidence(evidence_dict)
     if not result.ok:
         raise ValidationError(result.hard_errors)
-    if result.soft_warnings:
-        evidence["needs_curation"] = True
 """
 
 from __future__ import annotations
@@ -53,7 +51,7 @@ def _vset(name: str) -> frozenset:
 
 
 def _vlog(name: str) -> frozenset:
-    """Return frozenset of log-typed effect types."""
+    """Return frozenset of log-typed effect value types."""
     entry = _v(name)
     if isinstance(entry, dict) and "log_types" in entry:
         return frozenset(entry["log_types"])
@@ -71,7 +69,7 @@ def _clinical_levels() -> frozenset:
     v = _v("biological_level")
     if isinstance(v, dict) and "values" in v:
         return frozenset(item["value"] for item in v["values"] if item.get("is_clinical"))
-    return frozenset({"rct", "epi", "rct-sim"})
+    return frozenset({"rct", "epi"})
 
 
 def _sim_levels() -> frozenset:
@@ -126,7 +124,7 @@ class ValidationResult:
 
 
 def validate_evidence(evidence: dict) -> ValidationResult:
-    """Run all §6 validation rules on a three-axis evidence record."""
+    """Run all validation rules on a three-axis evidence record."""
     result = ValidationResult()
 
     _rule_string_nulls(evidence, result)
@@ -137,24 +135,23 @@ def validate_evidence(evidence: dict) -> ValidationResult:
     _rule_y_axis(evidence, result)
     _rule_bg(evidence, result)
     _rule_level_field_groups(evidence, result)
-    _rule_simulation_provenance(evidence, result)
     _rule_curies(evidence, result)
 
     return result
 
 
 def compute_evidence_id(evidence: dict) -> str:
-    """Compute content-addressed evidence_id (§5)."""
+    """Compute content-addressed evidence_id from the identity fields."""
     identity = _build_identity(evidence)
     canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "ev_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-# ── rule: string nulls (§6.5 R-stringnull) ──────────────────────────────────
+# ── rule: string nulls ───────────────────────────────────────────────────────
 
 
 def _rule_string_nulls(evidence: dict, result: ValidationResult) -> None:
-    string_nulls = frozenset({"null", "NA", "None", "nan", "N/A"})
+    string_nulls = frozenset(_vset("string_nulls") or {"null", "NA", "None", "nan", "N/A"})
 
     def _scan(obj, path="root"):
         if isinstance(obj, str):
@@ -170,7 +167,7 @@ def _rule_string_nulls(evidence: dict, result: ValidationResult) -> None:
     _scan(evidence)
 
 
-# ── rule: biological_level (§6.1 R-level, R-design) ────────────────────────
+# ── rule: biological_level ───────────────────────────────────────────────────
 
 
 def _rule_biological_level(evidence: dict, result: ValidationResult) -> None:
@@ -180,88 +177,73 @@ def _rule_biological_level(evidence: dict, result: ValidationResult) -> None:
         result.hard_errors.append(f"biological_level '{level}' not in {sorted(bls)}")
         return
 
-    # derive is_clinical (override any user value)
+    # derive is_clinical (override any user value); rct-sim is non-clinical
     evidence["is_clinical"] = 1 if level in _clinical_levels() else 0
 
-    # R-design: evidence_design must be in vocab
     ed = evidence.get("evidence_design")
     designs = _vset("evidence_design")
     if ed and ed not in designs:
         result.hard_errors.append(f"evidence_design '{ed}' not in {sorted(designs)}")
 
 
-# ── rule: sources (§6.5 R-sources) ──────────────────────────────────────────
+# ── rule: sources / source_entry / source_time ───────────────────────────────
 
 
 def _rule_sources(evidence: dict, result: ValidationResult) -> None:
     sources = evidence.get("sources", [])
     if not sources:
         result.hard_errors.append("sources is empty")
-        return
+    else:
+        rank1_count = sum(1 for s in sources if s.get("rank") == 1)
+        if rank1_count != 1:
+            result.hard_errors.append(f"sources must have exactly one rank=1, got {rank1_count}")
 
-    rank1_count = sum(1 for s in sources if s.get("rank") == 1)
-    if rank1_count != 1:
-        result.hard_errors.append(f"sources must have exactly one rank=1, got {rank1_count}")
+        source_types = _vset("source_type")
+        for i, s in enumerate(sources):
+            stype = s.get("type", "")
+            if stype not in source_types:
+                result.hard_errors.append(
+                    f"sources[{i}].type '{stype}' not in {sorted(source_types)}"
+                )
+            if not s.get("name"):
+                result.hard_errors.append(f"sources[{i}].name is empty")
 
-    source_types = _vset("source_type")
-    for i, s in enumerate(sources):
-        stype = s.get("type", "")
-        if stype not in source_types:
-            result.hard_errors.append(f"sources[{i}].type '{stype}' not in {sorted(source_types)}")
-        sid = s.get("id", "")
-        if not sid:
-            result.hard_errors.append(f"sources[{i}].id is empty")
-        else:
-            _soft_validate_source_id(stype, sid, i, result)
-
-
-def _soft_validate_source_id(stype: str, sid: str, idx: int, result: ValidationResult) -> None:
-    patterns = {
-        "doi": re.compile(r"^10\.\S+$"),
-        "pmid": re.compile(r"^\d+$"),
-        "pmcid": re.compile(r"^PMC\d+$"),
-        "db_accession": re.compile(r"^[a-z_]+:.+$"),
-    }
-    if stype in patterns and not patterns[stype].match(sid):
-        result.soft_warnings.append(f"sources[{idx}].id '{sid}' format mismatch for type {stype}")
+    if not evidence.get("source_entry"):
+        result.hard_errors.append("source_entry is required")
+    if not evidence.get("source_time"):
+        result.hard_errors.append("source_time is required")
 
 
-# ── rule: xy shape (§6.1 structural + §6.1 R-count-design) ──────────────────
+# ── rule: xy shape ───────────────────────────────────────────────────────────
 
 
 def _rule_xy_shape(evidence: dict, result: ValidationResult) -> None:
     xy = evidence.get("xy") or {}
-    count = xy.get("count", 0)
-    if not isinstance(count, int) or count < 0:
-        result.hard_errors.append(f"xy.count must be int >= 0, got {count}")
+    count = xy.get("count")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        result.hard_errors.append(f"xy.count must be int >= 1, got {count}")
         return
 
-    # R-xcount: len(x.value) == xy.count
     xv = evidence.get("x", {}).get("value") or []
-    if len(xv) != count and not (count == 0 and xv == []):
+    if len(xv) != count:
         result.hard_errors.append(f"len(x.value)={len(xv)} != xy.count={count} (R-xcount)")
 
-    # R-ycount: len(y.value) == (1 if count==0 else count)
-    yv = evidence.get("y", {}).get("value") or []
-    expected_y_len = 1 if count == 0 else count
-    if len(yv) != expected_y_len:
-        result.hard_errors.append(f"len(y.value)={len(yv)} != {expected_y_len} (R-ycount)")
-
-    # R-yarrays: parallel arrays must be [] or len==count
     y = evidence.get("y") or {}
-    for arr_key in ("ci95", "dispersion", "n_total", "events", "p_value"):
+    yv = y.get("value") or []
+    if len(yv) != count:
+        result.hard_errors.append(f"len(y.value)={len(yv)} != xy.count={count} (R-ycount)")
+
+    for arr_key in ("dispersion", "n_total", "events", "p_value"):
         arr = y.get(arr_key)
         if arr is not None and len(arr) not in (0, count):
             result.hard_errors.append(
                 f"y.{arr_key} length {len(arr)} != xy.count={count} (R-yarrays)"
             )
 
-    # R-yvalue-num: every y.value element is a real number
     for i, v in enumerate(yv):
         if not isinstance(v, (int, float)) or isinstance(v, bool):
             result.hard_errors.append(f"y.value[{i}] = {v!r} is not a real number (R-yvalue-num)")
 
-    # R-count-design: count ↔ design consistency
     design = evidence.get("evidence_design", "")
     count_rules = _v("count_design_rules") if isinstance(_v("count_design_rules"), dict) else {}
     rules = count_rules.get(design, {})
@@ -277,7 +259,7 @@ def _rule_xy_shape(evidence: dict, result: ValidationResult) -> None:
         )
 
 
-# ── rule: x axis (§6.2) ─────────────────────────────────────────────────────
+# ── rule: x axis ─────────────────────────────────────────────────────────────
 
 
 def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
@@ -286,19 +268,18 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
     xvals = x.get("value") or []
     x_types = _vset("x_type")
 
-    # R-xtype
     if xtype not in x_types:
         result.hard_errors.append(f"x.type '{xtype}' not in {sorted(x_types)}")
         return
 
-    # R-xunit: x.unit only for numeric x-types
     xunit = x.get("unit")
+    if xtype in ("concentration", "time") and not xunit:
+        result.hard_errors.append(f"x.unit required for x.type={xtype}")
     if xunit and xtype not in ("concentration", "time"):
         result.hard_errors.append(
             f"x.unit '{xunit}' set but x.type={xtype} (only for concentration/time)"
         )
 
-    # Validate each x.value item
     control_labels = _vset("x_value_control_labels")
     alterations = _vset("alteration")
     design = evidence.get("evidence_design", "")
@@ -308,7 +289,6 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
             eid = item.get("entity_id")
             elabel = item.get("entity_label")
             if not eid and not elabel:
-                # combination: at least one component needs entity_id/entity_label
                 components = item.get("components") or []
                 if xtype == "combination":
                     has_id = any(c.get("entity_id") or c.get("entity_label") for c in components)
@@ -321,7 +301,6 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
                         f"x.value[{i}]: entity_id and entity_label both empty (R-xtype-entity)"
                     )
 
-            # R-alteration: only for gene x-type or bg.genes
             alt = item.get("alteration")
             if alt is not None:
                 if xtype != "gene":
@@ -340,15 +319,11 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
                     f"x.value[{i}].x must be numeric for x.type={xtype} (R-xtype-num)"
                 )
 
-    # R-xpairwise: two_arm_comparison must have x.value[0] != x.value[1]
     if design == "two_arm_comparison" and len(xvals) >= 2:
         if xvals[0] == xvals[1]:
             result.hard_errors.append(
                 "x.value[0] == x.value[1] but evidence_design=two_arm_comparison (R-xpairwise)"
             )
-
-    # R-xcontrol: for two_arm_comparison, x.value[1] must be control
-    if design == "two_arm_comparison" and len(xvals) >= 2:
         ctrl = xvals[1]
         if ctrl.get("entity_id") is not None:
             result.hard_errors.append(
@@ -360,7 +335,6 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
                 f"not in sanctioned set {sorted(control_labels)} (R-xcontrol soft)"
             )
 
-    # R-xmonotonic (soft): concentration/time SHOULD be strictly monotonic
     if xtype in ("concentration", "time") and len(xvals) >= 2:
         nums = [item.get("x") for item in xvals if isinstance(item.get("x"), (int, float))]
         if len(nums) == len(xvals):
@@ -372,7 +346,7 @@ def _rule_x_axis(evidence: dict, result: ValidationResult) -> None:
                 )
 
 
-# ── rule: y axis (§6.3) ─────────────────────────────────────────────────────
+# ── rule: y axis ─────────────────────────────────────────────────────────────
 
 
 def _rule_y_axis(evidence: dict, result: ValidationResult) -> None:
@@ -381,14 +355,12 @@ def _rule_y_axis(evidence: dict, result: ValidationResult) -> None:
     ytype = y.get("type", "")
     design = evidence.get("evidence_design", "")
 
-    # R-ycat
     y_categories = _vset("y_category")
     if ycat not in y_categories:
         result.hard_errors.append(f"y.category '{ycat}' not in {sorted(y_categories)}")
     if not ytype or not isinstance(ytype, str):
         result.hard_errors.append("y.type must be non-empty string")
 
-    # R-ydir: required for comparative designs
     ydir = y.get("direction")
     comparative = ("two_arm_comparison", "observational_association")
     if design in comparative and not ydir:
@@ -396,55 +368,44 @@ def _rule_y_axis(evidence: dict, result: ValidationResult) -> None:
     if ydir and ydir not in _vset("y_direction"):
         result.hard_errors.append(f"y.direction '{ydir}' not in {sorted(_vset('y_direction'))}")
 
-    # R-effect
+    # y.effect: {value, value_type, dispersion, dispersion_type}
     effect = y.get("effect") or {}
     if effect:
-        if "value" not in effect or "type" not in effect:
-            result.hard_errors.append("y.effect must have 'value' and 'type'")
+        if "value" not in effect or "value_type" not in effect:
+            result.hard_errors.append("y.effect must have 'value' and 'value_type'")
         else:
-            etype = effect.get("type", "")
-            if etype not in _vset("y_effect_type"):
+            vtype = effect.get("value_type", "")
+            if vtype not in _vset("y_effect_value_type"):
                 result.hard_errors.append(
-                    f"y.effect.type '{etype}' not in {sorted(_vset('y_effect_type'))}"
+                    f"y.effect.value_type '{vtype}' not in {sorted(_vset('y_effect_value_type'))}"
                 )
-            escale = effect.get("scale", "linear")
-            if escale not in _vset("y_effect_scale"):
+            dtype = effect.get("dispersion_type")
+            if dtype is not None and dtype not in _vset("y_effect_dispersion_type"):
                 result.hard_errors.append(
-                    f"y.effect.scale '{escale}' not in {sorted(_vset('y_effect_scale'))}"
+                    f"y.effect.dispersion_type '{dtype}' "
+                    f"not in {sorted(_vset('y_effect_dispersion_type'))}"
                 )
-            log_types = _vlog("y_effect_type")
-            if etype in log_types and escale != "log":
-                result.hard_errors.append(
-                    f"y.effect.type '{etype}' requires scale='log', got '{escale}'"
-                )
-            eff_ci = effect.get("ci95") or {}
-            if eff_ci:
-                low = eff_ci.get("lower")
-                up = eff_ci.get("upper")
-                if low is not None and up is not None and low > up:
-                    result.hard_errors.append(f"y.effect.ci95 lower {low} > upper {up}")
+            if vtype in _vlog("y_effect_value_type"):
+                # log measures: value on log scale; only a soft sanity note possible
+                pass
 
-    # R-ci: per-point CI validation
-    yvals = y.get("value") or []
-    for i, ci in enumerate(y.get("ci95") or []):
-        if not ci:
+    # y.dispersion entries: {type, value}
+    for i, disp in enumerate(y.get("dispersion") or []):
+        if not isinstance(disp, dict):
+            result.hard_errors.append(f"y.dispersion[{i}] must be an object")
             continue
-        low = ci.get("lower")
-        up = ci.get("upper")
-        if low is not None and up is not None and low > up:
-            result.hard_errors.append(f"y.ci95[{i}] lower {low} > upper {up}")
-        # soft: point should be within CI
-        if i < len(yvals) and low is not None and up is not None:
-            pt = yvals[i]
-            if not (low <= pt <= up):
-                result.soft_warnings.append(f"y.ci95[{i}] point {pt} not in [{low}, {up}]")
+        dt = disp.get("type")
+        if dt not in _vset("y_dispersion_type"):
+            result.hard_errors.append(
+                f"y.dispersion[{i}].type '{dt}' not in {sorted(_vset('y_dispersion_type'))}"
+            )
+        if "value" not in disp:
+            result.hard_errors.append(f"y.dispersion[{i}].value missing")
 
-    # R-pval: each in [0,1]
     for i, pv in enumerate(y.get("p_value") or []):
         if pv is not None and not (0 <= pv <= 1):
             result.hard_errors.append(f"y.p_value[{i}]={pv} not in [0,1]")
 
-    # R-events: 0 <= events[i] <= n_total[i]
     events = y.get("events") or []
     n_totals = y.get("n_total") or []
     for i, ev in enumerate(events):
@@ -453,10 +414,9 @@ def _rule_y_axis(evidence: dict, result: ValidationResult) -> None:
             if n is not None and not (0 <= ev <= n):
                 result.hard_errors.append(f"y.events[{i}]={ev} not in [0, n_total={n}]")
 
-    # R-ybasis: if present, must be valid
-    ybasis = y.get("basis")
-    if ybasis and ybasis not in _vset("y_basis"):
-        result.hard_errors.append(f"y.basis '{ybasis}' not in {sorted(_vset('y_basis'))}")
+    to_basis = y.get("to_basis")
+    if to_basis and to_basis not in _vset("y_to_basis"):
+        result.hard_errors.append(f"y.to_basis '{to_basis}' not in {sorted(_vset('y_to_basis'))}")
 
 
 # ── rule: bg axis ────────────────────────────────────────────────────────────
@@ -467,13 +427,11 @@ def _rule_bg(evidence: dict, result: ValidationResult) -> None:
     level = evidence.get("biological_level", "")
     clinical = _clinical_levels()
 
-    # clinical levels MUST have non-empty bg.disease_id
     if level in clinical:
         dids = bg.get("disease_id") or []
         if not dids:
-            result.hard_errors.append(f"bg.disease_id required for biological_level={level} (§6.4)")
+            result.hard_errors.append(f"bg.disease_id required for biological_level={level}")
 
-    # validate bg.genes[*].alteration
     alterations = _vset("alteration")
     for i, gene in enumerate(bg.get("genes") or []):
         alt = gene.get("alteration")
@@ -482,88 +440,53 @@ def _rule_bg(evidence: dict, result: ValidationResult) -> None:
                 f"bg.genes[{i}].alteration '{alt}' not in {sorted(alterations)}"
             )
 
+    dose_value = bg.get("dose_value")
+    dose_unit = bg.get("dose_unit")
+    if (dose_value is None) != (dose_unit is None):
+        result.soft_warnings.append("bg.dose_value and bg.dose_unit should be set together")
+    duration_value = bg.get("duration_value")
+    duration_unit = bg.get("duration_unit")
+    if (duration_value is None) != (duration_unit is None):
+        result.soft_warnings.append("bg.duration_value and bg.duration_unit should be set together")
 
-# ── rule: level ↔ field groups (§6.4) ───────────────────────────────────────
+
+# ── rule: level ↔ field groups ───────────────────────────────────────────────
 
 
 def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
     level = evidence.get("biological_level", "")
     clinical = _clinical_levels()
-    non_clinical = _biological_levels() - clinical
+    y = evidence.get("y") or {}
 
-    # clinical_design only for clinical levels
     if evidence.get("clinical_design") and level not in clinical:
         result.hard_errors.append(
             f"clinical_design present but biological_level={level} (only for clinical)"
         )
 
-    # bg.model / bg.genes / cell_line_id / cell_type / assay_platform / exvivo_platform
-    # disallowed for clinical levels
     if level in clinical:
         bg = evidence.get("bg") or {}
         if bg.get("model"):
             result.hard_errors.append(
                 f"bg.model present but biological_level={level} (only for non-clinical)"
             )
-        if bg.get("genes"):
-            result.hard_errors.append(
-                f"bg.genes present but biological_level={level} (only for non-clinical)"
-            )
         if evidence.get("cell_line_id"):
             result.hard_errors.append(
                 f"cell_line_id present but biological_level={level} (only for non-clinical)"
             )
-        if evidence.get("cell_type"):
-            result.hard_errors.append(
-                f"cell_type present but biological_level={level} (only for non-clinical)"
-            )
-        if evidence.get("assay_platform"):
-            result.hard_errors.append(
-                f"assay_platform present but biological_level={level} (only for non-clinical)"
-            )
-        if evidence.get("exvivo_platform"):
-            result.hard_errors.append(
-                f"exvivo_platform present but biological_level={level} (only for non-clinical)"
-            )
 
-    # non-clinical levels MUST NOT carry clinical_design
-    if level in non_clinical and evidence.get("clinical_design"):
-        result.hard_errors.append(
-            f"clinical_design present but biological_level={level} (only for clinical)"
-        )
+    if level and level not in clinical and not y.get("assay"):
+        result.soft_warnings.append(f"y.assay recommended for non-clinical level {level}")
 
-    # exvivo_platform only for exvivo/exvivo-sim
     exvivo_levels = {"exvivo", "exvivo-sim"}
+    if level in exvivo_levels and not evidence.get("exvivo_platform"):
+        result.hard_errors.append(f"exvivo_platform required for biological_level={level}")
     if evidence.get("exvivo_platform") and level not in exvivo_levels:
         result.hard_errors.append(
             f"exvivo_platform present but biological_level={level} (only for exvivo/exvivo-sim)"
         )
 
 
-# ── rule: simulation provenance (§6.4) ──────────────────────────────────────
-
-
-def _rule_simulation_provenance(evidence: dict, result: ValidationResult) -> None:
-    level = evidence.get("biological_level", "")
-    sim_levels = _sim_levels()
-    sp = evidence.get("simulation_provenance")
-
-    if sp and level not in sim_levels:
-        result.hard_errors.append(
-            f"simulation_provenance present but biological_level={level} (only for -sim levels)"
-        )
-
-    if level in sim_levels:
-        if not sp:
-            result.hard_errors.append(f"simulation_provenance required for -sim level {level}")
-        else:
-            if not sp.get("sim_model"):
-                result.hard_errors.append("simulation_provenance.sim_model required for -sim level")
-            if not sp.get("version"):
-                result.hard_errors.append("simulation_provenance.version required for -sim level")
-
-
-# ── rule: CURIE validation (§6.5 R-curie) ───────────────────────────────────
+# ── rule: CURIE validation ───────────────────────────────────────────────────
 
 
 def _rule_curies(evidence: dict, result: ValidationResult) -> None:
@@ -605,26 +528,37 @@ def _rule_curies(evidence: dict, result: ValidationResult) -> None:
     _scan(evidence)
 
 
-# ── evidence_id identity (§5) ────────────────────────────────────────────────
+# ── evidence_id identity ─────────────────────────────────────────────────────
 
 
 def _build_identity(evidence: dict) -> dict:
-    """Build the identity object for evidence_id computation (§5).
+    """Build the identity object for evidence_id computation.
 
-    Identity keys:
-      biological_level, x.type, x.value (normalized), y.type,
-      bg.disease_id (sorted), clinical_design subset,
-      cell_line_id, model_organism, strain, sex, exposure (dose_value + unit),
-      experiment_group_id, source_rank1 id.
+    Identity fields (design/2.1.1 in_id = Y):
+      biological_level, sources (sorted), source_entry, source_time,
+      x.type, x.value (normalized), y.type,
+      bg.disease_id (sorted), bg.dose_value, bg.dose_unit,
+      cell_line_id, model_organism, strain, sex,
+      clinical_design.{comparator_type, phase, population, study_id},
+      related_evidence_id (sorted).
     """
     identity: dict = {}
     identity["biological_level"] = evidence.get("biological_level")
+
+    # provenance identity
+    sources = evidence.get("sources") or []
+    norm_sources = sorted(
+        ({"rank": s.get("rank"), "type": s.get("type"), "name": s.get("name")} for s in sources),
+        key=lambda s: json.dumps(s, sort_keys=True),
+    )
+    identity["sources"] = norm_sources
+    identity["source_entry"] = evidence.get("source_entry")
+    identity["source_time"] = evidence.get("source_time")
 
     # x axis identity
     x = evidence.get("x") or {}
     identity["x_type"] = x.get("type")
 
-    # x.value normalized for identity
     xvals = x.get("value") or []
     identity_x = []
     control_labels = _vset("x_value_control_labels")
@@ -644,17 +578,14 @@ def _build_identity(evidence: dict) -> dict:
         elif elabel:
             ident_item["entity_label"] = elabel
 
-        # gene alteration
         alt = item.get("alteration")
         if xtype == "gene" and alt:
             ident_item["alteration"] = alt
 
-        # dose
         dose = item.get("dose")
         if dose and isinstance(dose, dict):
             ident_item["dose"] = {"v": dose.get("v"), "u": dose.get("u")}
 
-        # combination components
         components = item.get("components")
         if xtype == "combination" and components:
             comp_ident = []
@@ -676,11 +607,13 @@ def _build_identity(evidence: dict) -> dict:
     # y axis identity (only y.type)
     identity["y_type"] = (evidence.get("y") or {}).get("type")
 
-    # bg.disease_id (sorted)
+    # bg identity
     bg = evidence.get("bg") or {}
     dids = bg.get("disease_id") or []
     if dids:
         identity["bg.disease_id"] = sorted(dids)
+    if bg.get("dose_value") is not None:
+        identity["bg.dose"] = [bg["dose_value"], bg.get("dose_unit")]
 
     # clinical_design subset
     cd = evidence.get("clinical_design") or {}
@@ -696,22 +629,9 @@ def _build_identity(evidence: dict) -> dict:
         if k in evidence and evidence[k] is not None:
             identity[k] = evidence[k]
 
-    # exposure
-    if evidence.get("exposure_dose_value") is not None:
-        identity["exposure"] = [
-            evidence["exposure_dose_value"],
-            evidence.get("exposure_dose_unit"),
-        ]
-
-    # experiment_group_id
-    egid = evidence.get("experiment_group_id")
-    if egid:
-        identity["experiment_group_id"] = egid
-
-    # source_rank1
-    for s in evidence.get("sources", []):
-        if s.get("rank") == 1:
-            identity["source_rank1"] = s.get("id", "")
-            break
+    # cross-record links
+    rel = evidence.get("related_evidence_id") or []
+    if rel:
+        identity["related_evidence_id"] = sorted(rel)
 
     return identity

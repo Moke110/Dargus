@@ -152,9 +152,9 @@ class DBase:
 
     def query_parquet(
         self,
-        readout_type: str | None = None,
-        readout_category: str | None = None,
-        intervention_id: str | None = None,
+        y_type: str | None = None,
+        y_category: str | None = None,
+        x_entity: str | None = None,
         disease_id: str | None = None,
         biological_level: str | None = None,
         evidence_design: str | None = None,
@@ -164,9 +164,9 @@ class DBase:
             import pandas as pd
         except ImportError:
             return self._query_shards(
-                readout_type,
-                readout_category,
-                intervention_id,
+                y_type,
+                y_category,
+                x_entity,
                 disease_id,
                 biological_level,
                 evidence_design,
@@ -180,25 +180,24 @@ class DBase:
 
         df = pd.read_parquet(self.parquet_path)
 
-        # three-axis: y.type (new) or readout_type (old)
-        if readout_type:
+        if y_type:
             df = df[
                 df.apply(
-                    lambda r: _get_y_type(r) == readout_type,
+                    lambda r: _get_y_type(r) == y_type,
                     axis=1,
                 )
             ]
-        if readout_category:
+        if y_category:
             df = df[
                 df.apply(
-                    lambda r: _get_y_category(r) == readout_category,
+                    lambda r: _get_y_category(r) == y_category,
                     axis=1,
                 )
             ]
-        if intervention_id:
+        if x_entity:
             df = df[
                 df.apply(
-                    lambda r: _match_x_entity(r, intervention_id),
+                    lambda r: _match_x_entity(r, x_entity),
                     axis=1,
                 )
             ]
@@ -217,20 +216,20 @@ class DBase:
 
     def _query_shards(
         self,
-        readout_type: str | None = None,
-        readout_category: str | None = None,
-        intervention_id: str | None = None,
+        y_type: str | None = None,
+        y_category: str | None = None,
+        x_entity: str | None = None,
         disease_id: str | None = None,
         biological_level: str | None = None,
         evidence_design: str | None = None,
     ) -> list[dict]:
         results = self.read_shards()
-        if readout_type:
-            results = [r for r in results if _get_y_type(r) == readout_type]
-        if readout_category:
-            results = [r for r in results if _get_y_category(r) == readout_category]
-        if intervention_id:
-            results = [r for r in results if _match_x_entity(r, intervention_id)]
+        if y_type:
+            results = [r for r in results if _get_y_type(r) == y_type]
+        if y_category:
+            results = [r for r in results if _get_y_category(r) == y_category]
+        if x_entity:
+            results = [r for r in results if _match_x_entity(r, x_entity)]
         if disease_id:
             results = [r for r in results if _match_disease_id(r, disease_id)]
         if biological_level:
@@ -258,19 +257,17 @@ class DBase:
 
 
 def _get_y_type(r: dict) -> str | None:
-    """Resolve y.type from three-axis or legacy record."""
     y = r.get("y")
     if isinstance(y, dict):
         return y.get("type")
-    return r.get("readout_type")
+    return None
 
 
 def _get_y_category(r: dict) -> str | None:
-    """Resolve y.category from three-axis or legacy record."""
     y = r.get("y")
     if isinstance(y, dict):
         return y.get("category")
-    return r.get("readout_category")
+    return None
 
 
 def _match_x_entity(r: dict, entity_id: str) -> bool:
@@ -281,10 +278,6 @@ def _match_x_entity(r: dict, entity_id: str) -> bool:
             if isinstance(item, dict):
                 if item.get("entity_id") == entity_id or item.get("entity_label") == entity_id:
                     return True
-    # legacy fallback
-    for iv in r.get("interventions") or []:
-        if iv.get("entity_id") == entity_id or iv.get("entity_label") == entity_id:
-            return True
     return False
 
 
@@ -292,8 +285,5 @@ def _match_disease_id(r: dict, disease_id: str) -> bool:
     """Check if record's bg.disease_id list contains the given disease_id."""
     bg = r.get("bg")
     if isinstance(bg, dict):
-        dids = bg.get("disease_id") or []
-        if disease_id in dids:
-            return True
-    # legacy fallback
-    return r.get("disease_id") == disease_id
+        return disease_id in (bg.get("disease_id") or [])
+    return False

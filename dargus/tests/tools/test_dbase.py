@@ -35,19 +35,24 @@ class _StubEmbeddingBackend(EmbeddingBackend):
 
 
 def _make_evidence(**overrides):
-    """Return a valid three-axis evidence dict (descriptive)."""
+    """Return a valid v1.0.0 three-axis evidence dict (descriptive, xy.count=1)."""
     e = {
         "biological_level": "molecular",
         "evidence_design": "descriptive",
-        "xy": {"count": 0},
-        "x": {"type": "drug", "unit": None, "value": []},
+        "xy": {"count": 1},
+        "x": {
+            "type": "drug",
+            "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
+        },
         "y": {
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
         },
-        "bg": {"disease_id": [], "drugs": [], "genes": [], "model": None},
-        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+        "bg": {"disease_id": [], "drugs": [], "genes": []},
+        "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
+        "source_entry": "10.1234/test",
+        "source_time": "2026-01-01",
     }
     e.update(overrides)
     return e
@@ -264,22 +269,14 @@ def test_manager_passing_none_embedding_model_uses_default():
 
 
 # ---------------------------------------------------------------------------
-# Backward compatibility — old DBaseManager tests still pass
+# DBaseManager without injected embedding model
 # ---------------------------------------------------------------------------
-
-
-def test_manager_write_record_still_works():
-    with tempfile.TemporaryDirectory() as tmp:
-        dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
-        result = manager.write_record(_make_evidence())
-        assert result is True
 
 
 def test_manager_init_without_embedding_model_still_works():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
         manager = DBaseManager(dbase)
-        # Old constructor signature (DBase only) must still work
+        # Constructor with DBase only must still work; embedding is lazy
         assert manager.dbase is not None
         assert manager._embedding_model is None

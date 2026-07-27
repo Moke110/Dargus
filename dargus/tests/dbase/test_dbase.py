@@ -1,4 +1,4 @@
-"""Tests for DBase v0.15.5 — shard JSONL evidence store with three-axis records."""
+"""Tests for DBase v1.0.0 — shard JSONL evidence store with three-axis records."""
 
 import tempfile
 
@@ -7,19 +7,24 @@ from dargus.dbase.validate import compute_evidence_id, validate_evidence
 
 
 def _make_evidence(**overrides):
-    """Return a valid three-axis evidence dict (descriptive = xy.count 0)."""
+    """Return a valid v1.0.0 three-axis evidence dict (descriptive, xy.count=1)."""
     e = {
         "biological_level": "molecular",
         "evidence_design": "descriptive",
-        "xy": {"count": 0},
-        "x": {"type": "drug", "unit": None, "value": []},
+        "xy": {"count": 1},
+        "x": {
+            "type": "drug",
+            "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
+        },
         "y": {
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
         },
-        "bg": {"disease_id": [], "drugs": [], "genes": [], "model": None},
-        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+        "bg": {"disease_id": [], "drugs": [], "genes": []},
+        "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
+        "source_entry": "10.1234/test",
+        "source_time": "2026-01-01",
     }
     e.update(overrides)
     return e
@@ -55,7 +60,7 @@ def test_dbase_clear():
 
 def test_validate_evidence_ok():
     result = validate_evidence(_make_evidence())
-    assert result.ok
+    assert result.ok, result.hard_errors
 
 
 def test_validate_evidence_rejects_empty_sources():
@@ -68,15 +73,24 @@ def test_validate_evidence_rejects_invalid_level():
     assert not result.ok
 
 
+def test_validate_requires_source_entry_and_time():
+    e = _make_evidence()
+    del e["source_entry"]
+    del e["source_time"]
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("source_entry" in err for err in result.hard_errors)
+    assert any("source_time" in err for err in result.hard_errors)
+
+
 def test_evidence_id_stable():
-    """Evidence_id is content-addressed and stable (§5)."""
+    """Evidence_id is content-addressed and stable."""
     e = {
         "biological_level": "rct",
         "evidence_design": "two_arm_comparison",
         "xy": {"count": 2},
         "x": {
             "type": "drug",
-            "unit": None,
             "value": [
                 {"entity_id": "chembl:CHEMBL25", "entity_label": "test_drug"},
                 {"entity_id": None, "entity_label": "placebo"},
@@ -89,30 +103,24 @@ def test_evidence_id_stable():
             "value": [-5.0, 0.5],
             "direction": "beneficial",
         },
-        "bg": {"disease_id": ["mondo:0005180"], "drugs": [], "genes": [], "model": None},
+        "bg": {"disease_id": ["mondo:0005180"], "drugs": [], "genes": []},
         "clinical_design": {
             "comparator_type": "placebo",
             "phase": "phase_3",
             "population": "adults",
             "study_id": "clinicaltrials:NCT01234567",
         },
-        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
+        "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
+        "source_entry": "10.1234/test",
+        "source_time": "2026-01-01",
     }
     assert compute_evidence_id(e) == compute_evidence_id(e)
     assert compute_evidence_id(e).startswith("ev_")
 
 
 def test_evidence_id_distinct_for_different_y_type():
-    e1 = {
-        "biological_level": "molecular",
-        "evidence_design": "descriptive",
-        "xy": {"count": 0},
-        "x": {"type": "drug", "value": []},
-        "y": {"type": "logP", "category": "pk_adme", "value": [3.5]},
-        "bg": {"disease_id": [], "drugs": [], "genes": [], "model": None},
-        "sources": [{"rank": 1, "type": "doi", "id": "10.1234/test"}],
-    }
-    e2 = dict(e1)
+    e1 = _make_evidence()
+    e2 = _make_evidence()
     e2["y"] = dict(e1["y"], type="solubility")
     assert compute_evidence_id(e1) != compute_evidence_id(e2)
 
@@ -162,23 +170,51 @@ def test_validate_control_arm_must_have_null_entity_id():
                 "value": [1.0, 2.0],
                 "direction": "beneficial",
             },
-            "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": [], "model": None},
+            "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
             "clinical_design": {
                 "comparator_type": "placebo",
                 "phase": "phase_3",
                 "population": "adults",
                 "study_id": "clinicaltrials:NCT01234567",
             },
-            "sources": [{"rank": 1, "type": "pmid", "id": "12345678"}],
+            "sources": [{"rank": 1, "type": "journal", "name": "PMID 12345678"}],
+            "source_entry": "PMID:12345678",
+            "source_time": "2025-05-01",
         }
     )
     assert not result.ok
     assert any("control" in e.lower() for e in result.hard_errors)
 
 
-def test_validate_sim_level_requires_provenance():
-    """-sim levels must carry simulation_provenance."""
-    e = _make_evidence(biological_level="molecular-sim")
+def test_validate_descriptive_requires_count_1():
+    """Descriptive records have xy.count=1 per design/2.1.2."""
+    e = _make_evidence(xy={"count": 0})
     result = validate_evidence(e)
     assert not result.ok
-    assert any("simulation_provenance" in e for e in result.hard_errors)
+
+
+def test_validate_effect_value_type_vocab():
+    """y.effect uses value_type from the 16-measure design vocabulary."""
+    e = _make_evidence()
+    e["y"]["effect"] = {"value": 1.5, "value_type": "OR"}
+    assert validate_evidence(e).ok
+    e["y"]["effect"] = {"value": 1.5, "value_type": "IC50"}
+    assert not validate_evidence(e).ok
+    e["y"]["effect"] = {"value": 1.5, "type": "OR"}  # old schema key
+    assert not validate_evidence(e).ok
+
+
+def test_validate_y_to_basis_vocab():
+    e = _make_evidence()
+    e["y"]["to_basis"] = "log2_fold_change"
+    assert validate_evidence(e).ok
+    e["y"]["to_basis"] = "ratio_to_baseline"  # old vocab value
+    assert not validate_evidence(e).ok
+
+
+def test_validate_dispersion_entries():
+    e = _make_evidence()
+    e["y"]["dispersion"] = [{"type": "CI95", "value": [3.0, 4.0]}]
+    assert validate_evidence(e).ok
+    e["y"]["dispersion"] = [{"type": "BOGUS", "value": 1.0}]
+    assert not validate_evidence(e).ok

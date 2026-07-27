@@ -1,327 +1,294 @@
-# Dargus D-Base v0.15.5 — Three-Axis Field Registry
+# D-Base v1.0.0 — Three-Axis Field Registry (50 fields)
 # Logical dotted paths (x.type, y.value, bg.disease_id) are stable_keys.
-# Fields grouped by axis + functional area.
 # R=required, C=conditional, D=writer-derived, O=optional.
-# "identity": true = participates in evidence_id computation (§5).
+# "identity": true = participates in evidence_id computation.
+# Sidecar fields (status, superseded_by, llm_summary, embedding) are NOT here;
+# they live in sidecars/*.jsonl keyed by evidence_id (see design/2.2).
 
 groups:
-  top_level:
-    description: "Record identity and classification"
-    stable_key_prefix: ""
+  identity:
+    description: "Record identity and primary provenance"
     fields:
       - stable_key: evidence_id
         type: str
-        required: false
         derived: true
         identity: false
         description: "Content-addressed id: ev_ + sha256(canonical_json(identity))[:16]"
 
       - stable_key: biological_level
-        logical_path: biological_level
         type: enum
         required: true
         identity: true
         vocabulary_ref: biological_level
-        description: "One of 11 values (§3.0)"
+        description: "One of 11 values; determines conditional requirements"
 
       - stable_key: is_clinical
-        logical_path: is_clinical
         type: int
-        required: false
         derived: true
         identity: false
-        description: "Writer-derived; 1 for rct/epi, 0 otherwise"
+        description: "Writer-derived; 1 for rct/epi, 0 for all others incl. rct-sim"
 
       - stable_key: evidence_design
-        logical_path: evidence_design
         type: enum
         required: true
         identity: false
         vocabulary_ref: evidence_design
-        description: "7-value evidence structure type (§3.1)"
+        description: "7-value evidence structure type"
 
-      - stable_key: experiment_group_id
-        logical_path: experiment_group_id
-        type: str
-        required: false
+      - stable_key: sources
+        type: object[]
+        required: true
         identity: true
-        description: "Links records split from one experiment/design (§2.4)"
+        description: "[{rank: int, type: enum(source_type), name: str}]. Exactly one rank=1. Sorted before hashing."
+
+      - stable_key: source_entry
+        type: str
+        required: true
+        identity: true
+        description: "Primary source entry id: accession / DOI / PMID / PMCID / sim-model version"
+
+      - stable_key: source_time
+        type: str
+        required: true
+        identity: true
+        description: "Primary source time (update/publication), ISO-8601 preferred"
 
   xy:
     description: "Data-point count axis"
-    stable_key_prefix: xy
     fields:
       - stable_key: xy.count
-        logical_path: xy.count
         type: int
         required: true
         identity: false
-        description: "Number of data points (≥0). Determines shape."
+        description: "1 descriptive / 2 pairwise / >=3 sequential or dose-response. Determines array lengths."
 
   x:
     description: "Experimental variable axis"
-    stable_key_prefix: x
     fields:
       - stable_key: x.type
-        logical_path: x.type
         type: enum
         required: true
         identity: true
         vocabulary_ref: x_type
-        description: "One of 5 values (§3.2)"
+        description: "One of 5 values"
 
       - stable_key: x.unit
-        logical_path: x.unit
         type: str
         required: false
-        condition: "required when x.type ∈ {concentration, time}"
+        condition: "required when x.type is concentration or time"
         identity: false
-        description: "Unit for numeric x-types"
+        description: "Unit of x.value"
 
       - stable_key: x.value
-        logical_path: x.value
         type: object[]
         required: true
         identity: true
-        description: "Ordered array, len=xy.count. Item schema varies by x.type (§4.7)"
+        description: "Ordered array, len=xy.count"
 
   y:
     description: "Measurement axis"
-    stable_key_prefix: y
     fields:
       - stable_key: y.type
-        logical_path: y.type
         type: str
         required: true
         identity: true
         description: "Endpoint name (free text)"
 
       - stable_key: y.category
-        logical_path: y.category
         type: enum
         required: true
         identity: false
         vocabulary_ref: y_category
-        description: "23-value readout category (§3.3)"
+        description: "23-value endpoint category; routing filter"
 
       - stable_key: y.unit
-        logical_path: y.unit
         type: str
         required: false
-        condition: "required when y.value is present and meaningful"
         identity: false
-        description: "Unit of measurement"
+        description: "Unit of the outcome measurement"
 
-      - stable_key: y.basis
-        logical_path: y.basis
+      - stable_key: y.to_basis
         type: enum
         required: false
         identity: false
-        vocabulary_ref: y_basis
-        description: "absolute / change_from_baseline / ratio_to_baseline. Default: absolute"
+        vocabulary_ref: y_to_basis
+        description: "absolute / change / fold_change / log2_fold_change / log10_fold_change"
 
       - stable_key: y.value
-        logical_path: y.value
         type: number[]
         required: true
         identity: false
-        description: "Ordered array, len=xy.count (or 1 if count=0)"
-
-      - stable_key: y.ci95
-        logical_path: y.ci95
-        type: object[]
-        required: false
-        identity: false
-        description: "[{lower: number, upper: number}], len matches count"
+        description: "Ordered array, len=xy.count"
 
       - stable_key: y.dispersion
-        logical_path: y.dispersion
         type: object[]
         required: false
         identity: false
-        description: "[{type: enum(§3.5), value: number}], len matches count"
+        description: "[{type: enum(y_dispersion_type), value: number}], len=xy.count. CI95 lives here."
 
       - stable_key: y.n_total
-        logical_path: y.n_total
         type: int[]
         required: false
         identity: false
-        description: "Sample sizes, len matches count"
+        description: "Sample sizes, len=xy.count"
 
       - stable_key: y.events
-        logical_path: y.events
         type: int[]
         required: false
         identity: false
-        description: "Event counts for binary/TTE outcomes"
+        description: "Event counts for binary/TTE outcomes, len=xy.count"
 
       - stable_key: y.p_value
-        logical_path: y.p_value
         type: float[]
         required: false
         identity: false
-        description: "Each ∈ [0,1], len matches count"
+        description: "Each in [0,1], len=xy.count"
 
       - stable_key: y.direction
-        logical_path: y.direction
         type: enum
         required: false
         condition: "required for comparative designs"
         identity: false
         vocabulary_ref: y_direction
-        description: "beneficial / harmful / neutral (§3.4)"
+        description: "beneficial / harmful / neutral"
 
       - stable_key: y.effect
-        logical_path: y.effect
         type: object
         required: false
         identity: false
-        description: "{value: number, type: enum(§3.6), ci95?: {lower, upper}, scale?: enum(§3.7)}"
+        description: "{value, value_type: enum(y_effect_value_type), dispersion, dispersion_type: enum(y_effect_dispersion_type)}"
+
+      - stable_key: y.assay
+        type: str
+        required: false
+        condition: "required for non-clinical records"
+        identity: false
+        description: "Assay or measurement platform (e.g. IncuCyte, ELISA)"
 
   bg:
-    description: "Background axis — shared context for all samples"
-    stable_key_prefix: bg
+    description: "Background axis — shared context for all measurements"
     fields:
       - stable_key: bg.disease_id
-        logical_path: bg.disease_id
         type: curie[]
         required: false
-        condition: "required for rct/epi/rct-sim; optional for others"
+        condition: "required for clinical levels (rct/epi); optional otherwise"
         identity: true
-        description: "Disease CURIEs (sorted for identity)"
+        description: "Disease CURIEs (sorted before hashing)"
 
       - stable_key: bg.drugs
-        logical_path: bg.drugs
         type: object[]
         required: false
         identity: false
-        description: "[{entity_id, entity_label, dose?}] — shared background therapy"
+        description: "[{entity_id, entity_label, dose?}]"
 
       - stable_key: bg.genes
-        logical_path: bg.genes
         type: object[]
         required: false
         identity: false
-        description: "[{entity_id, entity_label, alteration?}] — background genetic alterations"
+        description: "[{entity_id, entity_label, alteration?}]"
 
       - stable_key: bg.model
-        logical_path: bg.model
         type: str
         required: false
         identity: false
-        description: "Non-clinical modeling method (disallowed for clinical levels)"
+        description: "Non-clinical modeling method; disallowed for clinical records"
 
-  sample_identity:
-    description: "Sample identity fields (participate in evidence_id)"
-    stable_key_prefix: ""
+      - stable_key: bg.dose_value
+        type: number
+        required: false
+        identity: true
+        description: "Dose or exposure amount"
+
+      - stable_key: bg.dose_unit
+        type: str
+        required: false
+        identity: true
+        description: "Unit for bg.dose_value (mg/kg, uM, ...)"
+
+      - stable_key: bg.duration_value
+        type: number
+        required: false
+        identity: false
+        description: "Duration of exposure or observation"
+
+      - stable_key: bg.duration_unit
+        type: str
+        required: false
+        identity: false
+        description: "Unit for bg.duration_value (hours, days, weeks, ...)"
+
+      - stable_key: bg.phenotype
+        type: curie[]
+        required: false
+        identity: false
+        description: "HPO phenotype CURIEs"
+
+  sample:
+    description: "Biological source and subject descriptors"
     fields:
       - stable_key: cell_line_id
-        logical_path: cell_line_id
         type: curie
         required: false
-        condition: "non-clinical only; cellosaurus prefix"
+        condition: "required for non-clinical cellular-or-higher records; disallowed for clinical"
         identity: true
-        description: "Cell line identifier"
+        description: "Cellosaurus CURIE"
 
       - stable_key: model_organism
-        logical_path: model_organism
         type: curie
         required: false
         identity: true
         description: "NCBITaxon CURIE"
 
       - stable_key: strain
-        logical_path: strain
         type: str
         required: false
         identity: true
-        description: "Organism strain/substrain"
+        description: "Strain or breed"
 
       - stable_key: sex
-        logical_path: sex
         type: enum
         required: false
         identity: true
         vocabulary_ref: sex
-        description: "male / female / mixed (§3.10)"
+        description: "male / female / mixed"
+
+      - stable_key: age
+        type: str
+        required: false
+        identity: false
+        description: "Age descriptor (free text, e.g. 8_weeks, adults_18_65)"
 
       - stable_key: tissue
-        logical_path: tissue
         type: curie
         required: false
         identity: false
         description: "UBERON tissue CURIE"
 
       - stable_key: cell_type
-        logical_path: cell_type
         type: curie
         required: false
         identity: false
         description: "CL cell type CURIE"
 
-  assay_exposure:
-    description: "Assay platform and exposure details"
-    stable_key_prefix: ""
-    fields:
-      - stable_key: assay_platform
-        logical_path: assay_platform
-        type: str
-        required: false
-        condition: "non-clinical only"
-        identity: false
-        description: "Assay/detection platform name"
-
       - stable_key: exvivo_platform
-        logical_path: exvivo_platform
         type: str
         required: false
-        condition: "exvivo/exvivo-sim only"
+        condition: "required for exvivo/exvivo-sim"
         identity: false
-        description: "Ex vivo platform name"
-
-      - stable_key: exposure_dose_value
-        logical_path: exposure_dose_value
-        type: number
-        required: false
-        identity: true
-        description: "Exposure dose magnitude"
-
-      - stable_key: exposure_dose_unit
-        logical_path: exposure_dose_unit
-        type: str
-        required: false
-        identity: true
-        description: "Exposure dose unit"
-
-      - stable_key: exposure_duration_value
-        logical_path: exposure_duration_value
-        type: number
-        required: false
-        identity: false
-        description: "Exposure duration magnitude"
-
-      - stable_key: exposure_duration_unit
-        logical_path: exposure_duration_unit
-        type: str
-        required: false
-        identity: false
-        description: "Exposure duration unit"
+        description: "Ex vivo platform (e.g. organoid)"
 
   clinical:
     description: "Clinical trial design (clinical levels only)"
-    stable_key_prefix: clinical_design
     fields:
       - stable_key: clinical_design.comparator_type
-        logical_path: clinical_design.comparator_type
         type: enum
         required: false
-        condition: "clinical levels (rct/epi/rct-sim)"
+        condition: "required for comparative clinical designs"
         identity: true
         vocabulary_ref: comparator_type
         description: "placebo / active / standard_of_care / no_treatment"
 
       - stable_key: clinical_design.blinding
-        logical_path: clinical_design.blinding
         type: enum
         required: false
         identity: false
@@ -329,14 +296,12 @@ groups:
         description: "open_label / single / double / triple"
 
       - stable_key: clinical_design.randomized
-        logical_path: clinical_design.randomized
         type: bool
         required: false
         identity: false
-        description: "Whether randomization was used"
+        description: "Whether participants were randomized"
 
       - stable_key: clinical_design.phase
-        logical_path: clinical_design.phase
         type: enum
         required: false
         identity: true
@@ -344,108 +309,41 @@ groups:
         description: "phase_1 / phase_2 / phase_3 / phase_4"
 
       - stable_key: clinical_design.n_arms
-        logical_path: clinical_design.n_arms
         type: int
         required: false
         identity: false
-        description: "Number of trial arms"
+        description: "Number of arms"
 
       - stable_key: clinical_design.population
-        logical_path: clinical_design.population
         type: enum
         required: false
         identity: true
         vocabulary_ref: population
-        description: "Generic population stratum (§3.9)"
+        description: "adults / elderly_65_plus / pediatric / pregnant / other"
 
       - stable_key: clinical_design.study_id
-        logical_path: clinical_design.study_id
         type: curie
         required: false
         identity: true
-        description: "clinicaltrials:NCT... or equivalent"
+        description: "clinicaltrials:NCT... preferred"
 
-  sources_meta:
-    description: "Sources, simulation provenance, status, and metadata"
-    stable_key_prefix: ""
+  metadata:
+    description: "Cross-record links and study context"
     fields:
-      - stable_key: sources
-        logical_path: sources
-        type: object[]
-        required: true
+      - stable_key: related_evidence_id
+        type: str[]
+        required: false
         identity: true
-        description: "[{rank: int, type: enum(§3.8), id: str}]. Exactly one rank=1."
-
-      - stable_key: phenotypes
-        logical_path: phenotypes
-        type: curie[]
-        required: false
-        identity: false
-        description: "HPO phenotype CURIEs"
-
-      - stable_key: simulation_provenance
-        logical_path: simulation_provenance
-        type: object
-        required: false
-        condition: "required for -sim levels; disallowed otherwise"
-        identity: false
-        description: "{sim_model: str, version: str, params_hash?: str, seed?: int}"
+        description: "evidence_ids from the same experiment/publication/simulation run"
 
       - stable_key: is_primary_endpoint
-        logical_path: is_primary_endpoint
         type: bool
         required: false
         identity: false
         description: "True if primary endpoint in the source study"
 
       - stable_key: p_value_adjusted
-        logical_path: p_value_adjusted
         type: bool
         required: false
         identity: false
-        description: "True if p-values are adjusted for multiplicity"
-
-      - stable_key: llm_summary
-        logical_path: llm_summary
-        type: str
-        required: false
-        derived: true
-        identity: false
-        description: "LLM-generated summary for semantic retrieval. NOT identity."
-
-      - stable_key: status
-        logical_path: status
-        type: enum
-        required: false
-        identity: false
-        vocabulary_ref: status
-        description: "active / superseded / retracted. Default: active"
-
-      - stable_key: superseded_by
-        logical_path: superseded_by
-        type: str
-        required: false
-        identity: false
-        description: "Replacement evidence_id"
-
-      - stable_key: revision
-        logical_path: revision
-        type: int
-        required: false
-        identity: false
-        description: "Revision number"
-
-      - stable_key: needs_curation
-        logical_path: needs_curation
-        type: bool
-        required: false
-        derived: true
-        identity: false
-        description: "Writer-derived soft-warning marker"
-
-      - stable_key: legacy_hash
-        logical_path: legacy_hash
-        type: str
-        required: false
-        identity: false
-        description: "Migration back-reference to old format"
+        description: "True if p-values were adjusted for multiplicity"

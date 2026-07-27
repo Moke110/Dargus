@@ -1,4 +1,4 @@
-"""Bootstrap — assemble RuntimeContext from configuration."""
+"""Bootstrap — assemble a DargusRuntime from configuration."""
 
 from __future__ import annotations
 
@@ -11,8 +11,7 @@ from dargus.config.paths import get_config_path
 from dargus.models.config import EnvSecretsManager, load_model_config
 from dargus.models.embedding import EmbeddingModel, SentenceTransformerBackend
 from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM
-from dargus.models.router import ModelRouter
-from dargus.runtime.context import RuntimeContext, health_check
+from dargus.runtime.context import DargusRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -33,25 +32,26 @@ def _load_yaml(path: str) -> dict:
     return data or {}
 
 
-def bootstrap(config_path: str | None = None) -> RuntimeContext:
-    """Create a fully assembled RuntimeContext from a YAML config file.
+def bootstrap(config_path: str | None = None) -> DargusRuntime:
+    """Create a fully assembled DargusRuntime from a YAML config file.
 
     Steps:
-    1. Load config from YAML (default: ``dargus_config.yaml`` in cwd).
+    1. Load config from YAML (default: the unified Dargus config path).
     2. Parse model config via ``load_model_config()``.
     3. Resolve API keys via ``EnvSecretsManager``.
     4. Create ``LiteLLMBackend`` for reasoning, wrap in ``ReasoningLLM``.
-    5. Create ``SentenceTransformerBackend`` for embedding, wrap in ``EmbeddingModel``.
-    6. Create ``ModelRouter`` with a single "planner" backend.
-    7. Assemble ``RuntimeContext``, run ``health_check()``, set ``healthy = True``.
-    8. Return the context.
+    5. Create ``SentenceTransformerBackend`` for embedding, wrap in
+       ``EmbeddingModel``.
+    6. Assemble the ``DargusRuntime``. The runtime starts healthy; a
+       missing model config marks it unhealthy at entry (the reasoning LLM
+       is a hard dependency — no model router exists in v1.0.0).
 
     Args:
-        config_path: Path to a YAML config file. If None, looks for
-            ``dargus_config.yaml`` in the current working directory.
+        config_path: Path to a YAML config file. If None, the unified
+            Dargus config path is used.
 
     Returns:
-        A RuntimeContext ready for use (healthy=True if all resources loaded).
+        A DargusRuntime (healthy unless a hard dependency is unavailable).
     """
     path = config_path or _default_config_path()
     config = _load_yaml(path)
@@ -61,9 +61,8 @@ def bootstrap(config_path: str | None = None) -> RuntimeContext:
     try:
         model_config = load_model_config(config, secrets)
     except KeyError as exc:
-        logger.warning("Model config incomplete: %s — creating minimal context", exc)
-        ctx = RuntimeContext(config=config)
-        return ctx
+        logger.warning("Model config incomplete: %s — creating minimal runtime", exc)
+        return DargusRuntime(config=config)
 
     # Reasoning backend + LLM
     reasoning_api_key = ""
@@ -90,18 +89,10 @@ def bootstrap(config_path: str | None = None) -> RuntimeContext:
             backend=SentenceTransformerBackend(model_name=model_config.embedding_model)
         )
 
-    # ModelRouter — routes reasoning calls by agent phase
-    model_router = ModelRouter(backends={"planner": reasoning_backend})
-
-    # Assemble context
-    ctx = RuntimeContext(
+    # The runtime starts healthy; it turns unhealthy only on an
+    # unrecoverable failure observed at run time (see mark_unhealthy()).
+    return DargusRuntime(
         config=config,
         reasoning_llm=reasoning_llm,
         embedding_model=embedding_model,
-        model_router=model_router,
     )
-
-    if health_check(ctx):
-        ctx.healthy = True
-
-    return ctx

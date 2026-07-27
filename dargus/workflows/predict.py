@@ -94,7 +94,7 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Build D4Expert (stub when no RuntimeContext) -------------------------
+    # ---- Build D4Expert (stub when no DargusRuntime) ----------------------------
     d4 = _build_d4_expert(ctx, hooks)
 
     # ---- Main round loop ------------------------------------------------------
@@ -157,12 +157,12 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_d4_expert(ctx: HookContext, hooks: HookRegistry) -> Any:
-    """Create D4Expert from RuntimeContext when available, else return a stub."""
+    """Create D4Expert from DargusRuntime when available, else return a stub."""
     try:
-        from dargus.runtime.context import RuntimeContext
+        from dargus.runtime.context import DargusRuntime
 
         env = ctx.runtime
-        if env is not None and isinstance(env, RuntimeContext):
+        if env is not None and isinstance(env, DargusRuntime):
             from dargus.runtime.factory import AgentFactory
 
             factory = AgentFactory(env)

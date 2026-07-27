@@ -1,60 +1,111 @@
-"""Tests for RuntimeContext dataclass and health_check."""
+"""Tests for DargusRuntime dataclass, health flag, and health_check."""
 
-from dargus.runtime.context import RuntimeContext, health_check
+import pytest
+
+from dargus.runtime.context import DargusRuntime, RuntimeContext, health_check
+from dargus.tools.cache import ToolCache
 
 
-class TestRuntimeContext:
-    """Tests for RuntimeContext creation and defaults."""
+class TestDargusRuntime:
+    """Tests for DargusRuntime creation and defaults."""
 
     def test_default_construction(self):
-        ctx = RuntimeContext()
-        assert ctx.config == {}
-        assert ctx.reasoning_llm is None
-        assert ctx.embedding_model is None
-        assert ctx.tool_registry is None
-        assert ctx.skill_registry is None
-        assert ctx.knowledge_retrievers == {}
-        assert ctx.dbase_manager is None
-        assert ctx.hook_registry is None
-        assert ctx.healthy is False
+        rt = DargusRuntime()
+        assert rt.config == {}
+        assert rt.reasoning_llm is None
+        assert rt.embedding_model is None
+        assert rt.tool_registry is None
+        assert rt.skill_registry is None
+        assert rt.knowledge_retrievers == {}
+        assert rt.dbase_manager is None
+        assert rt.hook_registry is None
+
+    def test_starts_healthy(self):
+        """The runtime starts healthy (design/3_runtime.md health flag)."""
+        rt = DargusRuntime()
+        assert rt.healthy is True
+        assert rt.unhealthy_reason is None
+
+    def test_factory_and_tool_cache_auto_wired(self):
+        rt = DargusRuntime()
+        assert rt.agent_factory is not None
+        assert rt.agent_factory._runtime is rt
+        assert isinstance(rt.tool_cache, ToolCache)
+
+    def test_injected_factory_and_cache_kept(self):
+        factory = object()
+        cache = object()
+        rt = DargusRuntime(agent_factory=factory, tool_cache=cache)
+        assert rt.agent_factory is factory
+        assert rt.tool_cache is cache
 
     def test_custom_config(self):
         config = {"key": "value"}
-        ctx = RuntimeContext(config=config)
-        assert ctx.config == config
+        rt = DargusRuntime(config=config)
+        assert rt.config == config
 
     def test_set_reasoning_llm(self):
-        ctx = RuntimeContext()
+        rt = DargusRuntime()
         fake_llm = object()
-        ctx.reasoning_llm = fake_llm  # type: ignore[assignment]
-        assert ctx.reasoning_llm is fake_llm
+        rt.reasoning_llm = fake_llm  # type: ignore[assignment]
+        assert rt.reasoning_llm is fake_llm
 
     def test_set_embedding_model(self):
-        ctx = RuntimeContext()
+        rt = DargusRuntime()
         fake_emb = object()
-        ctx.embedding_model = fake_emb  # type: ignore[assignment]
-        assert ctx.embedding_model is fake_emb
+        rt.embedding_model = fake_emb  # type: ignore[assignment]
+        assert rt.embedding_model is fake_emb
+
+    def test_runtime_context_alias(self):
+        """RuntimeContext remains a backward-compatible alias."""
+        assert RuntimeContext is DargusRuntime
+
+
+class TestHealthFlag:
+    """Health flag semantics: starts healthy, unhealthy only on failure."""
+
+    def test_mark_unhealthy_records_reason(self):
+        rt = DargusRuntime()
+        rt.mark_unhealthy("D-Base inaccessible")
+        assert rt.healthy is False
+        assert rt.unhealthy_reason == "D-Base inaccessible"
+
+    def test_ensure_healthy_passes_when_healthy(self):
+        DargusRuntime().ensure_healthy()  # must not raise
+
+    def test_ensure_healthy_raises_when_unhealthy(self):
+        rt = DargusRuntime()
+        rt.mark_unhealthy("model unavailable")
+        with pytest.raises(RuntimeError, match="model unavailable"):
+            rt.ensure_healthy()
+
+    def test_shutdown_closes_tool_cache_and_marks_unhealthy(self):
+        rt = DargusRuntime()
+        rt.tool_cache.put("heavy", object())
+        rt.shutdown()
+        assert rt.healthy is False
+        with pytest.raises(RuntimeError, match="closed"):
+            rt.tool_cache.get("heavy")
 
 
 class TestHealthCheck:
-    """Tests for health_check()."""
+    """Tests for health_check() — presence of both model dependencies."""
 
     def test_healthy_when_both_models_present(self):
-        ctx = RuntimeContext()
-        ctx.reasoning_llm = object()  # type: ignore[assignment]
-        ctx.embedding_model = object()  # type: ignore[assignment]
-        assert health_check(ctx) is True
+        rt = DargusRuntime()
+        rt.reasoning_llm = object()  # type: ignore[assignment]
+        rt.embedding_model = object()  # type: ignore[assignment]
+        assert health_check(rt) is True
 
     def test_unhealthy_when_reasoning_llm_missing(self):
-        ctx = RuntimeContext()
-        ctx.embedding_model = object()  # type: ignore[assignment]
-        assert health_check(ctx) is False
+        rt = DargusRuntime()
+        rt.embedding_model = object()  # type: ignore[assignment]
+        assert health_check(rt) is False
 
     def test_unhealthy_when_embedding_model_missing(self):
-        ctx = RuntimeContext()
-        ctx.reasoning_llm = object()  # type: ignore[assignment]
-        assert health_check(ctx) is False
+        rt = DargusRuntime()
+        rt.reasoning_llm = object()  # type: ignore[assignment]
+        assert health_check(rt) is False
 
     def test_unhealthy_when_both_missing(self):
-        ctx = RuntimeContext()
-        assert health_check(ctx) is False
+        assert health_check(DargusRuntime()) is False

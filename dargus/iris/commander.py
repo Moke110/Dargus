@@ -38,35 +38,33 @@ class Iris(BaseAgent):
         self,
         config: dict[str, Any] | None = None,
         lifecycle_manager: LifecycleManager | None = None,
+        agent_factory: Any | None = None,
+        **di_kwargs: Any,
     ):
-        super().__init__(config=config)
+        super().__init__(config=config, **di_kwargs)
         self._lifecycle_manager: LifecycleManager | None = lifecycle_manager
+        self._agent_factory = agent_factory
 
         # ------------------------------------------------------------------
-        # Phase D/E: Skill loading for predict/ingest workflows.
-        #
-        # TODO(Phase E): Create Skill .md files in dargus/agents/skills/
-        #   - predict.md  → predict workflow Skill
-        #   - ingest.md   → ingest workflow Skill
-        # Once Phase E ships, Iris will load these Skills and pass them to
-        # LifecycleManager.run_predict / run_ingest. Until then the Skills
-        # are attempted but gracefully skipped when missing.
+        # Skill loading: prefer the injected registry (AgentFactory path);
+        # fall back to a local registry over the packaged skills directory.
         # ------------------------------------------------------------------
-        try:
-            from pathlib import Path
+        if self._skill_registry is None:
+            try:
+                from pathlib import Path
 
-            from dargus.agents.skill_registry import SkillRegistry
+                from dargus.agents.skill_registry import SkillRegistry
 
-            _skills_dir = Path(__file__).resolve().parent.parent / "agents" / "skills"
-            self._skill_registry = SkillRegistry(_skills_dir)
-            _loaded = {s.name for s in self._skill_registry.list_all()}
-            if _loaded:
-                logger.info("Iris loaded Skills: %s", sorted(_loaded))
-            else:
-                logger.debug("Iris: no Skill files found in %s", _skills_dir)
-        except Exception:
-            logger.debug("Iris: SkillRegistry init skipped (skills dir missing)", exc_info=True)
-            self._skill_registry = None
+                _skills_dir = Path(__file__).resolve().parent.parent / "agents" / "skills"
+                self._skill_registry = SkillRegistry(_skills_dir)
+                _loaded = {s.name for s in self._skill_registry.list_all()}
+                if _loaded:
+                    logger.info("Iris loaded Skills: %s", sorted(_loaded))
+                else:
+                    logger.debug("Iris: no Skill files found in %s", _skills_dir)
+            except Exception:
+                logger.debug("Iris: SkillRegistry init skipped (skills dir missing)", exc_info=True)
+                self._skill_registry = None
 
     def _global_manager(self) -> DBaseManager:
         dbase = DBase.global_instance()
@@ -86,33 +84,17 @@ class Iris(BaseAgent):
     def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> IngestionReport:
         """Run the Ingest workflow on the global D-Base.
 
-        When a :class:`LifecycleManager` is injected (Phase D+), delegates
-        to ``lifecycle_manager.run_ingest``.  Falls back to the direct
-        ``run_ingest`` call for backward compatibility.
+        With an injected LifecycleManager this delegates to
+        ``run_ingest(task_spec)``; without one it calls the workflow-level
+        ``run_ingest`` directly.
         """
-        # ------------------------------------------------------------------
-        # Phase D/E: Attempt to load the ingest Skill.  If present, it will
-        # be passed to LifecycleManager.run_ingest once Phase E ships.
-        # ------------------------------------------------------------------
-        _ingest_skill = None
-        if self._skill_registry is not None:
-            try:
-                _ingest_skill = self._skill_registry.get("ingest")
-            except KeyError:
-                logger.debug("Iris: 'ingest' Skill not found in registry")
-
         if self._lifecycle_manager is not None:
-            try:
-                _task_spec: dict = {"datadir": datadir}
-                if disease_kb_dir is not None:
-                    _task_spec["disease_kb_dir"] = disease_kb_dir
-                result = self._lifecycle_manager.run_ingest(_task_spec)
-                if result is not None:
-                    return result
-            except NotImplementedError:
-                logger.warning("LifecycleManager.run_ingest is not implemented — falling back")
-            except Exception:
-                logger.exception("LifecycleManager.run_ingest failed — falling back")
+            _task_spec: dict = {"datadir": datadir}
+            if disease_kb_dir is not None:
+                _task_spec["disease_kb_dir"] = disease_kb_dir
+            result = self._lifecycle_manager.run_ingest(_task_spec)
+            if result is not None:
+                return result
         return run_ingest(datadir, disease_kb_dir=disease_kb_dir)
 
     def predict(
@@ -124,46 +106,27 @@ class Iris(BaseAgent):
     ) -> dict[str, dict[str, dict[str, Any]]]:
         """Run full multi-Expert assessment.
 
-        When a :class:`LifecycleManager` is injected (Phase D+), delegates
-        to ``lifecycle_manager.run_predict``.  Falls back to the direct
-        implementation for backward compatibility.
+        With an injected LifecycleManager this delegates to
+        ``run_predict(task_spec)``; without one it runs the direct
+        expert-loop implementation. Experts are created through the
+        AgentFactory when one is wired (design/3_runtime.md: the factory
+        is the single creation point for every Agent).
         """
-        # ------------------------------------------------------------------
-        # Phase D/E: Attempt to load the predict Skill.  If present, it will
-        # be passed to LifecycleManager.run_predict once Phase E ships.
-        # ------------------------------------------------------------------
-        _predict_skill = None
-        if self._skill_registry is not None:
-            try:
-                _predict_skill = self._skill_registry.get("predict")
-            except KeyError:
-                logger.debug("Iris: 'predict' Skill not found in registry")
-
         if self._lifecycle_manager is not None:
-            try:
-                result = self._lifecycle_manager.run_predict(
-                    {
-                        "drug_ids": drug_ids,
-                        "disease_id": disease_id,
-                        "endpoints": endpoints,
-                        "max_rounds": max_rounds,
-                    }
-                )
-                if result is not None:
-                    return result
-            except NotImplementedError:
-                logger.warning("LifecycleManager.run_predict is not implemented — falling back")
-            except Exception:
-                logger.exception("LifecycleManager.run_predict failed — falling back")
+            result = self._lifecycle_manager.run_predict(
+                {
+                    "drug_ids": drug_ids,
+                    "disease_id": disease_id,
+                    "endpoints": endpoints,
+                    "max_rounds": max_rounds,
+                }
+            )
+            if result is not None:
+                return result
 
-        # --- Fallback: direct implementation (backward compat) ---
-        from dargus.experts.bioinfo import BioinfoExpert
-        from dargus.experts.biomed import BiomedExpert
-        from dargus.experts.clinic import ClinicExpert
-        from dargus.experts.director import FourDExpert
-        from dargus.experts.molecule import MoleculeExpert
         from dargus.experts.protocol import ExpertContext
 
+        factory = self._agent_factory
         manager = self._global_manager()
 
         result: dict[str, dict[str, dict[str, Any]]] = {}
@@ -176,11 +139,24 @@ class Iris(BaseAgent):
                     endpoints=[endpoint],
                 )
                 records = manager.read_records(disease_id=disease_id)
-                molecule = MoleculeExpert(dbase=manager.dbase)
-                biomed = BiomedExpert(dbase=manager.dbase)
-                bioinfo = BioinfoExpert(dbase=manager.dbase)
-                clinic = ClinicExpert(dbase=manager.dbase)
-                director = FourDExpert(dbase=manager.dbase)
+                if factory is not None:
+                    molecule = factory.expert("molecular")
+                    biomed = factory.expert("biomedical")
+                    bioinfo = factory.expert("bioinformatics")
+                    clinic = factory.expert("clinical")
+                    director = factory.d4_expert()
+                else:
+                    from dargus.experts.bioinfo import BioinfoExpert
+                    from dargus.experts.biomed import BiomedExpert
+                    from dargus.experts.clinic import ClinicExpert
+                    from dargus.experts.director import FourDExpert
+                    from dargus.experts.molecule import MoleculeExpert
+
+                    molecule = MoleculeExpert(dbase=manager.dbase)
+                    biomed = BiomedExpert(dbase=manager.dbase)
+                    bioinfo = BioinfoExpert(dbase=manager.dbase)
+                    clinic = ClinicExpert(dbase=manager.dbase)
+                    director = FourDExpert(dbase=manager.dbase)
 
                 mol_report = molecule.assess(records, ctx)
                 bio_report = biomed.assess(records, ctx)
@@ -204,6 +180,9 @@ class Iris(BaseAgent):
                     "contradictions": final.contradictions,
                     "data_gaps": final.data_gaps,
                 }
+                if factory is not None:
+                    for agent in (molecule, biomed, bioinfo, clinic, director):
+                        factory.terminate(agent)
         return result
 
     def infer(

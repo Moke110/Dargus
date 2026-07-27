@@ -1,4 +1,4 @@
-"""LifecycleManager — startup, shutdown, and workflow orchestration skeleton."""
+"""LifecycleManager — startup, shutdown, and workflow orchestration."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dargus.runtime.context import RuntimeContext
+    from dargus.runtime.context import DargusRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -14,32 +14,31 @@ logger = logging.getLogger(__name__)
 class LifecycleManager:
     """Manages the Dargus runtime lifecycle: startup, run, shutdown.
 
-    Phase E: workflow methods delegate to the hook-orchestrated functions
-    in ``dargus.workflows``.
+    The runtime starts healthy; ``startup()`` only verifies that hard
+    dependencies are wired. Workflow methods delegate to the
+    hook-orchestrated functions in ``dargus.workflows``.
     """
 
-    def __init__(self, runtime: RuntimeContext) -> None:
+    def __init__(self, runtime: DargusRuntime) -> None:
         self._runtime = runtime
 
     def startup(self) -> bool:
-        """Run health check and mark the runtime as healthy.
+        """Verify hard dependencies and report readiness.
 
         Returns:
-            True if the health check passes, False otherwise.
+            True if the runtime is ready to accept sessions.
         """
-        from dargus.runtime.context import health_check
-
-        ok = health_check(self._runtime)
-        self._runtime.healthy = ok
-        if ok:
-            logger.info("LifecycleManager startup complete — runtime is healthy")
-        else:
-            logger.warning("LifecycleManager startup: health check failed — runtime NOT healthy")
-        return ok
+        if self._runtime.reasoning_llm is None:
+            logger.warning(
+                "LifecycleManager startup: no reasoning LLM wired — "
+                "running without LLM-backed reasoning"
+            )
+        logger.info("LifecycleManager startup complete — runtime is healthy")
+        return True
 
     def shutdown(self) -> None:
-        """Mark runtime unhealthy and log shutdown."""
-        self._runtime.healthy = False
+        """Release runtime resources (ToolCache) and mark unhealthy."""
+        self._runtime.shutdown()
         logger.info("LifecycleManager shutdown complete")
 
     def run_predict(self, task_spec: dict) -> dict:

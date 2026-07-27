@@ -16,32 +16,23 @@ logger = logging.getLogger(__name__)
 
 
 def _create_iris_with_lm() -> Iris:
-    """Try to create Iris with LifecycleManager injected.
+    """Create Iris through the runtime's AgentFactory.
 
-    Attempts to bootstrap a RuntimeContext from the config file and attach
-    a LifecycleManager.  Falls back to a plain Iris on any failure (missing
-    config, model loading error, etc.) so the API surface never breaks.
-
-    The LifecycleManager is only injected when the runtime is healthy (both
-    reasoning LLM and embedding model are present).  A partial bootstrap
-    (e.g. missing config) returns a plain Iris to preserve backward compat.
+    Bootstraps a DargusRuntime from the config file. Per design/3_runtime.md
+    the runtime starts healthy and entry points refuse new sessions while
+    unhealthy — there is no silent fallback to a runtime-less path. On an
+    unrecoverable bootstrap failure the runtime is marked unhealthy and the
+    entry point raises.
     """
-    try:
-        from dargus.runtime.bootstrap import bootstrap
-        from dargus.runtime.lifecycle import LifecycleManager
+    from dargus.runtime.bootstrap import bootstrap
 
+    try:
         runtime = bootstrap()
-        if runtime.healthy:
-            lm = LifecycleManager(runtime)
-            lm.startup()
-            logger.info("API: LifecycleManager attached — using new runtime path")
-            return Iris(lifecycle_manager=lm)
-        else:
-            logger.debug("API: bootstrap produced unhealthy runtime — using direct Iris path")
-            return Iris()
-    except Exception:
-        logger.debug("API: bootstrap failed — falling back to direct Iris path", exc_info=True)
-        return Iris()
+    except Exception as exc:
+        logger.error("API: runtime bootstrap failed: %s", exc)
+        raise RuntimeError(f"DargusRuntime failed to start: {exc} — refusing new session") from exc
+    runtime.ensure_healthy()
+    return runtime.agent_factory.iris()
 
 
 def predict(
@@ -52,8 +43,8 @@ def predict(
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Run a full Iris -> Iris multi-round prediction.
 
-    Tries to bootstrap a RuntimeContext and inject a LifecycleManager.
-    Falls back to the direct Iris implementation if bootstrap fails.
+    Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
+    refuses the session when the runtime is unhealthy.
 
     Args:
         drug_ids: Drug identifiers to predict for.
@@ -76,8 +67,8 @@ def predict(
 def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> Any:
     """Ingest data into the global D-Base.
 
-    Tries to bootstrap a RuntimeContext and inject a LifecycleManager.
-    Falls back to the direct Iris implementation if bootstrap fails.
+    Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
+    refuses the session when the runtime is unhealthy.
 
     Args:
         datadir: Path to directory containing data files.
@@ -139,7 +130,7 @@ def status() -> dict[str, Any]:
     Returns:
         Dict with ``dargus_home``, ``n_records``, ``n_templates``.
     """
-    iris = Iris()
+    iris = _create_iris_with_lm()
     return iris.status()
 
 
@@ -150,8 +141,8 @@ def benchmark(
 ) -> dict[str, Any]:
     """Run a bench-full-stack benchmark.
 
-    Tries to bootstrap a RuntimeContext and run through LifecycleManager.
-    Falls back to the workflow-level ``run_benchmark`` if bootstrap fails.
+    Bootstraps the DargusRuntime and runs through LifecycleManager;
+    refuses the session when the runtime is unhealthy.
 
     Args:
         strip: Filter dict for extracting matching records from the global D-Base.
@@ -174,46 +165,19 @@ def benchmark(
     if output_dir:
         task_spec["output_dir"] = output_dir
 
-    # ---- LifecycleManager path ------------------------------------------------
+    # ---- Runtime path -----------------------------------------------------
+    from dargus.runtime.bootstrap import bootstrap
+
+    runtime = bootstrap()
+    runtime.ensure_healthy()
+    from dargus.runtime.lifecycle import LifecycleManager
+
+    lm = LifecycleManager(runtime)
+    lm.startup()
     try:
-        from dargus.runtime.bootstrap import bootstrap
-        from dargus.runtime.lifecycle import LifecycleManager
-
-        runtime = bootstrap()
-        lm = LifecycleManager(runtime)
-        lm.startup()
-        try:
-            result = lm.run_benchmark(task_spec)
-            return {
-                "metrics": {
-                    "accuracy": result.get("accuracy", 0.0),
-                    "precision": result.get("precision", 0.0),
-                    "recall": result.get("recall", 0.0),
-                    "f1": result.get("f1", 0.0),
-                },
-                "predictions": result.get("report", {}),
-                "conditions": strip,
-                "n_test": result.get("n_test", 0),
-                "status": result.get("status"),
-            }
-        finally:
-            lm.shutdown()
-    except Exception:
-        logger.debug("API: LifecycleManager benchmark failed — falling back", exc_info=True)
-
-    # ---- Iris benchmark fallback (backward compat) -----------------------------
-    try:
-        iris = Iris()
-        return iris.benchmark(strip=strip, split=split, output_dir=output_dir)
-    except NotImplementedError:
-        logger.debug("API: Iris.benchmark not implemented — using workflow fallback")
-    except Exception:
-        logger.debug("API: Iris.benchmark failed — falling back to workflow", exc_info=True)
-
-    # ---- Workflow-level fallback ----------------------------------------------
-    from dargus.workflows.benchmark import run_benchmark
-
-    result = run_benchmark(task_spec)
+        result = lm.run_benchmark(task_spec)
+    finally:
+        lm.shutdown()
     return {
         "metrics": {
             "accuracy": result.get("accuracy", 0.0),

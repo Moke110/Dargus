@@ -69,6 +69,7 @@ class FourDExpert(Expert):
         skill_registry: SkillRegistry | None = None,
         knowledge_retrievers: dict[str, Any] | None = None,
         hook_registry: HookRegistry | None = None,
+        agent_factory: Any | None = None,
     ):
         super().__init__(
             dbase=dbase,
@@ -79,6 +80,7 @@ class FourDExpert(Expert):
             knowledge_retrievers=knowledge_retrievers,
             hook_registry=hook_registry,
         )
+        self._agent_factory = agent_factory
 
     def assess(self, records, context):
         """FourDExpert does not assess individual records directly."""
@@ -123,14 +125,15 @@ class FourDExpert(Expert):
                 f"Unknown domain {domain!r}. Known domains: " f"{list(self._DOMAIN_EXPERT_MAP)}"
             )
 
-        # Dynamically import and instantiate the DomainExpert
-        module_path, class_name = expert_cls_path.rsplit(".", 1)
-        import importlib
+        if self._agent_factory is not None:
+            expert = self._agent_factory.expert(domain)
+        else:
+            module_path, class_name = expert_cls_path.rsplit(".", 1)
+            import importlib
 
-        mod = importlib.import_module(module_path)
-        expert_cls = getattr(mod, class_name)
-
-        expert = expert_cls(dbase=self.dbase)
+            mod = importlib.import_module(module_path)
+            expert_cls = getattr(mod, class_name)
+            expert = expert_cls(dbase=self.dbase)
         ctx = ExpertContext(
             drug_ids=[],
             disease_id="",

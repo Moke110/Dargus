@@ -2,7 +2,7 @@
 
 import os
 
-from dargus.runtime.context import RuntimeContext
+from dargus.runtime.context import DargusRuntime
 from dargus.runtime.lifecycle import LifecycleManager
 
 
@@ -35,57 +35,66 @@ def _seed_benchmark_dbase(tmp_path, monkeypatch):
 
 
 class TestLifecycleManager:
-    """Tests for LifecycleManager startup/shutdown flow and stub methods."""
+    """Tests for LifecycleManager startup/shutdown flow and workflow delegation."""
 
     def test_constructor_stores_runtime(self):
-        ctx = RuntimeContext()
-        lm = LifecycleManager(ctx)
-        assert lm._runtime is ctx
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
+        assert lm._runtime is rt
 
-    def test_startup_sets_healthy_when_models_present(self):
-        ctx = RuntimeContext()
-        ctx.reasoning_llm = object()  # type: ignore[assignment]
-        ctx.embedding_model = object()  # type: ignore[assignment]
+    def test_startup_keeps_runtime_healthy(self):
+        """The runtime starts healthy; startup verifies wiring and stays healthy."""
+        rt = DargusRuntime()
+        rt.reasoning_llm = object()  # type: ignore[assignment]
+        rt.embedding_model = object()  # type: ignore[assignment]
 
-        lm = LifecycleManager(ctx)
+        lm = LifecycleManager(rt)
         result = lm.startup()
 
         assert result is True
-        assert ctx.healthy is True
+        assert rt.healthy is True
 
-    def test_startup_sets_unhealthy_when_models_missing(self):
-        ctx = RuntimeContext()
-        lm = LifecycleManager(ctx)
+    def test_startup_without_models_stays_healthy(self):
+        """Missing optional models do not flip the flag at startup."""
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
         result = lm.startup()
 
-        assert result is False
-        assert ctx.healthy is False
+        assert result is True
+        assert rt.healthy is True
 
     def test_shutdown_sets_unhealthy(self):
-        ctx = RuntimeContext()
-        ctx.healthy = True
-        lm = LifecycleManager(ctx)
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
         lm.shutdown()
+        assert rt.healthy is False
 
-        assert ctx.healthy is False
+    def test_shutdown_closes_tool_cache(self):
+        rt = DargusRuntime()
+        rt.tool_cache.put("heavy", object())
+        LifecycleManager(rt).shutdown()
+        import pytest
+
+        with pytest.raises(RuntimeError, match="closed"):
+            rt.tool_cache.get("heavy")
 
     def test_startup_then_shutdown_cycle(self):
-        ctx = RuntimeContext()
-        ctx.reasoning_llm = object()  # type: ignore[assignment]
-        ctx.embedding_model = object()  # type: ignore[assignment]
+        rt = DargusRuntime()
+        rt.reasoning_llm = object()  # type: ignore[assignment]
+        rt.embedding_model = object()  # type: ignore[assignment]
 
-        lm = LifecycleManager(ctx)
+        lm = LifecycleManager(rt)
 
         assert lm.startup() is True
-        assert ctx.healthy is True
+        assert rt.healthy is True
 
         lm.shutdown()
-        assert ctx.healthy is False
+        assert rt.healthy is False
 
     def test_run_predict_delegates_to_workflow(self):
-        """Phase E: LifecycleManager.run_predict delegates to the workflow function."""
-        ctx = RuntimeContext()
-        lm = LifecycleManager(ctx)
+        """LifecycleManager.run_predict delegates to the workflow function."""
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
         result = lm.run_predict(
             {
                 "workflow": "predict",
@@ -98,18 +107,18 @@ class TestLifecycleManager:
         assert result["workflow"] == "predict"
 
     def test_run_ingest_delegates_to_workflow(self):
-        """Phase E: LifecycleManager.run_ingest delegates to the workflow function."""
-        ctx = RuntimeContext()
-        lm = LifecycleManager(ctx)
+        """LifecycleManager.run_ingest delegates to the workflow function."""
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
         result = lm.run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
         assert isinstance(result, dict)
         assert result["workflow"] == "ingest"
 
     def test_run_benchmark_delegates_to_workflow(self, tmp_path, monkeypatch):
-        """Phase E: LifecycleManager.run_benchmark delegates to the workflow function."""
+        """LifecycleManager.run_benchmark delegates to the workflow function."""
         holdout_id = _seed_benchmark_dbase(tmp_path, monkeypatch)
-        ctx = RuntimeContext()
-        lm = LifecycleManager(ctx)
+        rt = DargusRuntime()
+        lm = LifecycleManager(rt)
         result = lm.run_benchmark(
             {"workflow": "benchmark", "holdout_ids": [holdout_id], "max_rounds": 1}
         )

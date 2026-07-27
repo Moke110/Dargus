@@ -234,7 +234,7 @@ def _load_ground_truth(holdout_records: list[dict]) -> dict[str, dict[str, Any]]
 
 
 def _run_predict_standalone(predict_spec: dict[str, Any]) -> dict[str, Any]:
-    """Run the predict workflow (self-contained; no RuntimeContext needed)."""
+    """Run the predict workflow (self-contained; no DargusRuntime needed)."""
     from dargus.workflows.predict import run_predict
 
     return run_predict(predict_spec)

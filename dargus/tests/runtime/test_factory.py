@@ -1,9 +1,15 @@
-"""Tests for AgentFactory."""
+"""Tests for AgentFactory — the single Agent creation/termination point."""
 
 import pytest
 
 from dargus.agents.base import BaseAgent
-from dargus.runtime.context import RuntimeContext
+from dargus.experts.bioinfo import BioinfoExpert
+from dargus.experts.biomed import BiomedExpert
+from dargus.experts.clinic import ClinicExpert
+from dargus.experts.director import FourDExpert
+from dargus.experts.molecule import MoleculeExpert
+from dargus.iris.commander import Iris
+from dargus.runtime.context import DargusRuntime
 from dargus.runtime.factory import AgentFactory
 
 
@@ -11,40 +17,110 @@ class TestAgentFactory:
     """Tests for AgentFactory."""
 
     def test_constructor_stores_runtime(self):
-        ctx = RuntimeContext()
-        factory = AgentFactory(ctx)
-        assert factory._runtime is ctx
+        rt = DargusRuntime()
+        factory = AgentFactory(rt)
+        assert factory._runtime is rt
 
     def test_base_agent_creates_instance(self):
-        """base_agent() creates a BaseAgent (with DI fallback)."""
-        ctx = RuntimeContext()
-        factory = AgentFactory(ctx)
+        rt = DargusRuntime()
+        factory = AgentFactory(rt)
         agent = factory.base_agent("TestAgent")
 
         assert isinstance(agent, BaseAgent)
         assert agent.name == "TestAgent"
 
-    def test_base_agent_with_di_fallback(self):
-        """When BaseAgent doesn't accept DI kwargs, fallback works gracefully."""
-        ctx = RuntimeContext()
-        ctx.reasoning_llm = object()  # type: ignore[assignment]
-        factory = AgentFactory(ctx)
+    def test_base_agent_with_di_kwargs(self):
+        rt = DargusRuntime()
+        rt.reasoning_llm = object()  # type: ignore[assignment]
+        factory = AgentFactory(rt)
         agent = factory.base_agent("DI_Agent")
 
         assert isinstance(agent, BaseAgent)
         assert agent.name == "DI_Agent"
 
-    def test_expert_raises_not_implemented(self):
-        factory = AgentFactory(RuntimeContext())
-        with pytest.raises(NotImplementedError, match="Expert factory not implemented yet"):
+
+class TestExpertCreation:
+    """expert()/d4_expert()/iris() create wired agents (no more stubs)."""
+
+    @pytest.mark.parametrize(
+        "domain,cls",
+        [
+            ("molecular", MoleculeExpert),
+            ("biomedical", BiomedExpert),
+            ("bioinformatics", BioinfoExpert),
+            ("clinical", ClinicExpert),
+        ],
+    )
+    def test_expert_creates_domain_expert(self, domain, cls):
+        factory = AgentFactory(DargusRuntime())
+        expert = factory.expert(domain)
+        assert isinstance(expert, cls)
+
+    @pytest.mark.parametrize(
+        "alias,cls",
+        [
+            ("MoleculeExpert", MoleculeExpert),
+            ("BiomedExpert", BiomedExpert),
+            ("BioinfoExpert", BioinfoExpert),
+            ("ClinicExpert", ClinicExpert),
+        ],
+    )
+    def test_expert_accepts_class_name_alias(self, alias, cls):
+        factory = AgentFactory(DargusRuntime())
+        assert isinstance(factory.expert(alias), cls)
+
+    def test_expert_unknown_domain_raises(self):
+        factory = AgentFactory(DargusRuntime())
+        with pytest.raises(ValueError, match="Unknown expert domain"):
             factory.expert("cardiology")
 
-    def test_d4_expert_raises_not_implemented(self):
-        factory = AgentFactory(RuntimeContext())
-        with pytest.raises(NotImplementedError, match="Expert factory not implemented yet"):
-            factory.d4_expert()
+    def test_d4_expert_creates_coordinator_with_factory(self):
+        factory = AgentFactory(DargusRuntime())
+        d4 = factory.d4_expert()
+        assert isinstance(d4, FourDExpert)
+        assert d4._agent_factory is factory
 
-    def test_iris_raises_not_implemented(self):
-        factory = AgentFactory(RuntimeContext())
-        with pytest.raises(NotImplementedError, match="Expert factory not implemented yet"):
-            factory.iris()
+    def test_iris_creates_commander_with_factory(self):
+        factory = AgentFactory(DargusRuntime())
+        iris = factory.iris()
+        assert isinstance(iris, Iris)
+        assert iris._agent_factory is factory
+
+    def test_experts_receive_dbase_from_runtime_manager(self):
+        class _Manager:
+            dbase = object()
+
+        rt = DargusRuntime(dbase_manager=_Manager())
+        factory = AgentFactory(rt)
+        expert = factory.expert("molecular")
+        assert expert.dbase is rt.dbase_manager.dbase
+
+
+class TestTermination:
+    def test_terminate_without_close_is_noop(self):
+        factory = AgentFactory(DargusRuntime())
+        agent = factory.base_agent("TermAgent")
+        factory.terminate(agent)  # must not raise
+
+    def test_terminate_calls_close_when_present(self):
+        class _Agent:
+            name = "closable"
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        agent = _Agent()
+        factory = AgentFactory(DargusRuntime())
+        factory.terminate(agent)
+        assert agent.closed is True
+
+    def test_terminate_swallows_close_errors(self):
+        class _Agent:
+            name = "broken"
+
+            def close(self):
+                raise RuntimeError("boom")
+
+        factory = AgentFactory(DargusRuntime())
+        factory.terminate(_Agent())  # logs but must not raise

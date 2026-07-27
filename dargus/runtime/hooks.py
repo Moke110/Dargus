@@ -47,7 +47,7 @@ class HookContext:
     dependency on model / agent code.
     """
 
-    runtime: Any  # RuntimeContext (forward ref)
+    runtime: Any  # DargusRuntime (forward ref)
     task_spec: dict[str, Any] = field(default_factory=dict)
     session: Any | None = None  # WorkflowSession (forward ref)
     agent: Any | None = None  # BaseAgent (forward ref)

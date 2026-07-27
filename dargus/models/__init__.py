@@ -1,4 +1,4 @@
-"""Dargus model layer — ReasoningLLM, EmbeddingModel, ModelRouter, and configuration."""
+"""Dargus model layer — ReasoningLLM, EmbeddingModel, and configuration."""
 
 from dargus.models.config import EnvSecretsManager, ModelConfig, SecretsManager, load_model_config
 from dargus.models.embedding import (
@@ -16,7 +16,6 @@ from dargus.models.reasoning import (
     ReasoningLLM,
     ReasoningOptions,
 )
-from dargus.models.router import ModelRouter
 
 __all__ = [
     "SecretsManager",
@@ -34,5 +33,4 @@ __all__ = [
     "EmbeddingBackend",
     "SentenceTransformerBackend",
     "EmbeddingModel",
-    "ModelRouter",
 ]

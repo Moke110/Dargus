@@ -1,8 +1,8 @@
-"""Tests for dargus.tui._logo module."""
+"""Tests for dargus.cli.ui.logo module."""
 
 from rich.text import Text
 
-from dargus.tui._logo import TAGLINE, A, D, G, R, S, U, build_logo
+from dargus.cli.ui.logo import TAGLINE, A, D, G, R, S, U, build_logo
 
 
 def test_d_letter_is_8_lines():

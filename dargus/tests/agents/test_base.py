@@ -90,16 +90,16 @@ def test_base_agent_injected_knowledge_retrievers():
 # ------------------------------------------------------------------
 
 
-def test_run_triggers_plan_end_hook():
-    """When hook_registry is injected, PLAN_END fires after planning."""
+def test_run_triggers_reason_end_hook():
+    """When hook_registry is injected, REASON_END fires after reasoning."""
     registry = HookRegistry()
     hook_tracker = MagicMock()
 
-    def track_plan_end(ctx: HookContext) -> HookContext:
+    def track_reason_end(ctx: HookContext) -> HookContext:
         hook_tracker(ctx)
         return ctx
 
-    registry.register(HookPoint.PLAN_END, track_plan_end)
+    registry.register(HookPoint.REASON_END, track_reason_end)
 
     agent = _MinimalAgent(name="test", hook_registry=registry)
     report = agent.run({"goal": "simple_test"})
@@ -129,16 +129,16 @@ def test_run_triggers_act_end_hook():
     assert hook_tracker.call_count >= 1
 
 
-def test_run_triggers_critic_end_hook():
-    """When hook_registry is injected, CRITIC_END fires after critic."""
+def test_run_triggers_perceive_end_hook():
+    """When hook_registry is injected, PERCEIVE_END fires after perceiving."""
     registry = HookRegistry()
     hook_tracker = MagicMock()
 
-    def track_critic_end(ctx: HookContext) -> HookContext:
+    def track_perceive_end(ctx: HookContext) -> HookContext:
         hook_tracker(ctx)
         return ctx
 
-    registry.register(HookPoint.CRITIC_END, track_critic_end)
+    registry.register(HookPoint.PERCEIVE_END, track_perceive_end)
 
     agent = _MinimalAgent(name="test", hook_registry=registry)
     report = agent.run({"goal": "simple_test"})

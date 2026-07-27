@@ -7,13 +7,14 @@ loop with Hook enforcement at each lifecycle point.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from dargus.runtime.hooks import (
-    AcceptanceGateHook,
     HookContext,
     HookPoint,
     HookRegistry,
+    ReportValidationHook,
     ResultReportHook,
     SafetyNetHook,
     SessionInitHook,
@@ -21,6 +22,27 @@ from dargus.runtime.hooks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _disabled_hooks(task_spec: dict[str, Any]) -> set[str]:
+    """Core-hook names disabled via config (``hooks: disable: [...]``)."""
+    cfg = task_spec.get("hooks", {})
+    return set(cfg.get("disable", []) or [])
+
+
+def _hook_dbase() -> Any | None:
+    """Wire the working D-Base into ReportValidationHook for evidence_id
+    existence checks. Returns None when the store cannot be opened (range
+    checks still apply)."""
+    try:
+        from dargus.dbase.dbase import DBase
+        from dargus.dbase.paths import dbase_root
+
+        return DBase("predict-validation", root_dir=dbase_root())
+    except Exception:
+        logger.debug("No D-Base available for report validation — skipping existence checks")
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -36,7 +58,7 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
        - PERCEIVE_START: SkeletonContextHook injects state
        - D4Expert runs assess + synthesize cycle
        - ROUND_END: SafetyNetHook checks convergence
-    4. SESSION_END: AcceptanceGateHook validates FinalReport
+    4. SESSION_END: ReportValidationHook validates FinalReport
     5. ResultReportHook assembles PredictResult
 
     Args:
@@ -53,17 +75,17 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
     timeout_seconds = float(task_spec.get("timeout_seconds", 300.0))
 
     # ---- Build hook registry --------------------------------------------------
-    hooks = HookRegistry()
+    hooks = HookRegistry(disabled_hooks=_disabled_hooks(task_spec))
     hooks.register(HookPoint.SESSION_START, SessionInitHook())
     hooks.register(HookPoint.PERCEIVE_START, SkeletonContextHook(max_rounds=max_rounds))
     hooks.register(
         HookPoint.ROUND_END,
         SafetyNetHook(
             max_rounds=max_rounds,
-            timeout_seconds=timeout_seconds,
+            session_timeout=timeout_seconds,
         ),
     )
-    hooks.register(HookPoint.SESSION_END, AcceptanceGateHook())
+    hooks.register(HookPoint.SESSION_END, ReportValidationHook(dbase=_hook_dbase()))
     hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
     # ---- Create initial context ------------------------------------------------
@@ -86,8 +108,10 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
         ctx = hooks.run(HookPoint.PERCEIVE_START, ctx)
 
         # Execute one round: delegate to all domains, synthesize
-        round_report = _execute_predict_round(ctx, d4, round_num)
+        round_t0 = time.monotonic()
+        round_report = _execute_predict_round(ctx, d4, round_num, hooks)
         report = round_report
+        ctx.extra["round_elapsed_ms"] = (time.monotonic() - round_t0) * 1000
 
         # Store in session
         if isinstance(ctx.session, dict):
@@ -180,7 +204,9 @@ class _StubD4Expert:
         }
 
 
-def _execute_predict_round(ctx: HookContext, d4: Any, round_num: int) -> dict[str, Any]:
+def _execute_predict_round(
+    ctx: HookContext, d4: Any, round_num: int, hooks: HookRegistry | None = None
+) -> dict[str, Any]:
     """Run one predict round: delegate to all domains, then synthesize."""
     drug_ids = ctx.task_spec.get("drug_ids", [])
     disease_id = ctx.task_spec.get("disease_id", "unknown")
@@ -194,11 +220,33 @@ def _execute_predict_round(ctx: HookContext, d4: Any, round_num: int) -> dict[st
         try:
             rep = d4.delegate_to_expert(domain, [], question)
             expert_reports.append(rep)
+            if hooks is not None:
+                hooks.run(
+                    HookPoint.DOMAIN_REPORT_PRODUCED,
+                    HookContext(
+                        runtime=ctx.runtime,
+                        task_spec=ctx.task_spec,
+                        session=ctx.session,
+                        round=round_num,
+                        extra={"domain_report": rep},
+                    ),
+                )
         except Exception as exc:
             logger.warning("Expert delegation to %s failed: %s", domain, exc)
             expert_reports.append({"domain": domain, "conclusion": str(exc), "confidence": {}})
 
     synthesized = d4.synthesize(expert_reports) if hasattr(d4, "synthesize") else {}
+    if hooks is not None:
+        hooks.run(
+            HookPoint.D4_REPORT_PRODUCED,
+            HookContext(
+                runtime=ctx.runtime,
+                task_spec=ctx.task_spec,
+                session=ctx.session,
+                round=round_num,
+                extra={"d4_report": synthesized},
+            ),
+        )
     coverage = len([r for r in expert_reports if r.get("conclusion")]) / max(len(domains), 1)
     ctx.extra["evidence_coverage"] = coverage
     ctx.extra["pending_delegations"] = 0

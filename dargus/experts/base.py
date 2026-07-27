@@ -96,7 +96,7 @@ class Expert(BaseAgent):
     # Prompt overrides — domain-specific system prompts
     # ------------------------------------------------------------------
 
-    def _build_planner_prompt(self) -> str:
+    def _build_reason_prompt(self) -> str:
         return (
             f"You are {self.name}, a biomedical domain expert specializing in "
             f"evidence at biological levels: {', '.join(self.SUPPORTED_LEVELS)}.\n"
@@ -108,7 +108,7 @@ class Expert(BaseAgent):
             '"expected_output": {}}'
         )
 
-    def _build_critic_prompt(self) -> str:
+    def _build_perceive_prompt(self) -> str:
         return (
             f"You are {self.name}, critically reviewing execution results. "
             "Determine if findings are sufficient. Identify remaining gaps. "

@@ -4,9 +4,9 @@ from dargus.agents.report import AgentReport, CallTrace
 
 
 def test_call_trace_defaults():
-    trace = CallTrace(round=1, phase="planner")
+    trace = CallTrace(round=1, phase="reason")
     assert trace.round == 1
-    assert trace.phase == "planner"
+    assert trace.phase == "reason"
     assert trace.skill_used is None
     assert trace.tool_called is None
     assert trace.knowledge_retrieved == []
@@ -29,9 +29,9 @@ def test_agent_report_construction():
 
 def test_agent_report_with_traces():
     traces = [
-        CallTrace(round=0, phase="planner", elapsed_ms=150),
-        CallTrace(round=0, phase="executor", tool_called="dbase_query", elapsed_ms=200),
-        CallTrace(round=0, phase="critic", elapsed_ms=180),
+        CallTrace(round=0, phase="reason", elapsed_ms=150),
+        CallTrace(round=0, phase="act", tool_called="dbase_query", elapsed_ms=200),
+        CallTrace(round=0, phase="perceive", elapsed_ms=180),
     ]
     report = AgentReport(
         agent_name="Test",

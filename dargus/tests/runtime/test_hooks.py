@@ -9,10 +9,12 @@ import pytest
 
 from dargus.runtime.context import RuntimeContext
 from dargus.runtime.hooks import (
-    AcceptanceGateHook,
     HookContext,
     HookPoint,
     HookRegistry,
+    ObserverHook,
+    ReportValidationError,
+    ReportValidationHook,
     ResultReportHook,
     SafetyNetHook,
     SessionInitHook,
@@ -181,6 +183,42 @@ class TestHookRegistry:
         registry.register(HookPoint.PERCEIVE_START, _CountingHook("3", calls))
         registry.run(HookPoint.PERCEIVE_START, _make_ctx())
         assert calls == ["1", "2", "3"]
+
+    def test_observer_hook_failure_is_logged_and_skipped(self):
+        """Observer-only hooks are fail-open: raise → logged, chain continues."""
+        registry = HookRegistry()
+        calls: list[str] = []
+        registry.register(HookPoint.ROUND_END, ObserverHook(_FailingHook(ValueError("boom"))))
+        registry.register(HookPoint.ROUND_END, _CountingHook("after", calls))
+        ctx = _make_ctx()
+        result = registry.run(HookPoint.ROUND_END, ctx)  # must not raise
+        assert result is ctx
+        assert calls == ["after"]
+
+    def test_disabled_hook_not_registered(self):
+        """Hooks named in disabled_hooks are skipped at registration."""
+        registry = HookRegistry(disabled_hooks={"SafetyNetHook"})
+        registry.register(HookPoint.ROUND_END, SafetyNetHook())
+        assert registry.list_hooks(HookPoint.ROUND_END) == []
+
+    def test_invocation_log_records_success_and_failure(self):
+        """Every hook invocation is recorded with name, point, elapsed, ok."""
+        registry = HookRegistry()
+        registry.register(HookPoint.ROUND_END, _CountingHook("ok", []))
+        registry.run(HookPoint.ROUND_END, _make_ctx())
+        assert len(registry.invocation_log) == 1
+        entry = registry.invocation_log[0]
+        assert entry["point"] == "ROUND_END"
+        assert entry["ok"] is True
+        assert entry["error"] is None
+        assert entry["elapsed_ms"] >= 0.0
+
+    def test_invocation_log_records_observer_failure(self):
+        registry = HookRegistry()
+        registry.register(HookPoint.ROUND_END, ObserverHook(_FailingHook(ValueError("x"))))
+        registry.run(HookPoint.ROUND_END, _make_ctx())
+        assert registry.invocation_log[0]["ok"] is False
+        assert registry.invocation_log[0]["error"] == "x"
 
 
 # ---------------------------------------------------------------------------
@@ -430,12 +468,25 @@ class TestSafetyNetHook:
         assert "force_converge" not in result.extra
 
     def test_timeout_check(self):
-        hook = SafetyNetHook(timeout_seconds=0.0, max_rounds=999)
+        hook = SafetyNetHook(session_timeout=0.0, max_rounds=999)
         started = datetime.now(timezone.utc).isoformat()
         ctx = _make_ctx(round=1, session={"started_at": started})
         result = hook(ctx)
-        # elapsed > 0 > timeout_seconds(0)
+        # elapsed > 0 > session_timeout(0)
         assert result.extra["force_converge"] is True
+
+    def test_round_timeout_check(self):
+        """round_timeout fires on the wall-clock of the round that just ran."""
+        hook = SafetyNetHook(max_rounds=999, round_timeout=1.0)
+        ctx = _make_ctx(round=1, extra={"round_elapsed_ms": 1500.0})
+        result = hook(ctx)
+        assert result.extra["force_converge"] is True
+
+    def test_round_timeout_not_exceeded(self):
+        hook = SafetyNetHook(max_rounds=999, round_timeout=10.0)
+        ctx = _make_ctx(round=1, extra={"round_elapsed_ms": 500.0})
+        result = hook(ctx)
+        assert "force_converge" not in result.extra
 
     def test_does_not_raise(self):
         """SafetyNetHook must never raise — it always returns the context."""
@@ -444,26 +495,16 @@ class TestSafetyNetHook:
         result = hook(ctx)  # should not raise
         assert result is ctx
 
-    def test_insufficient_evidence_after_max_rounds(self):
-        hook = SafetyNetHook(max_rounds=3, min_evidence_coverage=0.5)
-        ctx = _make_ctx(round=3, extra={"evidence_coverage": 0.1})
-        result = hook(ctx)
-        assert result.extra.get("insufficient_evidence") is True
-
-    def test_sufficient_evidence_no_flag(self):
-        hook = SafetyNetHook(max_rounds=3, min_evidence_coverage=0.5)
-        ctx = _make_ctx(round=3, extra={"evidence_coverage": 0.8})
-        result = hook(ctx)
-        assert "insufficient_evidence" not in result.extra
-
-    def test_evidence_check_only_after_max_rounds(self):
-        hook = SafetyNetHook(max_rounds=5, min_evidence_coverage=0.5)
-        ctx = _make_ctx(round=2, extra={"evidence_coverage": 0.0})
+    def test_no_min_evidence_coverage_rule(self):
+        """Design: there is no minimum-evidence-coverage rule — the hook must
+        never set insufficient_evidence, even at zero coverage past max rounds."""
+        hook = SafetyNetHook(max_rounds=3)
+        ctx = _make_ctx(round=3, extra={"evidence_coverage": 0.0})
         result = hook(ctx)
         assert "insufficient_evidence" not in result.extra
 
     def test_no_session_no_crash(self):
-        hook = SafetyNetHook(timeout_seconds=1.0)
+        hook = SafetyNetHook(session_timeout=1.0)
         ctx = _make_ctx(round=10, session=None)
         result = hook(ctx)  # should not crash
         assert result.extra["force_converge"] is True
@@ -476,15 +517,15 @@ class TestSafetyNetHook:
 
 
 # ---------------------------------------------------------------------------
-# B6: AcceptanceGateHook
+# B6: ReportValidationHook
 # ---------------------------------------------------------------------------
 
 
-class TestAcceptanceGateHook:
-    """Tests for AcceptanceGateHook."""
+class TestReportValidationHook:
+    """Tests for ReportValidationHook."""
 
     def test_valid_report_passes(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {
             "efficacy_score": 0.5,
             "confidence_score": 0.3,
@@ -495,60 +536,60 @@ class TestAcceptanceGateHook:
         assert result is ctx
 
     def test_noop_when_no_report(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         ctx = _make_ctx()
         result = hook(ctx)
         assert result is ctx
 
     def test_noop_when_no_report_in_extra_or_session(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         ctx = _make_ctx(extra={"other": 1}, session={"unrelated": 2})
         result = hook(ctx)
         assert result is ctx
 
     def test_finds_report_in_session(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"efficacy_score": 0.2, "confidence_score": 0.1}
         ctx = _make_ctx(session={"FinalReport": report})
         result = hook(ctx)
         assert result is ctx
 
     def test_report_not_dict_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         ctx = _make_ctx(extra={"FinalReport": "not-a-dict"})
         with pytest.raises(ValueError, match="FinalReport must be a dict"):
             hook(ctx)
 
     def test_efficacy_score_negative_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"efficacy_score": -0.1}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="efficacy_score must be in"):
             hook(ctx)
 
     def test_efficacy_score_above_one_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"efficacy_score": 1.5}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="efficacy_score must be in"):
             hook(ctx)
 
     def test_confidence_score_negative_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"confidence_score": -0.5}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="confidence_score must be in"):
             hook(ctx)
 
     def test_confidence_score_above_one_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"confidence_score": 2.0}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="confidence_score must be in"):
             hook(ctx)
 
     def test_efficacy_score_non_numeric_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report: dict[str, Any] = {"efficacy_score": "high"}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="efficacy_score must be in"):
@@ -556,7 +597,7 @@ class TestAcceptanceGateHook:
 
     def test_insufficient_data_waives_scores(self):
         """insufficient_data reports pass with both scores unset."""
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report: dict[str, Any] = {
             "confidence_level": "insufficient_data",
             "efficacy_score": None,
@@ -569,7 +610,7 @@ class TestAcceptanceGateHook:
 
     def test_insufficient_data_with_scores_set_raises(self):
         """insufficient_data reports must NOT carry DES/DCS values."""
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {
             "confidence_level": "insufficient_data",
             "efficacy_score": 0.5,
@@ -579,14 +620,14 @@ class TestAcceptanceGateHook:
             hook(ctx)
 
     def test_empty_supporting_records_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {"supporting_records": []}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="supporting_records must be a non-empty"):
             hook(ctx)
 
     def test_supporting_records_wrong_type_raises(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report: dict[str, Any] = {"supporting_records": "not-a-list"}
         ctx = _make_ctx(extra={"FinalReport": report})
         with pytest.raises(ValueError, match="supporting_records must be a non-empty"):
@@ -594,14 +635,14 @@ class TestAcceptanceGateHook:
 
     def test_missing_both_score_fields_passes(self):
         """Report without score fields is valid (optional fields)."""
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report: dict[str, Any] = {"supporting_records": [{"a": 1}]}
         ctx = _make_ctx(extra={"FinalReport": report})
         result = hook(ctx)
         assert result is ctx
 
     def test_boundary_values_pass(self):
-        hook = AcceptanceGateHook()
+        hook = ReportValidationHook()
         report = {
             "efficacy_score": 0.0,
             "confidence_score": 1.0,
@@ -610,6 +651,53 @@ class TestAcceptanceGateHook:
         ctx = _make_ctx(extra={"FinalReport": report})
         result = hook(ctx)
         assert result is ctx
+
+    def test_report_valid_flag_set_true_on_pass(self):
+        hook = ReportValidationHook()
+        ctx = _make_ctx(extra={"FinalReport": {"efficacy_score": 0.5}})
+        result = hook(ctx)
+        assert result.report_valid is True
+
+    def test_report_valid_flag_set_false_on_failure(self):
+        hook = ReportValidationHook()
+        ctx = _make_ctx(extra={"FinalReport": {"efficacy_score": 2.0}})
+        with pytest.raises(ReportValidationError):
+            hook(ctx)
+        assert ctx.report_valid is False
+
+    def test_report_validation_error_carries_violations(self):
+        """ReportValidationError exposes a structured violation list."""
+        hook = ReportValidationHook()
+        ctx = _make_ctx(extra={"FinalReport": {"efficacy_score": 2.0, "confidence_score": -1.0}})
+        with pytest.raises(ReportValidationError) as exc_info:
+            hook(ctx)
+        assert len(exc_info.value.violations) == 2
+        assert any("efficacy_score" in v for v in exc_info.value.violations)
+        assert any("confidence_score" in v for v in exc_info.value.violations)
+
+    def test_evidence_id_existence_check_with_dbase(self):
+        """With a D-Base wired, cited ev_* ids must exist in the store."""
+        from unittest.mock import MagicMock
+
+        dbase = MagicMock()
+        dbase.evidence_id_exists.side_effect = lambda eid: eid == "ev_exists"
+
+        hook = ReportValidationHook(dbase=dbase)
+        report = {"supporting_records": ["ev_exists", "ev_missing"]}
+        ctx = _make_ctx(extra={"FinalReport": report})
+        with pytest.raises(ReportValidationError, match="ev_missing"):
+            hook(ctx)
+
+        report_ok = {"supporting_records": ["ev_exists"]}
+        ctx_ok = _make_ctx(extra={"FinalReport": report_ok})
+        assert hook(ctx_ok).report_valid is True
+
+    def test_existence_check_skipped_without_dbase(self):
+        """Without a wired D-Base, unknown ev_* ids do not fail validation."""
+        hook = ReportValidationHook(dbase=None)
+        report = {"supporting_records": ["ev_anything"]}
+        ctx = _make_ctx(extra={"FinalReport": report})
+        assert hook(ctx).report_valid is True
 
 
 # ---------------------------------------------------------------------------
@@ -718,10 +806,10 @@ class TestHookChainIntegration:
         assert calls == ["first"]
 
     def test_session_init_then_acceptance_then_result(self):
-        """AcceptanceGateHook (before ResultReportHook) validates, then result is built."""
+        """ReportValidationHook (before ResultReportHook) validates, then result is built."""
         registry = HookRegistry()
         registry.register(HookPoint.SESSION_START, SessionInitHook())
-        registry.register(HookPoint.SESSION_END, AcceptanceGateHook())
+        registry.register(HookPoint.SESSION_END, ReportValidationHook())
         registry.register(HookPoint.SESSION_END, ResultReportHook())
 
         ctx = _make_ctx(task_spec={"workflow": "predict"})
@@ -737,8 +825,8 @@ class TestHookChainIntegration:
         assert "result" in ctx.extra
         assert ctx.extra["result"]["status"] == "completed"
 
-    def test_acceptance_gate_blocks_result_when_report_invalid(self):
-        """If AcceptanceGateHook raises, ResultReportHook should not run."""
+    def test_report_validation_blocks_result_when_report_invalid(self):
+        """If ReportValidationHook raises, ResultReportHook should not run."""
         registry = HookRegistry()
         calls: list[str] = []
 
@@ -748,7 +836,7 @@ class TestHookChainIntegration:
                 context.extra["result"] = {}
                 return context
 
-        registry.register(HookPoint.SESSION_END, AcceptanceGateHook())
+        registry.register(HookPoint.SESSION_END, ReportValidationHook())
         registry.register(HookPoint.SESSION_END, _TaggedResultHook())
 
         ctx = _make_ctx(extra={"FinalReport": {"efficacy_score": 2.0}})  # invalid
@@ -794,7 +882,7 @@ class TestHookProtocolCompliance:
             SkeletonContextHook(),
             ToolAuditHook(),
             SafetyNetHook(),
-            AcceptanceGateHook(),
+            ReportValidationHook(),
             ResultReportHook(),
         ],
     )

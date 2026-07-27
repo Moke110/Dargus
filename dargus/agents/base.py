@@ -1,4 +1,4 @@
-"""BaseAgent — Harness skeleton with Planner -> Executor -> Critic execution loop."""
+"""BaseAgent — Harness skeleton with Perceive -> Reason -> Act execution loop."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def run(self, task_spec: dict[str, Any]) -> AgentReport:
-        """Execute the full Planner -> Executor -> Critic loop until convergence."""
+        """Execute the full Perceive -> Reason -> Act loop until convergence."""
         traces: list[CallTrace] = []
         history: list[dict] = []
         round_num = 0
@@ -127,11 +127,11 @@ class BaseAgent(ABC):
         findings: list = []
 
         while not converged and round_num < self.MAX_ROUNDS:
-            # --- Planner ---
-            plan, plan_trace = self._plan(task_spec, history, round_num)
+            # --- Reason (plan) ---
+            plan, plan_trace = self._reason(task_spec, history, round_num)
             traces.append(plan_trace)
 
-            # Hook: PLAN_END
+            # Hook: REASON_END
             if self._hook_registry is not None:
                 _ctx = HookContext(
                     runtime=None,
@@ -142,11 +142,11 @@ class BaseAgent(ABC):
                     trace=plan_trace,
                     extra={},
                 )
-                self._hook_registry.run(HookPoint.PLAN_END, _ctx)
+                self._hook_registry.run(HookPoint.REASON_END, _ctx)
 
-            # --- Executor ---
-            executor_output, exec_traces = self._execute(plan, round_num)
-            traces.extend(exec_traces)
+            # --- Act (execute plan steps) ---
+            act_output, act_traces = self._act(plan, round_num)
+            traces.extend(act_traces)
 
             # Hook: ACT_END
             if self._hook_registry is not None:
@@ -156,16 +156,16 @@ class BaseAgent(ABC):
                     session=None,
                     agent=self,
                     round=round_num,
-                    trace=exec_traces[-1] if exec_traces else None,
+                    trace=act_traces[-1] if act_traces else None,
                     extra={},
                 )
                 self._hook_registry.run(HookPoint.ACT_END, _ctx)
 
-            # --- Critic ---
-            verdict, critic_trace = self._criticize(plan, executor_output, history, round_num)
-            traces.append(critic_trace)
+            # --- Perceive (review results, judge convergence) ---
+            verdict, perceive_trace = self._perceive(plan, act_output, history, round_num)
+            traces.append(perceive_trace)
 
-            # Hook: CRITIC_END
+            # Hook: PERCEIVE_END
             if self._hook_registry is not None:
                 _ctx = HookContext(
                     runtime=None,
@@ -173,10 +173,10 @@ class BaseAgent(ABC):
                     session=None,
                     agent=self,
                     round=round_num,
-                    trace=critic_trace,
+                    trace=perceive_trace,
                     extra={},
                 )
-                self._hook_registry.run(HookPoint.CRITIC_END, _ctx)
+                self._hook_registry.run(HookPoint.PERCEIVE_END, _ctx)
 
             converged = verdict.get("converged", False)
             data_gaps.extend(verdict.get("gaps", []))
@@ -186,7 +186,7 @@ class BaseAgent(ABC):
                 {
                     "round": round_num,
                     "plan": plan,
-                    "executor_output": executor_output,
+                    "act_output": act_output,
                     "verdict": verdict,
                 }
             )
@@ -297,14 +297,16 @@ class BaseAgent(ABC):
     # Phase methods — override in subclasses
     # ------------------------------------------------------------------
 
-    def _plan(self, task_spec: dict, history: list[dict], round_num: int) -> tuple[dict, CallTrace]:
-        """Planner phase: LLM generates a structured execution plan."""
+    def _reason(
+        self, task_spec: dict, history: list[dict], round_num: int
+    ) -> tuple[dict, CallTrace]:
+        """Reason phase: LLM generates a structured execution plan."""
         t0 = time.monotonic()
         knowledge = self._retrieve_knowledge(
             query=json.dumps(task_spec),
             biological_level=task_spec.get("biological_level"),
         )
-        system_prompt = self._build_planner_prompt()
+        system_prompt = self._build_reason_prompt()
         user_prompt = json.dumps(
             {
                 "task_spec": task_spec,
@@ -325,15 +327,15 @@ class BaseAgent(ABC):
         elapsed = int((time.monotonic() - t0) * 1000)
         trace = CallTrace(
             round=round_num,
-            phase="planner",
+            phase="reason",
             knowledge_retrieved=[k.entity_id for k in knowledge],
             output_summary=str(plan.get("goal", ""))[:200],
             elapsed_ms=elapsed,
         )
         return plan, trace
 
-    def _execute(self, plan: dict, round_num: int) -> tuple[dict, list[CallTrace]]:
-        """Executor phase: ReAct loop over plan steps, calling Tools."""
+    def _act(self, plan: dict, round_num: int) -> tuple[dict, list[CallTrace]]:
+        """Act phase: ReAct loop over plan steps, calling Tools."""
         traces: list[CallTrace] = []
         results: dict[str, Any] = {}
 
@@ -349,7 +351,7 @@ class BaseAgent(ABC):
                     traces.append(
                         CallTrace(
                             round=round_num,
-                            phase="executor",
+                            phase="act",
                             skill_used=skill_name,
                             error=f"Skill '{skill_name}' not found",
                             elapsed_ms=0,
@@ -374,7 +376,7 @@ class BaseAgent(ABC):
             traces.append(
                 CallTrace(
                     round=round_num,
-                    phase="executor",
+                    phase="act",
                     skill_used=skill_name,
                     tool_called=tool_name,
                     output_summary=str(results.get(f"step_{i}", ""))[:200],
@@ -385,16 +387,16 @@ class BaseAgent(ABC):
 
         return results, traces
 
-    def _criticize(
-        self, plan: dict, executor_output: dict, history: list[dict], round_num: int
+    def _perceive(
+        self, plan: dict, act_output: dict, history: list[dict], round_num: int
     ) -> tuple[dict, CallTrace]:
-        """Critic phase: LLM reviews results and judges convergence."""
+        """Perceive phase: LLM reviews results and judges convergence."""
         t0 = time.monotonic()
-        system_prompt = self._build_critic_prompt()
+        system_prompt = self._build_perceive_prompt()
         user_prompt = json.dumps(
             {
                 "plan": plan,
-                "executor_output": {k: str(v)[:300] for k, v in executor_output.items()},
+                "act_output": {k: str(v)[:300] for k, v in act_output.items()},
                 "history": [
                     {"round": h["round"], "verdict": h.get("verdict", {})} for h in history
                 ],
@@ -406,12 +408,12 @@ class BaseAgent(ABC):
         try:
             verdict = json.loads(response.strip())
         except json.JSONDecodeError:
-            verdict = {"converged": True, "confidence": 0.0, "gaps": ["critic_parse_error"]}
+            verdict = {"converged": True, "confidence": 0.0, "gaps": ["perceive_parse_error"]}
 
         elapsed = int((time.monotonic() - t0) * 1000)
         trace = CallTrace(
             round=round_num,
-            phase="critic",
+            phase="perceive",
             output_summary=(
                 f"converged={verdict.get('converged')}," f" confidence={verdict.get('confidence')}"
             ),
@@ -423,7 +425,7 @@ class BaseAgent(ABC):
     # Prompt builders — override in subclasses
     # ------------------------------------------------------------------
 
-    def _build_planner_prompt(self) -> str:
+    def _build_reason_prompt(self) -> str:
         return (
             "You are a planning agent for biomedical evidence analysis. "
             "Given a task specification, available skills, and tools, "
@@ -434,7 +436,7 @@ class BaseAgent(ABC):
             '"expected_output": {}}'
         )
 
-    def _build_critic_prompt(self) -> str:
+    def _build_perceive_prompt(self) -> str:
         return (
             "You are a scientific critic. Review the execution output against the plan. "
             "Determine if the plan's expected_output has been satisfied. "

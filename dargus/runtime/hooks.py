@@ -1,11 +1,19 @@
-"""Hook system — registration, triggering, and execution for Dargus runtime hooks."""
+"""Hook system — registration, triggering, and execution for Dargus runtime hooks.
+
+Design: ``design/5_hooks.md``. Eleven hook points around the
+Perceive → Reason → Act harness and the report flow; six core hooks.
+"""
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # B1: HookPoint, HookContext, Hook Protocol, HookRegistry
@@ -17,10 +25,14 @@ class HookPoint(Enum):
 
     SESSION_START = auto()
     PERCEIVE_START = auto()
-    PLAN_END = auto()
+    PERCEIVE_END = auto()
+    REASON_START = auto()
+    REASON_END = auto()
+    ACT_START = auto()
     ACT_END = auto()
-    CRITIC_END = auto()
     ROUND_END = auto()
+    DOMAIN_REPORT_PRODUCED = auto()
+    D4_REPORT_PRODUCED = auto()
     SESSION_END = auto()
 
 
@@ -28,6 +40,8 @@ class HookPoint(Enum):
 class HookContext:
     """Context passed to each hook during execution.
 
+    Reserved keys (design/5_hooks.md): ``session``, ``round``, ``agent``,
+    ``tools``, ``task_spec``, ``result``, ``error``, ``report_valid``.
     Fields use ``Any`` for forward references to types not yet built
     (WorkflowSession, BaseAgent, CallTrace) so the hook system has no
     dependency on model / agent code.
@@ -37,8 +51,12 @@ class HookContext:
     task_spec: dict[str, Any] = field(default_factory=dict)
     session: Any | None = None  # WorkflowSession (forward ref)
     agent: Any | None = None  # BaseAgent (forward ref)
+    tools: dict[str, Any] = field(default_factory=dict)
     round: int = 0
     trace: Any | None = None  # CallTrace (forward ref)
+    result: Any | None = None
+    error: str | None = None
+    report_valid: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -52,16 +70,39 @@ class Hook(Protocol):
     def __call__(self, context: HookContext) -> HookContext: ...
 
 
+class ObserverHook:
+    """Wrapper marking a hook observer-only: failures are logged and skipped
+    (fail-open) instead of aborting the hook chain."""
+
+    def __init__(self, hook: Hook, name: str | None = None) -> None:
+        self.hook = hook
+        self.name = name or getattr(hook, "__name__", type(hook).__name__)
+
+    def __call__(self, context: HookContext) -> HookContext:
+        return self.hook(context)
+
+    def __repr__(self) -> str:
+        return f"ObserverHook({self.name})"
+
+
 class HookRegistry:
     """Registry that stores and executes hooks keyed by :class:`HookPoint`."""
 
-    def __init__(self) -> None:
+    def __init__(self, disabled_hooks: set[str] | None = None) -> None:
         self._hooks: dict[HookPoint, list[Hook]] = {}
+        self._disabled: set[str] = set(disabled_hooks or set())
+        # Structured invocation log: hook name, point, timestamp, elapsed, ok
+        self.invocation_log: list[dict[str, Any]] = []
 
     def register(self, point: HookPoint, hook: Hook) -> None:
         """Register *hook* for *point*.  No-op if it is already registered
-        at the same point (identity check).
+        at the same point (identity check). Core hooks named in
+        ``disabled_hooks`` are skipped.
         """
+        name = getattr(hook, "__name__", type(hook).__name__)
+        if name in self._disabled:
+            logger.info("Hook %s disabled via config — not registered at %s", name, point.name)
+            return
         if point not in self._hooks:
             self._hooks[point] = []
         if hook not in self._hooks[point]:
@@ -71,15 +112,48 @@ class HookRegistry:
         """Run all hooks registered for *point* in registration order.
 
         Each hook receives the context returned by the previous hook.
-        If any hook raises an exception it is wrapped in :class:`RuntimeError`
-        (with a message that names the failing hook and point) and re-raised.
+        A non-observer hook that raises aborts the chain: the exception is
+        wrapped in :class:`RuntimeError` (naming hook and point) and
+        re-raised. Observer-only hooks (:class:`ObserverHook`) that raise
+        are logged and skipped. Every invocation is recorded in
+        :attr:`invocation_log`.
         """
         for hook in self._hooks.get(point, []):
+            name = getattr(hook, "__name__", type(hook).__name__)
+            observer = isinstance(hook, ObserverHook)
+            t0 = time.monotonic()
+            ok = True
+            error: str | None = None
             try:
                 context = hook(context)
             except Exception as exc:
-                raise RuntimeError(f"Hook {hook!r} failed at point {point.name}: {exc}") from exc
+                ok = False
+                error = str(exc)
+                if observer:
+                    logger.warning(
+                        "Observer hook %s failed at %s — skipped: %s", name, point.name, exc
+                    )
+                else:
+                    self._log_invocation(name, point, t0, ok, error)
+                    raise RuntimeError(
+                        f"Hook {hook!r} failed at point {point.name}: {exc}"
+                    ) from exc
+            self._log_invocation(name, point, t0, ok, error)
         return context
+
+    def _log_invocation(
+        self, name: str, point: HookPoint, t0: float, ok: bool, error: str | None
+    ) -> None:
+        self.invocation_log.append(
+            {
+                "hook": name,
+                "point": point.name,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "elapsed_ms": (time.monotonic() - t0) * 1000,
+                "ok": ok,
+                "error": error,
+            }
+        )
 
     def clear(self) -> None:
         """Remove all registered hooks."""
@@ -210,56 +284,81 @@ class ToolAuditHook:
 class SafetyNetHook:
     """Safety-net guard that runs on :attr:`HookPoint.ROUND_END`.
 
-    Sets ``force_converge`` and ``insufficient_evidence`` flags in
-    ``context.extra`` when safety limits are exceeded.  Never raises.
+    Stops the loop (via ``force_converge``) when any limit is reached:
+    ``max_rounds`` total rounds, ``round_timeout`` wall-clock per round,
+    ``session_timeout`` wall-clock for the whole session. There is no
+    minimum-evidence-coverage rule (design/5_hooks.md). Never raises.
     """
 
     def __init__(
         self,
         max_rounds: int = 10,
-        timeout_seconds: float = 300.0,
-        min_evidence_coverage: float = 0.0,
+        session_timeout: float = 300.0,
+        round_timeout: float | None = None,
     ) -> None:
         self.max_rounds = max_rounds
-        self.timeout_seconds = timeout_seconds
-        self.min_evidence_coverage = min_evidence_coverage
+        self.session_timeout = session_timeout
+        self.round_timeout = round_timeout
 
     def __call__(self, context: HookContext) -> HookContext:
-        elapsed: float | None = None
-        if context.session and "started_at" in context.session:
-            try:
-                started = datetime.fromisoformat(context.session["started_at"])
-                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-            except (ValueError, TypeError):
-                pass
-
         # Hard round cap
         if context.round >= self.max_rounds:
             context.extra["force_converge"] = True
 
-        # Timeout
-        if elapsed is not None and elapsed > self.timeout_seconds:
-            context.extra["force_converge"] = True
+        # Session timeout (elapsed since session start)
+        if context.session and "started_at" in context.session:
+            try:
+                started = datetime.fromisoformat(context.session["started_at"])
+                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                if elapsed > self.session_timeout:
+                    context.extra["force_converge"] = True
+            except (ValueError, TypeError):
+                pass
 
-        # Evidence shortfall after exhausting rounds
-        if context.round >= self.max_rounds:
-            coverage = context.extra.get("evidence_coverage", 0)
-            if coverage < self.min_evidence_coverage:
-                context.extra["insufficient_evidence"] = True
+        # Round timeout (wall-clock of the round that just finished)
+        if self.round_timeout is not None:
+            round_elapsed_ms = context.extra.get("round_elapsed_ms")
+            if round_elapsed_ms is not None and round_elapsed_ms > self.round_timeout * 1000:
+                context.extra["force_converge"] = True
 
         return context
 
 
 # ---------------------------------------------------------------------------
-# B6: AcceptanceGateHook
+# B6: ReportValidationHook (+ ReportValidationError)
 # ---------------------------------------------------------------------------
 
 
-class AcceptanceGateHook:
-    """Validates the final report on :attr:`HookPoint.SESSION_END`.
+class ReportValidationError(ValueError):
+    """Raised by :class:`ReportValidationHook` when a report is invalid.
 
+    Carries a structured list of violations (design/5_hooks.md).
+    """
+
+    def __init__(self, violations: list[str]) -> None:
+        self.violations = violations
+        super().__init__("Report validation failed: " + "; ".join(violations))
+
+
+class ReportValidationHook:
+    """Validates reports on ``DOMAIN_REPORT_PRODUCED``, ``D4_REPORT_PRODUCED``,
+    and :attr:`HookPoint.SESSION_END` (replaces AcceptanceGateHook).
+
+    Checks (design/5_hooks.md §ReportValidationHook):
+    1. report format (must be a dict),
+    2. presence and valid range of ``efficacy_score`` (DES) and
+       ``confidence_score`` (DCS) — waived when ``confidence_level`` is
+       ``insufficient_data``, in which case both scores must be unset,
+    3. existence in D-Base of every ``evidence_id`` cited in
+       ``supporting_records`` (only when a D-Base is wired via ``dbase``).
+
+    On failure: sets ``context.report_valid = False`` and raises
+    :class:`ReportValidationError` with the structured violations.
     No-op when no report is present (some sessions do not produce reports).
     """
+
+    def __init__(self, dbase: Any | None = None) -> None:
+        self.dbase = dbase
 
     def __call__(self, context: HookContext) -> HookContext:
         report = context.extra.get("FinalReport")
@@ -269,15 +368,18 @@ class AcceptanceGateHook:
         if report is None:
             return context  # no-op
 
-        if not isinstance(report, dict):
-            raise ValueError("FinalReport must be a dict")
+        violations: list[str] = []
 
-        # DES ± DCS: both scores must be present and in [0, 1], except when
-        # confidence_level is "insufficient_data" — then both must be unset.
+        if not isinstance(report, dict):
+            raise ReportValidationError(
+                [f"FinalReport must be a dict, got {type(report).__name__}"]
+            )
+
+        # DES ± DCS range (waived for insufficient_data — scores must be unset)
         if report.get("confidence_level") == "insufficient_data":
             for key in ("efficacy_score", "confidence_score"):
                 if report.get(key) is not None:
-                    raise ValueError(
+                    violations.append(
                         f"{key} must be unset when confidence_level is "
                         f"insufficient_data, got {report[key]!r}"
                     )
@@ -286,16 +388,27 @@ class AcceptanceGateHook:
                 if key in report:
                     val = report[key]
                     if not isinstance(val, (int, float)) or not (0 <= val <= 1):
-                        raise ValueError(f"{key} must be in [0, 1], got {val!r}")
+                        violations.append(f"{key} must be in [0, 1], got {val!r}")
 
         # supporting_records (insufficient_data reports may cite zero records)
-        if "supporting_records" in report and report.get("confidence_level") != "insufficient_data":
-            records = report["supporting_records"]
+        records = report.get("supporting_records")
+        if records is not None and report.get("confidence_level") != "insufficient_data":
             if not isinstance(records, list) or len(records) == 0:
-                raise ValueError(
-                    f"supporting_records must be a non-empty list, " f"got {records!r}"
-                )
+                violations.append(f"supporting_records must be a non-empty list, got {records!r}")
 
+        # evidence_id existence in D-Base
+        if self.dbase is not None and isinstance(records, list):
+            for rid in records:
+                if not isinstance(rid, str) or not rid.startswith("ev_"):
+                    continue  # non-evidence citation forms are out of scope
+                if not self.dbase.evidence_id_exists(rid):
+                    violations.append(f"supporting record {rid!r} not found in D-Base")
+
+        if violations:
+            context.report_valid = False
+            raise ReportValidationError(violations)
+
+        context.report_valid = True
         return context
 
 
@@ -308,7 +421,7 @@ class ResultReportHook:
     """Assembles a result dict into ``context.extra["result"]`` on
     :attr:`HookPoint.SESSION_END`.
 
-    Expected to run **after** :class:`AcceptanceGateHook` in the registration
+    Expected to run **after** :class:`ReportValidationHook` in the registration
     order so the report has already been validated.
     """
 
@@ -329,4 +442,5 @@ class ResultReportHook:
             "rounds_completed": context.round,
         }
         context.extra["result"] = result
+        context.result = result
         return context

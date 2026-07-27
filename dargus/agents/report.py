@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 @dataclass
 class CallTrace:
     round: int
-    phase: str  # "planner" | "executor" | "critic"
+    phase: str  # "perceive" | "reason" | "act"
     skill_used: str | None = None
     tool_called: str | None = None
     knowledge_retrieved: list[str] = field(default_factory=list)

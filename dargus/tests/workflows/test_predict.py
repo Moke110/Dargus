@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from dargus.runtime.hooks import (
-    AcceptanceGateHook,
     HookContext,
     HookRegistry,
+    ReportValidationHook,
 )
 from dargus.workflows.predict import (
     _build_final_report,
@@ -91,13 +91,13 @@ def test_run_predict_user_confirmation_logs(caplog):
 
 
 # ---------------------------------------------------------------------------
-# AcceptanceGateHook validation tests
+# ReportValidationHook validation tests
 # ---------------------------------------------------------------------------
 
 
-def test_acceptance_gate_raises_on_invalid_efficacy_score():
-    """AcceptanceGateHook should raise ValueError when efficacy_score is out of [0,1]."""
-    gate = AcceptanceGateHook()
+def test_report_validation_raises_on_invalid_efficacy_score():
+    """ReportValidationHook should raise when efficacy_score is out of [0,1]."""
+    gate = ReportValidationHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
@@ -107,9 +107,9 @@ def test_acceptance_gate_raises_on_invalid_efficacy_score():
         gate(ctx)
 
 
-def test_acceptance_gate_raises_on_invalid_confidence_score():
-    """AcceptanceGateHook should raise ValueError when confidence_score is out of [0,1]."""
-    gate = AcceptanceGateHook()
+def test_report_validation_raises_on_invalid_confidence_score():
+    """ReportValidationHook should raise when confidence_score is out of [0,1]."""
+    gate = ReportValidationHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
@@ -119,9 +119,9 @@ def test_acceptance_gate_raises_on_invalid_confidence_score():
         gate(ctx)
 
 
-def test_acceptance_gate_waives_scores_on_insufficient_data():
+def test_report_validation_waives_scores_on_insufficient_data():
     """insufficient_data reports must have both scores unset — and pass then."""
-    gate = AcceptanceGateHook()
+    gate = ReportValidationHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
@@ -150,9 +150,9 @@ def test_acceptance_gate_waives_scores_on_insufficient_data():
         gate(ctx_bad)
 
 
-def test_acceptance_gate_raises_on_empty_supporting_records():
-    """AcceptanceGateHook should raise ValueError when supporting_records is empty."""
-    gate = AcceptanceGateHook()
+def test_report_validation_raises_on_empty_supporting_records():
+    """ReportValidationHook should raise when supporting_records is empty."""
+    gate = ReportValidationHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
@@ -168,9 +168,9 @@ def test_acceptance_gate_raises_on_empty_supporting_records():
         gate(ctx)
 
 
-def test_acceptance_gate_passes_on_valid_report():
-    """AcceptanceGateHook should pass when all fields are valid."""
-    gate = AcceptanceGateHook()
+def test_report_validation_passes_on_valid_report():
+    """ReportValidationHook should pass when all fields are valid."""
+    gate = ReportValidationHook()
     ctx = HookContext(
         runtime=None,
         task_spec={},
@@ -186,9 +186,9 @@ def test_acceptance_gate_passes_on_valid_report():
     assert result is not None  # context passed through
 
 
-def test_acceptance_gate_noop_on_missing_report():
-    """AcceptanceGateHook should no-op when no FinalReport is present."""
-    gate = AcceptanceGateHook()
+def test_report_validation_noop_on_missing_report():
+    """ReportValidationHook should no-op when no FinalReport is present."""
+    gate = ReportValidationHook()
     ctx = HookContext(runtime=None, task_spec={}, extra={})
     result = gate(ctx)
     assert result is ctx  # identity pass-through for no-op
@@ -276,8 +276,8 @@ def test_user_confirmation_gate_append_without_require(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_score():
-    """I5: AcceptanceGateHook fires and raises ValueError for invalid efficacy_score."""
+def test_run_predict_report_validation_failure_on_invalid_efficacy_score():
+    """I5: ReportValidationHook fires and raises for invalid efficacy_score."""
     spec = {
         "workflow": "predict",
         "drug_ids": ["DB00001"],
@@ -289,8 +289,8 @@ def test_run_predict_acceptance_gate_failure_on_invalid_efficacy_score():
         run_predict(spec)
 
 
-def test_run_predict_acceptance_gate_failure_on_invalid_confidence_score():
-    """I5: AcceptanceGateHook fires and raises ValueError for invalid confidence_score."""
+def test_run_predict_report_validation_failure_on_invalid_confidence_score():
+    """I5: ReportValidationHook fires and raises for invalid confidence_score."""
     spec = {
         "workflow": "predict",
         "drug_ids": ["DB00001"],
@@ -302,8 +302,8 @@ def test_run_predict_acceptance_gate_failure_on_invalid_confidence_score():
         run_predict(spec)
 
 
-def test_run_predict_acceptance_gate_failure_on_empty_records():
-    """I5: AcceptanceGateHook fires for empty supporting_records."""
+def test_run_predict_report_validation_failure_on_empty_records():
+    """I5: ReportValidationHook fires for empty supporting_records."""
     spec = {
         "workflow": "predict",
         "drug_ids": ["DB00001"],

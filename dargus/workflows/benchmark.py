@@ -10,10 +10,10 @@ import logging
 from typing import Any
 
 from dargus.runtime.hooks import (
-    AcceptanceGateHook,
     HookContext,
     HookPoint,
     HookRegistry,
+    ReportValidationHook,
     ResultReportHook,
     SafetyNetHook,
     SessionInitHook,
@@ -55,8 +55,8 @@ def run_benchmark(task_spec: dict[str, Any]) -> dict[str, Any]:
     hooks = HookRegistry()
     hooks.register(HookPoint.SESSION_START, SessionInitHook())
     hooks.register(HookPoint.PERCEIVE_START, SkeletonContextHook(max_rounds=max_rounds))
-    hooks.register(HookPoint.ROUND_END, SafetyNetHook(max_rounds=max_rounds, timeout_seconds=600.0))
-    hooks.register(HookPoint.SESSION_END, AcceptanceGateHook())
+    hooks.register(HookPoint.ROUND_END, SafetyNetHook(max_rounds=max_rounds, session_timeout=600.0))
+    hooks.register(HookPoint.SESSION_END, ReportValidationHook())
     hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
     # ---- Create initial context ------------------------------------------------

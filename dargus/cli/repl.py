@@ -1,9 +1,8 @@
-"""Dargus Rich REPL — interactive clinical efficacy prediction."""
+"""Dargus REPL — interactive clinical efficacy prediction."""
 
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 
 from rich.console import Console
@@ -12,8 +11,7 @@ from rich.style import Style
 from rich.text import Text
 
 from dargus import __version__
-from dargus.iris.commander import Iris
-from dargus.tui._logo import TAGLINE, build_logo
+from dargus.cli.ui.logo import TAGLINE, build_logo
 
 _GREETING = """\
 Hi, I'm Iris, the director agent of Project Dargus.
@@ -39,22 +37,11 @@ Available commands:
 Type any natural language query to get started."""
 
 
-def _get_current_model() -> str:
-    """Read the current LLM model name from dargus_config.yaml."""
-    from pathlib import Path
-
-    import yaml
-
-    config_path = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
-    with config_path.open("r", encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh) or {}
-    return cfg.get("llm", {}).get("model", "?") or "?"
-
-
 def run_repl() -> None:
-    """Launch the Dargus Rich REPL."""
+    """Launch the Dargus REPL."""
+    from dargus import api
+
     console = Console()
-    iris = Iris()
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -87,7 +74,7 @@ def run_repl() -> None:
     console.print(Text(f"v{__version__}  ·  /help  /quit  /model", style=Style(color="grey50")))
 
     # API key status
-    if os.environ.get("DARGUS_LLM_API_KEY"):
+    if api.has_api_key():
         console.print(Text("How can I help with your research?", style=Style(color="green")))
     else:
         console.print(
@@ -103,7 +90,8 @@ def run_repl() -> None:
     # ── REPL loop ───────────────────────────────────────────────────────────────
     while True:
         try:
-            model_name = _get_current_model()
+            llm_config = api.get_llm_config()
+            model_name = llm_config.get("model", "?")
             console.rule(f"[grey50]{model_name}[/]", align="right", style=Style(color="grey50"))
             cmd = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -117,9 +105,9 @@ def run_repl() -> None:
             console.print("Goodbye.", style=Style(color="grey50"))
             break
         if cmd in ("/test", "/t"):
-            from dargus.cli import _run_test_suite
+            from dargus.cli.commands.test import run_test_menu
 
-            _run_test_suite()
+            run_test_menu()
             console.print()
             continue
         if cmd == "/help":
@@ -127,19 +115,19 @@ def run_repl() -> None:
             console.print()
             continue
         if cmd == "/model":
-            from dargus.cli import _run_model_wizard
+            from dargus.cli.commands.config import run_config_menu
 
-            _run_model_wizard()
+            run_config_menu()
             console.print()
             continue
         if cmd == "/clear-dbase":
-            from dargus.cli import _clear_dbase
+            from dargus.cli.commands.config import run_clear_dbase
 
-            _clear_dbase()
+            run_clear_dbase()
             console.print()
             continue
-        # Route to Iris agent
+        # Route to Iris agent via API
         console.print()  # blank line before response
-        result = iris.process_query(cmd)
+        result = api.ask(cmd)
         console.print(result)
         console.print()

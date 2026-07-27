@@ -1,6 +1,6 @@
 """Dargus public API facade.
 
-All adapters (CLI, MCP, Claude Code skill) MUST import only from this module.
+All adapters (CLI, Claude Code skill) MUST import only from this module.
 No adapter imports anything deeper than ``dargus.api``.
 """
 

@@ -252,3 +252,11 @@ Principles make the evidence model explicit and constrain how D-Base grows. Huma
 
 **Why:**
 Cross-level collaboration is central to Dargus's predictive value. Making it a first-class design principle clarifies why the system is organized as multiple specialized Experts rather than one monolithic model.
+
+## v0.19.0 — MCP adapter removed
+
+The MCP adapter (`dargus/adapters/mcp/`) has been removed from the repository.
+It is planned as a post-v1.0.0 feature. The `dargus/adapters/` directory has
+been removed entirely since MCP was the only adapter present.
+
+See: https://github.com/Moke110/Dargus/issues/3

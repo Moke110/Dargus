@@ -28,6 +28,11 @@ class DBaseNLP:
     def __init__(self, embedding_model: EmbeddingModel | None = None) -> None:
         self._embedding_model = embedding_model
 
+    @property
+    def model_name(self) -> str:
+        """Name of the backing embedding model (for D-Base fingerprints)."""
+        return self._get_embedding_model().model_name
+
     # ── lazy default ────────────────────────────────────────────────────────
 
     def _get_embedding_model(self) -> EmbeddingModel:
@@ -60,9 +65,9 @@ class DBaseNLP:
 
     @staticmethod
     def record_to_text(record: dict) -> str:
-        """Serialize a v0.15.5 three-axis evidence dict to text for embedding.
+        """Serialize a v1.0.0 three-axis evidence dict to text for embedding.
 
-        Incorporates llm_summary when present (§8.4).
+        Incorporates llm_summary when present.
         """
         parts: list[str] = []
 
@@ -105,7 +110,7 @@ class DBaseNLP:
             parts.append(f"y.value: {yv} {yu}".strip())
         ye = y.get("effect")
         if ye:
-            parts.append(f"y.effect: {ye.get('type', '')}={ye.get('value')}")
+            parts.append(f"y.effect: {ye.get('value_type', '')}={ye.get('value')}")
 
         # bg axis
         bg = record.get("bg") or {}
@@ -130,21 +135,6 @@ class DBaseNLP:
         if sources:
             rank1 = next((s for s in sources if s.get("rank") == 1), None)
             if rank1:
-                parts.append(f"source: {rank1.get('type')}:{rank1.get('id', '')}")
-
-        # legacy fallback: interventions
-        if not x.get("value") and "interventions" in record:
-            for iv in record.get("interventions", []):
-                label = iv.get("entity_label") or iv.get("entity_id", "unknown")
-                role = iv.get("role", "")
-                parts.append(f"{role} intervention: {label}")
-
-        # legacy fallback: disease_id
-        if not dids and record.get("disease_id"):
-            parts.append(f"disease: {record.get('disease_id')}")
-
-        # legacy fallback: readout
-        if not yt and record.get("readout_type"):
-            parts.append(f"readout: {record.get('readout_type')}")
+                parts.append(f"source: {rank1.get('type')}:{rank1.get('name', '')}")
 
         return "; ".join(parts)

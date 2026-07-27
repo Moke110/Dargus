@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from dargus.dbase.dbase import DBase
+from dargus.dbase.sidecar import model_fingerprint
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
 
 if TYPE_CHECKING:
@@ -62,9 +63,15 @@ class DBaseManager:
         y_category: str | None = None,
         level: str | None = None,
         evidence_design: str | None = None,
+        status: str | None = "active",
     ) -> list[dict]:
-        """Read evidence records matching three-axis filters."""
-        return self.dbase.query_parquet(
+        """Read evidence records matching three-axis filters.
+
+        ``status`` filters by the lifecycle sidecar: ``"active"`` (default,
+        what Predict sees), any other status value, or ``None`` for all
+        records regardless of lifecycle state.
+        """
+        records = self.dbase.query_parquet(
             y_type=y_type,
             y_category=y_category,
             x_entity=x_entity,
@@ -72,6 +79,14 @@ class DBaseManager:
             biological_level=level,
             evidence_design=evidence_design,
         )
+        if status is None:
+            return records
+        statuses = self.dbase.sidecars.read_all_status()
+        return [
+            r
+            for r in records
+            if statuses.get(r.get("evidence_id"), {}).get("status", "active") == status
+        ]
 
     def read_record(self, evidence_id: str) -> dict | None:
         """Read a single evidence record by content-addressed id."""
@@ -82,14 +97,23 @@ class DBaseManager:
 
     # ── write ───────────────────────────────────────────────────────────────
 
+    def _model_fp(self) -> str | None:
+        """Fingerprint of the configured embedding model, if any."""
+        try:
+            return model_fingerprint(self.nlp.model_name)
+        except Exception:
+            return None
+
     def write_record(self, record: dict, dedup: bool = True) -> bool | DuplicateReviewRequest:
         """Write one three-axis evidence dict to D-Base.
 
         1. validate → hard reject aborts
         2. compute evidence_id → collision = duplicate (return False)
-        3. generate embedding (optional; best-effort)
-        4. semantic check → DuplicateReviewRequest if similar
-        5. append shard → mark view stale
+        3. append shard (immutable 50-field record) → mark view stale
+        4. generate embedding (best-effort) → append to active fingerprint sidecar
+
+        Embeddings, lifecycle status, and LLM summaries live in sidecars,
+        never in the record.
         """
         result = validate_evidence(record)
         if not result.ok:
@@ -101,14 +125,6 @@ class DBaseManager:
         eid = compute_evidence_id(record)
         record["evidence_id"] = eid
 
-        # ── generate + store embedding (best-effort) ──────────────────────
-        try:
-            text = self.nlp.record_to_text(record)
-            emb = self.nlp.embed_text(text)
-            record["embedding"] = emb.tolist()
-        except Exception:
-            pass  # embedding is optional; record still writable
-
         if dedup:
             if self.dbase.evidence_id_exists(eid):
                 return False
@@ -119,7 +135,87 @@ class DBaseManager:
 
         self.dbase.append_shard(record)
         self.dbase.mark_view_stale()
+
+        # ── embedding sidecar (best-effort; record is already durable) ────
+        try:
+            text = self.nlp.record_to_text(record)
+            vector = self.nlp.embed_text(text).tolist()
+            fp = self._model_fp()
+            if fp:
+                self.dbase.sidecars.append_embedding(eid, vector, fp)
+        except Exception:
+            pass  # embedding unavailable; semantic search skips this record
+
         return True
+
+    # ── status lifecycle (sidecar transitions; records never mutate) ────────
+
+    def update_status(
+        self, evidence_id: str, status: str, superseded_by: str | None = None
+    ) -> None:
+        """Append a lifecycle status transition for an evidence record."""
+        self.dbase.sidecars.append_status(evidence_id, status, superseded_by)
+
+    def get_status(self, evidence_id: str) -> dict:
+        """Latest status for a record: {status, superseded_by}; default active."""
+        return self.dbase.sidecars.read_status(evidence_id)
+
+    def supersede(self, old_evidence_id: str, new_record: dict) -> bool | DuplicateReviewRequest:
+        """Write the replacement record and mark the old one superseded."""
+        result = self.write_record(new_record)
+        if result is True:
+            self.update_status(
+                old_evidence_id, "superseded", superseded_by=new_record["evidence_id"]
+            )
+        return result
+
+    def retract(self, evidence_id: str) -> None:
+        """Mark a record retracted (ignored by Predict)."""
+        self.update_status(evidence_id, "retracted")
+
+    # ── llm summary sidecar ─────────────────────────────────────────────────
+
+    def write_summary(self, evidence_id: str, summary: str) -> None:
+        """Write or replace the LLM summary sidecar entry for a record."""
+        self.dbase.sidecars.append_summary(evidence_id, summary)
+
+    def read_summary(self, evidence_id: str) -> str | None:
+        return self.dbase.sidecars.read_summary(evidence_id)
+
+    # ── re-embedding ────────────────────────────────────────────────────────
+
+    def reembed(self, model_fp: str | None = None) -> dict[str, int]:
+        """Generate vectors for every active record with the current model.
+
+        Idempotent: records already having a vector for the target fingerprint
+        are skipped. Old fingerprint sidecars are kept, so switching back does
+        not require recomputation. Returns counts.
+        """
+        fp = model_fp or self._model_fp()
+        if fp is None:
+            raise RuntimeError("No embedding model available for re-embedding")
+        existing = self.dbase.sidecars.read_embeddings(fp)
+        statuses = self.dbase.sidecars.read_all_status()
+        written = 0
+        skipped = 0
+        for record in self.dbase.read_shards():
+            eid = record.get("evidence_id")
+            if not eid:
+                continue
+            if statuses.get(eid, {}).get("status", "active") != "active":
+                continue
+            if eid in existing:
+                skipped += 1
+                continue
+            try:
+                text = self.nlp.record_to_text(record)
+                vector = self.nlp.embed_text(text).tolist()
+                self.dbase.sidecars.append_embedding(eid, vector, fp)
+                written += 1
+            except Exception:
+                logger.warning("re-embedding failed for %s", eid)
+        self.dbase.sidecars.set_active_fingerprint(fp)
+        return {"written": written, "skipped": skipped}
 
     def _semantic_check(self, record: dict) -> DuplicateReviewRequest | None:
         try:

@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from dargus.dbase.paths import dbase_root
+from dargus.dbase.sidecar import SidecarStore
 from dargus.dbase.vocabulary import VocabularyManager
 
 
@@ -31,6 +32,7 @@ class DBase:
         self.quarantine_path = self.dbase_dir / "migration_quarantine.jsonl"
 
         self._vocab: VocabularyManager | None = None
+        self._sidecars: SidecarStore | None = None
         self._writer_id: str = uuid.uuid4().hex[:8]
 
         self._ensure_dirs()
@@ -38,6 +40,13 @@ class DBase:
     def _ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.views_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def sidecars(self) -> SidecarStore:
+        """Append-only sidecar tables (status, llm_summary, embeddings)."""
+        if self._sidecars is None:
+            self._sidecars = SidecarStore(self.dbase_dir)
+        return self._sidecars
 
     @property
     def vocab(self) -> VocabularyManager:
@@ -239,13 +248,24 @@ class DBase:
         return results
 
     def clear(self) -> None:
-        """Remove all shards, views, and manifest."""
+        """Remove all shards, views, manifest, and sidecars (test/reset only).
+
+        This intentionally breaks the append-only audit invariant and exists
+        for the guarded ``clear_dbase`` operation and tests.
+        """
         for shard in self.data_dir.glob("shard-*.jsonl"):
             shard.unlink()
         if self.parquet_path.exists():
             self.parquet_path.unlink()
         if self.manifest_path.exists():
             self.manifest_path.unlink()
+        sidecars_dir = self.dbase_dir / "sidecars"
+        if sidecars_dir.exists():
+            for f in sidecars_dir.glob("*.jsonl"):
+                f.unlink()
+            manifest = sidecars_dir / "embeddings_manifest.json"
+            if manifest.exists():
+                manifest.unlink()
 
     @classmethod
     def global_instance(cls) -> "DBase":

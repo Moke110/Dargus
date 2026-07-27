@@ -50,7 +50,13 @@ def dbase_write(manager: DBaseManager, record: dict) -> dict:
     if written:
         manager.dbase.rebuild_view()
 
-    embedding_generated = "embedding" in record
+    embedding_generated = False
+    if written:
+        fp = manager.dbase.sidecars.active_fingerprint()
+        if fp:
+            embedding_generated = record.get(
+                "evidence_id"
+            ) in manager.dbase.sidecars.read_embeddings(fp)
 
     return {
         "evidence_id": record.get("evidence_id", ""),

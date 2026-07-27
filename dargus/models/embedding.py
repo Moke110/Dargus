@@ -81,6 +81,11 @@ class EmbeddingModel:
     def __init__(self, backend: EmbeddingBackend) -> None:
         self._backend = backend
 
+    @property
+    def model_name(self) -> str:
+        """Backing model name, used for the D-Base embedding fingerprint."""
+        return getattr(self._backend, "_model_name", type(self._backend).__name__)
+
     def embed(self, texts: list[str]) -> list[Embedding]:
         """Embed a batch of texts."""
         return self._backend.embed(texts)

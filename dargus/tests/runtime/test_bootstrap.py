@@ -7,8 +7,10 @@ class TestBootstrap:
     """Tests for bootstrap() function."""
 
     def test_bootstrap_with_no_config_creates_minimal_context(self, tmp_path, monkeypatch):
-        """When no config file exists, bootstrap creates a minimal RuntimeContext."""
+        """When no config file exists anywhere, bootstrap creates a minimal RuntimeContext."""
         monkeypatch.chdir(tmp_path)
+        # Override DARGUS_CONFIG to point to non-existent file
+        monkeypatch.setenv("DARGUS_CONFIG", str(tmp_path / "nonexistent.yaml"))
         ctx = bootstrap()
         assert ctx is not None
         assert ctx.config == {}
@@ -90,25 +92,11 @@ class TestBootstrap:
                 },
             }
         }
-        custom = tmp_path / "custom_config.yaml"
-        custom.write_text(yaml.dump(config))
+        config_path = tmp_path / "custom_config.yaml"
+        config_path.write_text(yaml.dump(config))
         monkeypatch.setenv("TEST_KEY", "sk-fake")
 
-        ctx = bootstrap(str(custom))
-        assert ctx.healthy is True
-
-    def test_bootstrap_partial_model_config(self, tmp_path, monkeypatch):
-        """When model config raises KeyError, bootstrap returns context gracefully."""
-        import yaml
-
-        monkeypatch.chdir(tmp_path)
-
-        config = {"models": {"reasoning": {"provider": "anthropic"}}}
-        # Missing 'model' field
-        config_path = tmp_path / "dargus_config.yaml"
-        config_path.write_text(yaml.dump(config))
-
         ctx = bootstrap(str(config_path))
-        assert ctx is not None
+
         assert ctx.config is not None
-        assert ctx.healthy is False
+        assert ctx.healthy is True

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 
+from dargus.config.paths import get_config_path
 from dargus.models.config import EnvSecretsManager, load_model_config
 from dargus.models.embedding import EmbeddingModel, SentenceTransformerBackend
 from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM
@@ -17,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def _default_config_path() -> str:
-    """Return the default config file path (``dargus_config.yaml`` in cwd)."""
-    return str(Path.cwd() / "dargus_config.yaml")
+    """Return the default config file path (unified config path)."""
+    return str(get_config_path())
 
 
 def _load_yaml(path: str) -> dict:

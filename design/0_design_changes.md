@@ -252,3 +252,30 @@ Principles make the evidence model explicit and constrain how D-Base grows. Huma
 
 **Why:**
 Cross-level collaboration is central to Dargus's predictive value. Making it a first-class design principle clarifies why the system is organized as multiple specialized Experts rather than one monolithic model.
+
+## v0.19.0 — MCP adapter removed
+
+The MCP adapter (`dargus/adapters/mcp/`) has been removed from the repository.
+It is planned as a post-v1.0.0 feature. The `dargus/adapters/` directory has
+been removed entirely since MCP was the only adapter present.
+
+See: https://github.com/Moke110/Dargus/issues/3
+
+## v0.19.0 — CLI unified structure
+
+The CLI has been restructured into a unified `dargus/cli/` package:
+
+- **Terminology**: "CLI" now refers to the entire command-line interface, which includes both one-shot commands and the interactive REPL. The term "TUI" is no longer used.
+- **Structure**: `dargus/cli/` contains all user interface code:
+  - `main.py` — entry point and command dispatch
+  - `repl.py` — interactive REPL implementation
+  - `commands/` — one-shot commands (iris, config, test)
+  - `ui/` — UI helpers (logo, etc.)
+- **API boundary**: All CLI/REPL access to runtime goes through `dargus.api`. No direct imports of `Iris`, `DBase`, or other internal modules.
+- **Command surface**:
+  - `dargus` — launch REPL
+  - `dargus iris <query>` — send query to Iris
+  - `dargus config` — configuration menu
+  - `dargus test` — test menu
+
+See: https://github.com/Moke110/Dargus/issues/4

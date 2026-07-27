@@ -1,11 +1,11 @@
-"""Tests for dargus.repl Rich REPL."""
+"""Tests for dargus.cli.repl REPL."""
 
 import os
 from unittest.mock import patch
 
 import pytest
 
-from dargus.repl import _GREETING, _HELP
+from dargus.cli.repl import _GREETING, _HELP
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +41,7 @@ def test_run_repl_quit_command():
     """Typing /quit breaks the REPL loop and prints Goodbye."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["/quit"]):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -54,7 +54,7 @@ def test_run_repl_help_command_then_quit():
     """Typing /help prints help, then /quit exits."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["/help", "/quit"]):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -68,7 +68,7 @@ def test_run_repl_empty_input_skipped():
     """Empty input should be skipped without error and not passed to Iris."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["", "", "/quit"]):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -81,11 +81,11 @@ def test_run_repl_natural_language_routes_to_iris():
     """Natural language input is routed through iris.process_query."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["predict aspirin for headache", "/quit"]):
         with patch(
-            "dargus.repl.Iris.process_query",
+            "dargus.api.ask",
             return_value="(mocked) Prediction for aspirin on headache: ...",
         ) as mock_pq:
             with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -99,7 +99,7 @@ def test_run_repl_eof_error_exits():
     """EOFError (Ctrl+D) exits the REPL cleanly."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=EOFError):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -112,7 +112,7 @@ def test_run_repl_keyboard_interrupt_exits():
     """KeyboardInterrupt (Ctrl+C) exits the REPL cleanly."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=KeyboardInterrupt):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -125,7 +125,7 @@ def test_run_repl_prints_logo_on_startup():
     """The REPL prints the logo on startup."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["/quit"]):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -139,7 +139,7 @@ def test_run_repl_prints_tagline_on_startup():
     """The REPL prints the tagline on startup."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     with patch("builtins.input", side_effect=["/quit"]):
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
@@ -152,7 +152,7 @@ def test_run_repl_api_key_message():
     """Without API key, the REPL shows config guidance; with key, shows ready."""
     import io
 
-    from dargus.repl import run_repl
+    from dargus.cli.repl import run_repl
 
     # Without API key
     with patch("builtins.input", side_effect=["/quit"]):

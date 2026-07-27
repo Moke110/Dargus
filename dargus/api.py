@@ -433,17 +433,41 @@ def test_llm_connection(model: str, base_url: str, api_key: str | None = None) -
 # ---------------------------------------------------------------------------
 
 
-def clear_dbase(confirm_code: str) -> bool:
-    """Clear all records from the global D-Base.
-
-    Args:
-        confirm_code: Confirmation code (for safety, must match expected code).
+def generate_clear_dbase_code() -> str:
+    """Generate a confirmation code for clearing the D-Base.
 
     Returns:
-        True if successful, False otherwise.
+        A random hex confirmation code (10 characters).
     """
+    import secrets
+
+    return secrets.token_hex(5)
+
+
+def clear_dbase(confirm_code: str, expected_code: str) -> bool:
+    """Clear all records from the global D-Base.
+
+    This is a destructive operation that requires two-step confirmation:
+    1. Call generate_clear_dbase_code() to get a code
+    2. Display the code to the user and get their input
+    3. Call this function with both the user's input and the expected code
+
+    Args:
+        confirm_code: The confirmation code provided by the user.
+        expected_code: The expected confirmation code from generate_clear_dbase_code().
+
+    Returns:
+        True if successful, False otherwise (including code mismatch).
+    """
+    import secrets
+
     from dargus.dbase import DBase
     from dargus.dbase.manager import DBaseManager
+
+    # Verify confirmation code
+    if not secrets.compare_digest(confirm_code, expected_code):
+        logger.warning("API: clear_dbase called with mismatched confirmation code")
+        return False
 
     try:
         dbase = DBase.global_instance()

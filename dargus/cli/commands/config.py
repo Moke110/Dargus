@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-
 
 def run_config_menu() -> int:
     """Launch the Dargus configuration menu.
@@ -176,18 +174,17 @@ def run_clear_dbase() -> int:
     """
     from dargus import api
 
-    code = secrets.token_hex(5)
+    # Generate confirmation code via API
+    code = api.generate_clear_dbase_code()
     print("  WARNING: This will delete ALL records from the global D-Base.")
     print(f"  Confirmation code: {code}")
     user_input = input("  Enter the code exactly to proceed: ").strip()
-    if user_input != code:
-        print("  Confirmation code mismatch. Aborted.")
-        return 1
 
-    success = api.clear_dbase(code)
+    # API verifies the code internally
+    success = api.clear_dbase(user_input, code)
     if success:
         print("  Global D-Base cleared.")
         return 0
     else:
-        print("  Failed to clear D-Base.")
+        print("  Confirmation code mismatch or operation failed. Aborted.")
         return 1

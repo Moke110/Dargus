@@ -21,7 +21,7 @@ The runtime controls the following components:
 | **HookRegistry** | Stores hook registrations and executes them at the named lifecycle points. |
 | **AgentFactory** | Creates and terminates every Agent, injecting runtime-provided dependencies. |
 | **ToolCache** | Keeps session-resident heavy tools (e.g. the embedding model) in memory across PRA cycles. |
-| **Entry points** | Packages CLI and REPL interfaces that submit work to the runtime. |
+| **Entry points** | Packages the CLI (one-shot commands + REPL), which reaches the runtime only through `dargus.api`. |
 | **Health Flag** | Tracks whether the runtime is healthy enough to accept new sessions. |
 
 #### Component relations
@@ -29,10 +29,10 @@ The runtime controls the following components:
 ```mermaid
 flowchart TB
     subgraph EntryPoints["User-facing entry points"]
-        CLI[CLI]
-        REPL[REPL]
+        CLI["CLI (one-shot commands + REPL)"]
     end
 
+    API["dargus.api — sole interaction interface"]
     Runtime[DargusRuntime]
 
     subgraph Singletons["Runtime-owned singletons"]
@@ -48,8 +48,8 @@ flowchart TB
         Health[Health Flag]
     end
 
-    CLI -->|submits request| Runtime
-    REPL -->|submits request| Runtime
+    CLI -->|calls| API
+    API -->|submits request| Runtime
 
     Runtime -->|loads| Config
     Runtime -->|configures| LLM
@@ -91,7 +91,7 @@ Heavy tools that keep local models or other expensive resources in memory declar
 
 ### Health flag
 
-The runtime starts healthy. It becomes unhealthy if an unrecoverable dependency fails (e.g., D-Base inaccessible, model unavailable). CLI/REPL entry points check the flag and refuse to start new sessions while unhealthy; recovery requires a runtime restart.
+The runtime starts healthy. It becomes unhealthy if an unrecoverable dependency fails (e.g., D-Base inaccessible, model unavailable). CLI entry points check the flag and refuse to start new sessions while unhealthy; recovery requires a runtime restart.
 
 ## Hooks
 

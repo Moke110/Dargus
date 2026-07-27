@@ -24,19 +24,20 @@ The system is open-source, runs privately, and keeps all evidence in a single cu
 ## Top-level architecture
 
 ```
-DargusRuntime
-├── CLI / REPL                       ← user-facing interfaces
-├── HookRegistry                     ← lifecycle callbacks
-└── AgentFactory                     ← creates and terminates all Agents
-    ├── Iris                         ← top-level orchestrator Agent
-    ├── Domain Experts
-    └── D4Expert
-        └── Tool / Skill / Knowledge layer
-            └── D-Base               ← cumulative evidence store
+CLI (one-shot commands + REPL)
+└── dargus.api                       ← sole interaction interface
+    └── DargusRuntime
+        ├── HookRegistry             ← lifecycle callbacks
+        └── AgentFactory             ← creates and terminates all Agents
+            ├── Iris                 ← top-level orchestrator Agent
+            ├── Domain Experts
+            └── D4Expert
+                └── Tool / Skill / Knowledge layer
+                    └── D-Base       ← cumulative evidence store
 ```
 
 - **DargusRuntime** is the program entry registered with the OS task manager. It owns configuration, lifecycle, and all singletons.
-- **CLI / REPL** submit requests to DargusRuntime; they do not instantiate Agents directly.
+- **CLI** is the user-facing interface: one-shot commands plus the REPL. All CLI code submits requests through **dargus.api**, the sole interaction interface to the runtime; nothing instantiates Agents or runtime internals directly.
 - **HookRegistry** manages callbacks that observe and influence the agent lifecycle.
 - **AgentFactory** creates and terminates every Agent, including Iris, Domain Experts, and D4Expert.
 - **Iris** is an Agent that dispatches tasks to other Agents through agent communication protocols; it does not own or manage their lifecycle.
@@ -52,8 +53,8 @@ A complete, self-contained prediction appliance:
 - Ingest converts raw data into validated records.
 - Predict routes requests to Experts, supports delegation, and produces a FinalReport.
 - Benchmark evaluates Predict against held-out records without temporary D-Base copies.
-- CLI provides REPL and subcommands for all core operations.
+- CLI provides a REPL and a minimal one-shot command surface (`iris`, `config`, `test`), all routed through `dargus.api`.
 
 ## Out of scope for v1.0.0
 
-Multi-model ensembles, knowledge-graph routing, training pipelines, external interfaces (programmatic API, MCP server), and environment-aware deployments are deferred to post-v1.0.0 releases. See `x_prospect.md`.
+Multi-model ensembles, knowledge-graph routing, training pipelines, MCP server integration, and environment-aware deployments are deferred to post-v1.0.0 releases. See `x_prospect.md`.

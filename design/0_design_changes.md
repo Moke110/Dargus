@@ -279,3 +279,18 @@ The CLI has been restructured into a unified `dargus/cli/` package:
   - `dargus test` — test menu
 
 See: https://github.com/Moke110/Dargus/issues/4
+
+## 2026-07-27 — Design docs aligned with v0.19.0 CLI/API refactor
+
+**Changed docs:** `1_design_overview.md`, `3_runtime.md`, `4_agents.md`, `8_cli.md`, `9_quality_and_experience.md`, `x_prospect.md`
+
+**What changed:**
+- `8_cli.md` rewritten: "CLI" = one-shot commands + REPL (no "TUI" term); command surface reduced to `dargus`, `dargus iris`, `dargus config`, `dargus test`; old subcommands (predict/ingest/benchmark/status) removed, their capabilities reached via Iris; documented the API boundary (`dargus.api` as sole runtime interface, non-interactive core + CLI interactive wrappers), the config and test menus, the REPL slash commands (`/help`, `/quit`, `/model`, `/test`, `/clear-dbase`), unified config file resolution (`DARGUS_CONFIG` → `~/.dargus/` → packaged default), and the API-layer confirmation guard for destructive operations. Removed the obsolete conda deployment wrapper section.
+- `1_design_overview.md`: architecture diagram now shows CLI → `dargus.api` → DargusRuntime; v1.0.0 bullet updated to the minimal command surface; programmatic API removed from the out-of-scope list (it now exists as the internal interaction layer).
+- `3_runtime.md`: entry-point component and mermaid diagram updated to route CLI through `dargus.api`; health-flag wording unified to "CLI entry points".
+- `4_agents.md`: Iris input phrasing updated to "CLI input (REPL or one-shot `iris` command)".
+- `9_quality_and_experience.md`: test-coverage wording changed from "subcommand parsing" to "command parsing".
+- `x_prospect.md`: "External interfaces" section narrowed to MCP server only, noting the adapter was removed in v0.19.0 and returns post-v1.0.0.
+
+**Why:**
+v0.19.0 restructured the user-facing layer (unified `dargus/cli/` package, API boundary, reduced command surface). The design docs still described the pre-refactor CLI (predict/ingest/benchmark subcommands, TUI-era terminology, direct runtime access), so they were updated to match the shipped architecture.

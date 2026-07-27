@@ -42,9 +42,9 @@ Train is deferred until local-model deployment and post-v1.0.0 model integration
 
 D-Base v1.0.0 is a flat keyed-object store. A future release could layer a heterogeneous knowledge graph on top, linking drugs, targets, pathways, diseases, and trials while keeping D-Base as the authoritative evidence source.
 
-## External interfaces: API and MCP server
+## MCP server
 
-Dargus v1.0.0 ships CLI and REPL entry points only. A programmatic API and an optional MCP server could expose Dargus Tools and workflows to external callers and agent platforms, letting Claude Code or other agents query D-Base and run Predict through a standardized protocol.
+Dargus v1.0.0 ships CLI entry points only. An optional MCP server could expose `dargus.api` and Dargus workflows to external agent platforms, letting Claude Code or other agents query D-Base and run Predict through a standardized protocol. The MCP adapter was removed from the repository in v0.19.0 and will be reintroduced after v1.0.0.
 
 ## Benchmark validation split
 

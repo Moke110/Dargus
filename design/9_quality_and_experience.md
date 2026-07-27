@@ -17,7 +17,7 @@
 - Ingest end-to-end: directory → records → D-Base.
 - Predict end-to-end: query → Expert reports → FinalReport.
 - Benchmark holdout marking and restoration.
-- CLI subcommand parsing and handler wiring.
+- CLI command parsing and handler wiring.
 - Expert `extract()` and `assess()` from fixtures.
 - Iris multi-round convergence.
 - Hook chain integration.

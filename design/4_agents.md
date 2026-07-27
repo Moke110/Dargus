@@ -44,7 +44,7 @@ When an Expert receives evidence outside its scope, it creates a `TaskDelegation
 
 `Iris` is also a BaseAgent. Its job is to interpret user intent and dispatch to the appropriate workflow Skill:
 
-- REPL input or CLI command → parse intent,
+- CLI input (REPL or one-shot `iris` command) → parse intent,
 - `predict` → invoke Predict workflow,
 - `ingest` → invoke Ingest workflow,
 - `benchmark` → invoke Benchmark workflow,

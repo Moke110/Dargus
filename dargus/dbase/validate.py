@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 # ── vocabulary (loaded from vocabularies.json) ───────────────────────────────
 
 _vocab: dict = {}
@@ -489,6 +491,52 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
 # ── rule: CURIE validation ───────────────────────────────────────────────────
 
 
+# cached field_registry curie field list
+_CURIE_FIELDS: list[tuple[str, str]] | None = None
+
+
+def _load_curie_fields() -> list[tuple[str, str]]:
+    """Return [(stable_key, type), ...] for all type: curie / curie[] fields.
+
+    type is either "curie" (single string) or "curie[]" (list of strings).
+    """
+    global _CURIE_FIELDS
+    if _CURIE_FIELDS is not None:
+        return _CURIE_FIELDS
+
+    registry_path = Path(__file__).resolve().parent / "field_registry.yaml"
+    curie_fields: list[tuple[str, str]] = []
+    if registry_path.exists():
+        with registry_path.open("r", encoding="utf-8") as fh:
+            registry = yaml.safe_load(fh)
+        for group in (registry.get("groups") or {}).values():
+            for field in group.get("fields") or []:
+                ftype = field.get("type", "")
+                if ftype in ("curie", "curie[]"):
+                    curie_fields.append((field["stable_key"], ftype))
+    _CURIE_FIELDS = curie_fields
+    return _CURIE_FIELDS
+
+
+def _navigate(obj: dict, path: str):
+    """Follow a dotted path into a nested dict, returning the value at that path.
+
+    Returns None if any segment is missing.
+    """
+    parts = path.split(".")
+    current = obj
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    if not isinstance(current, dict):
+        return None
+    last = parts[-1]
+    if last not in current:
+        return None
+    return current[last]
+
+
 def _rule_curies(evidence: dict, result: ValidationResult) -> None:
     patterns = _curie_patterns()
     fallback = _curie_fallback()
@@ -507,25 +555,19 @@ def _rule_curies(evidence: dict, result: ValidationResult) -> None:
                 f"CURIE accession '{accession}' at {path} fails regex for {prefix}"
             )
 
-    def _scan(obj, path="root"):
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if k == "evidence_id":
-                    continue
-                if k.endswith("_id") and isinstance(v, str) and v:
-                    _validate_curie(v, f"{path}.{k}")
-                elif isinstance(v, (dict, list)):
-                    _scan(v, f"{path}.{k}")
-        elif isinstance(obj, list):
-            for i, v in enumerate(obj):
-                if isinstance(v, str) and v:
-                    _validate_curie(v, f"{path}[{i}]")
-                elif isinstance(v, dict):
-                    for dk, dv in v.items():
-                        if dk.endswith("_id") and isinstance(dv, str) and dv:
-                            _validate_curie(dv, f"{path}[{i}].{dk}")
+    for stable_key, ftype in _load_curie_fields():
+        value = _navigate(evidence, stable_key)
+        if value is None:
+            continue
 
-    _scan(evidence)
+        if ftype == "curie[]":
+            if isinstance(value, list):
+                for i, item in enumerate(value):
+                    if isinstance(item, str) and item:
+                        _validate_curie(item, f"root.{stable_key}[{i}]")
+        else:  # "curie"
+            if isinstance(value, str) and value:
+                _validate_curie(value, f"root.{stable_key}")
 
 
 # ── evidence_id identity ─────────────────────────────────────────────────────

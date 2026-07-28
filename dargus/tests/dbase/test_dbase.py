@@ -218,3 +218,112 @@ def test_validate_dispersion_entries():
     assert validate_evidence(e).ok
     e["y"]["dispersion"] = [{"type": "BOGUS", "value": 1.0}]
     assert not validate_evidence(e).ok
+
+
+# ── S7_T2: CURIE validation driven by field_registry.yaml ──────────────────────
+
+
+def test_curie_related_evidence_id_passes_with_plain_ids():
+    """related_evidence_id is type: str[], not type: curie — plain ev_* IDs must pass."""
+    e = _make_evidence()
+    e["related_evidence_id"] = ["ev_abc123", "ev_def456"]
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+
+
+def test_curie_malformed_study_id_rejected():
+    """clinical_design.study_id is type: curie — a value without ':' must fail."""
+    e = _make_evidence(
+        biological_level="rct",
+        evidence_design="two_arm_comparison",
+        xy={"count": 2},
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25", "entity_label": "drug"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
+        clinical_design={
+            "comparator_type": "placebo",
+            "phase": "phase_3",
+            "population": "adults",
+            "study_id": "no_colon_bad_curie",
+        },
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("study_id" in err for err in result.hard_errors)
+
+
+def test_curie_valid_study_id_passes():
+    """clinical_design.study_id with valid CURIE should pass."""
+    e = _make_evidence(
+        biological_level="rct",
+        evidence_design="two_arm_comparison",
+        xy={"count": 2},
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25", "entity_label": "drug"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
+        clinical_design={
+            "comparator_type": "placebo",
+            "phase": "phase_3",
+            "population": "adults",
+            "study_id": "clinicaltrials:NCT01234567",
+        },
+    )
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+
+
+def test_curie_non_id_curie_fields_validated():
+    """model_organism, tissue, cell_type are type: curie but don't end in '_id'.
+    They must be validated."""
+    # model_organism without prefix separator -> reject
+    e = _make_evidence()
+    e["model_organism"] = "no_colon_bad_curie"
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("model_organism" in err for err in result.hard_errors)
+
+    # tissue without prefix separator -> reject
+    e2 = _make_evidence()
+    e2["tissue"] = "bad_tissue_no_prefix"
+    result2 = validate_evidence(e2)
+    assert not result2.ok
+    assert any("tissue" in err for err in result2.hard_errors)
+
+    # cell_type without prefix separator -> reject
+    e3 = _make_evidence()
+    e3["cell_type"] = "bad_cell_type"
+    result3 = validate_evidence(e3)
+    assert not result3.ok
+    assert any("cell_type" in err for err in result3.hard_errors)
+
+
+def test_curie_non_id_curie_fields_valid_passes():
+    """model_organism, tissue, cell_type with valid CURIE should pass."""
+    e = _make_evidence()
+    e["model_organism"] = "NCBITaxon:9606"
+    e["tissue"] = "uberon:0000955"
+    e["cell_type"] = "cl:0000066"
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors

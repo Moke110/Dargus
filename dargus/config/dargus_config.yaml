@@ -1,57 +1,23 @@
-llm:
-  provider: openai_compatible
-  model: deepseek-v4-pro
-  api_key: $DARGUS_LLM_API_KEY
-  base_url: https://api.deepseek.com
-  temperature: 0.0
-  max_tokens: 2048
-  extra: {}
-embedding:
-  drug: morgan_rdkit
-  disease: clinical_mlp
-  dimension: 512
-core_tools:
-  pdf_extractor: pymupdf
-  literature_search: biopython
-  drug_embedding: morgan_rdkit
-  disease_embedding: clinical_mlp
-level_embedding:
-  dimension: 512
-  effect_dimensions: 192
-  quality_dimensions: 128
-  context_dimensions: 128
-  confidence_dimensions: 64
-diris:
-  model: bayesian
-  n_samples: 2000
-  n_chains: 4
-  target_accept: 0.9
-  random_seed: 42
-retriever:
-  max_papers_per_query: 50
-  email: null
-  api_key: null
-  backends:
-  - pubmed
-  - semantic_scholar
-projects:
-  root_dir: projects
-  default_endpoints:
-    Parkinson's disease:
-    - UPDRS-III_change
-    - MDS-UPDRS_total_change
-    Alzheimer's disease:
-    - ADAS-Cog_change
-    - MMSE_change
+models:
+  reasoning:
+    provider: openai_compatible
+    model: deepseek-v4-pro
+    api_key_env: DARGUS_LLM_API_KEY
+    base_url: https://api.deepseek.com
+    temperature: 0.0
+    max_tokens: 2048
+  embedding:
+    provider: sentence_transformers
+    model: all-MiniLM-L6-v2
+
 test:
   bulk_input_dir: test/ingest/slices
   ingest_dir: /home/chang/dargus-dev/data
+
 logging:
   level: INFO
   format: '%(asctime)s | %(name)s | %(levelname)s | %(message)s'
+
 safety:
   disclaimer: Dargus outputs are for research purposes only and do not constitute
     clinical advice.
-environment:
-  conda_env: dargus_e1
-  python: '3.11'

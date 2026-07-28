@@ -180,7 +180,7 @@ def ask(query: str) -> str:
 
 
 def get_llm_config() -> dict[str, Any]:
-    """Get current LLM configuration.
+    """Get current LLM configuration from the models: block.
 
     Returns:
         Dict with keys: provider, model, base_url, temperature, max_tokens, has_api_key.
@@ -203,13 +203,13 @@ def get_llm_config() -> dict[str, Any]:
     with config_path.open("r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
 
-    llm_cfg = cfg.get("llm", {})
+    reasoning_cfg = cfg.get("models", {}).get("reasoning", {})
     return {
-        "provider": llm_cfg.get("provider", "openai_compatible"),
-        "model": llm_cfg.get("model", ""),
-        "base_url": llm_cfg.get("base_url", ""),
-        "temperature": llm_cfg.get("temperature", 0.0),
-        "max_tokens": llm_cfg.get("max_tokens", 2048),
+        "provider": reasoning_cfg.get("provider", "openai_compatible"),
+        "model": reasoning_cfg.get("model", ""),
+        "base_url": reasoning_cfg.get("base_url", ""),
+        "temperature": reasoning_cfg.get("temperature", 0.0),
+        "max_tokens": reasoning_cfg.get("max_tokens", 2048),
         "has_api_key": has_api_key(),
     }
 
@@ -234,11 +234,11 @@ def save_llm_config(model: str, base_url: str, provider: str = "openai_compatibl
         with config_path.open("r", encoding="utf-8") as fh:
             cfg = yaml.safe_load(fh) or {}
 
-    # Update llm section
-    cfg.setdefault("llm", {})
-    cfg["llm"]["model"] = model
-    cfg["llm"]["base_url"] = base_url
-    cfg["llm"]["provider"] = provider
+    # Update models.reasoning section
+    cfg.setdefault("models", {}).setdefault("reasoning", {})
+    cfg["models"]["reasoning"]["model"] = model
+    cfg["models"]["reasoning"]["base_url"] = base_url
+    cfg["models"]["reasoning"]["provider"] = provider
 
     # Write back
     import yaml

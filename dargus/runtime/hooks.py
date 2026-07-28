@@ -386,10 +386,41 @@ class ReportValidationHook:
                 [f"FinalReport must be a dict, got {type(report).__name__}"]
             )
 
-        # DES ± DCS range (waived for insufficient_data — scores must be unset)
+        # Detect shape: nested prediction contract vs flat dict.
+        # Nested:  {drug_id: {disease_id: {endpoint: {DES, DCS, ...}}}}
+        # Flat:    {"efficacy_score": 0.5, ...} or {"n_records": N, ...} (ingest)
+        # Heuristic: if NO top-level key is a known inner key AND at least
+        # one top-level value is a dict, treat it as nested.
+        _INNER_KEYS = frozenset({
+            "efficacy_score", "confidence_score", "supporting_records",
+            "confidence_level", "reasoning_mode",
+        })
+        has_inner = any(k in _INNER_KEYS for k in report)
+        has_dict_val = any(isinstance(v, dict) for v in report.values())
+
+        if not has_inner and has_dict_val:
+            self._validate_nested(report, violations)
+        elif has_inner:
+            # Flat prediction dict
+            self._validate_flat(report, violations)
+        # else: flat non-prediction dict (e.g. ingest summary) — skip validation
+
+        if violations:
+            context.report_valid = False
+            raise ReportValidationError(violations)
+
+        context.report_valid = True
+        return context
+
+    # ------------------------------------------------------------------
+    # Flat dict validation (backward-compatible)
+    # ------------------------------------------------------------------
+
+    def _validate_flat(self, report: dict, violations: list[str]) -> None:
+        """Validate a flat FinalReport dict."""
         if report.get("confidence_level") == "insufficient_data":
             for key in ("efficacy_score", "confidence_score"):
-                if report.get(key) is not None:
+                if key in report and report[key] is not None:
                     violations.append(
                         f"{key} must be unset when confidence_level is "
                         f"insufficient_data, got {report[key]!r}"
@@ -401,11 +432,116 @@ class ReportValidationHook:
                     if not isinstance(val, (int, float)) or not (0 <= val <= 1):
                         violations.append(f"{key} must be in [0, 1], got {val!r}")
 
-        # supporting_records (insufficient_data reports may cite zero records)
         records = report.get("supporting_records")
         if records is not None and report.get("confidence_level") != "insufficient_data":
             if not isinstance(records, list) or len(records) == 0:
                 violations.append(f"supporting_records must be a non-empty list, got {records!r}")
+
+        if self.dbase is not None and isinstance(records, list):
+            for rid in records:
+                if not isinstance(rid, str) or not rid.startswith("ev_"):
+                    continue
+                if not self.dbase.evidence_id_exists(rid):
+                    violations.append(f"supporting record {rid!r} not found in D-Base")
+
+    # ------------------------------------------------------------------
+    # Nested contract validation
+    # ------------------------------------------------------------------
+
+    def _validate_nested(self, report: dict, violations: list[str]) -> None:
+        """Validate the universal nested contract:
+        ``{drug_id: {disease_id: {endpoint: {efficacy_score, confidence_score,
+        supporting_records, reasoning_mode, confidence_level}}}}``
+        """
+        if not report:
+            violations.append("nested FinalReport must be non-empty")
+            return
+
+        for drug_id, diseases in report.items():
+            if not isinstance(diseases, dict):
+                violations.append(
+                    f"expected disease dict under drug {drug_id!r}, "
+                    f"got {type(diseases).__name__}"
+                )
+                continue
+            if not diseases:
+                violations.append(f"missing disease_id under drug {drug_id!r}")
+                continue
+            for disease_id, endpoints in diseases.items():
+                if not isinstance(endpoints, dict):
+                    violations.append(
+                        f"expected endpoint dict under {drug_id}/{disease_id}, "
+                        f"got {type(endpoints).__name__}"
+                    )
+                    continue
+                if not endpoints:
+                    violations.append(
+                        f"missing endpoint under {drug_id}/{disease_id}"
+                    )
+                    continue
+                for endpoint, entry in endpoints.items():
+                    if not isinstance(entry, dict):
+                        violations.append(
+                            f"expected prediction dict under "
+                            f"{drug_id}/{disease_id}/{endpoint}, "
+                            f"got {type(entry).__name__}"
+                        )
+                        continue
+                    self._validate_endpoint_entry(
+                        entry, f"{drug_id}/{disease_id}/{endpoint}", violations,
+                    )
+
+    def _validate_endpoint_entry(
+        self,
+        entry: dict,
+        path: str,
+        violations: list[str],
+    ) -> None:
+        """Validate a single endpoint prediction entry."""
+        _REQUIRED_KEYS = {
+            "efficacy_score", "confidence_score", "supporting_records",
+            "reasoning_mode", "confidence_level",
+        }
+        missing = _REQUIRED_KEYS - set(entry.keys())
+        for mk in sorted(missing):
+            violations.append(f"missing {mk} in {path}")
+
+        confidence_level = entry.get("confidence_level")
+
+        # DES ± DCS range (waived for insufficient_data)
+        if confidence_level == "insufficient_data":
+            for key in ("efficacy_score", "confidence_score"):
+                if entry.get(key) is not None:
+                    violations.append(
+                        f"{path}: {key} must be unset when confidence_level is "
+                        f"insufficient_data, got {entry[key]!r}"
+                    )
+        else:
+            for key in ("efficacy_score", "confidence_score"):
+                if key in entry:
+                    val = entry[key]
+                    if not isinstance(val, (int, float, type(None))):
+                        violations.append(
+                            f"{path}: {key} must be numeric or None, got {val!r}"
+                        )
+                    elif isinstance(val, (int, float)) and not (0 <= val <= 1):
+                        violations.append(
+                            f"{path}: {key} must be in [0, 1], got {val!r}"
+                        )
+                    elif val is None and confidence_level != "insufficient_data":
+                        violations.append(
+                            f"{path}: {key} must not be None when "
+                            f"confidence_level is {confidence_level!r}"
+                        )
+
+        # supporting_records (insufficient_data reports may cite zero records)
+        records = entry.get("supporting_records")
+        if records is not None and confidence_level != "insufficient_data":
+            if not isinstance(records, list) or len(records) == 0:
+                violations.append(
+                    f"{path}: supporting_records must be a non-empty list, "
+                    f"got {records!r}"
+                )
 
         # evidence_id existence in D-Base
         if self.dbase is not None and isinstance(records, list):
@@ -413,14 +549,9 @@ class ReportValidationHook:
                 if not isinstance(rid, str) or not rid.startswith("ev_"):
                     continue  # non-evidence citation forms are out of scope
                 if not self.dbase.evidence_id_exists(rid):
-                    violations.append(f"supporting record {rid!r} not found in D-Base")
-
-        if violations:
-            context.report_valid = False
-            raise ReportValidationError(violations)
-
-        context.report_valid = True
-        return context
+                    violations.append(
+                        f"{path}: supporting record {rid!r} not found in D-Base"
+                    )
 
 
 # ---------------------------------------------------------------------------

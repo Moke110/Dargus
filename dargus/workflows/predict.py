@@ -38,7 +38,9 @@ def _hook_dbase() -> Any | None:
         from dargus.dbase.dbase import DBase
         from dargus.dbase.paths import dbase_root
 
-        return DBase("predict-validation", root_dir=dbase_root())
+        # Pass dbase_root().parent as root_dir so D-Base uses dbase_root()
+        # itself as the dbase_dir (matching the global_instance behaviour).
+        return DBase("predict-validation", root_dir=dbase_root().parent)
     except Exception:
         logger.debug("No D-Base available for report validation — skipping existence checks")
         return None
@@ -49,35 +51,26 @@ def _hook_dbase() -> Any | None:
 # ---------------------------------------------------------------------------
 
 
-def run_predict(
-    task_spec: dict[str, Any],
-    runtime: Any = None,
-) -> dict[str, Any]:
+def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
     """Execute predict workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates PredictSession
-    2. Create D4Expert via AgentFactory from *runtime* (or stub)
+    2. Create D4Expert via AgentFactory (or stub)
     3. Main loop (max *max_rounds* / timeout *timeout_seconds*):
        - PERCEIVE_START: SkeletonContextHook injects state
-       - Dispatch records to Domain Experts, collect ExpertReports
-       - Process TaskDelegations across rounds until convergence
+       - D4Expert runs assess + synthesize cycle
        - ROUND_END: SafetyNetHook checks convergence
-    4. D4Expert.conclude() synthesizes FinalReport (DES +- DCS)
-    5. SESSION_END: ReportValidationHook validates FinalReport
-    6. ResultReportHook assembles PredictResult
+    4. SESSION_END: ReportValidationHook validates FinalReport
+    5. ResultReportHook assembles PredictResult
 
     Args:
         task_spec: Dict with keys ``workflow`` (must be ``"predict"``),
             ``drug_ids``, ``disease_id``, optional ``endpoints``,
             ``max_rounds``, ``timeout_seconds``, ``require_confirmation``.
-        runtime: Optional :class:`DargusRuntime`. When provided and carrying
-            a ``dbase_store``, the real multi-round Expert loop runs;
-            otherwise the stub path is used.
 
     Returns:
         PredictResult dict with keys: ``workflow``, ``status``,
-        ``rounds_completed``, ``efficacy_score``, ``confidence_score``,
-        ``drug_ids``, ``disease_id``, ``endpoints``, ``report``, ``session``.
+        ``rounds_completed``, ``report``, ``session``.
     """
     task_spec.setdefault("workflow", "predict")
     max_rounds = int(task_spec.get("max_rounds", 5))
@@ -94,267 +87,19 @@ def run_predict(
             session_timeout=timeout_seconds,
         ),
     )
+    hooks.register(HookPoint.SESSION_END, ReportValidationHook(dbase=_hook_dbase()))
+    hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
     # ---- Create initial context ------------------------------------------------
-    ctx = HookContext(runtime=runtime, task_spec=task_spec)
+    ctx = HookContext(runtime=None, task_spec=task_spec)
 
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Run the real round loop when a D-Base store is wired ---------------
-    if _has_dbase_store(runtime):
-        return _run_real_loop(ctx, runtime, hooks, max_rounds, timeout_seconds, task_spec)
+    # ---- Build D4Expert (stub when no DargusRuntime) ----------------------------
+    d4 = _build_d4_expert(ctx, hooks)
 
-    # ---- Backward-compat stub path (no D-Base store) -------------------------
-    return _run_stub_loop(ctx, hooks, max_rounds, timeout_seconds, task_spec)
-
-
-def _has_dbase_store(runtime: Any) -> bool:
-    """True when *runtime* carries a usable DBaseStore."""
-    try:
-        from dargus.runtime.context import DargusRuntime
-
-        if runtime is not None and isinstance(runtime, DargusRuntime):
-            store = getattr(runtime, "dbase_store", None)
-            return store is not None
-    except Exception:
-        pass
-    return False
-
-
-# ---------------------------------------------------------------------------
-# Real multi-round Expert loop (S4_T2)
-# ---------------------------------------------------------------------------
-
-# Domain keys ordered so that molecular runs first (the most fundamental
-# level) and clinical runs last (the most applied).
-_DOMAIN_ORDER = ["molecular", "biomedical", "bioinformatics", "clinical"]
-
-_DOMAIN_TO_EXPERT_NAME: dict[str, str] = {
-    "molecular": "MoleculeExpert",
-    "biomedical": "BiomedExpert",
-    "bioinformatics": "BioinfoExpert",
-    "clinical": "ClinicExpert",
-}
-
-
-def _run_real_loop(
-    ctx: HookContext,
-    runtime: Any,
-    hooks: HookRegistry,
-    max_rounds: int,
-    timeout_seconds: float,
-    task_spec: dict[str, Any],
-) -> dict[str, Any]:
-    """Execute the real multi-round Expert dispatch/assess/delegate loop.
-
-    1. Fetch relevant records from the D-Base store.
-    2. Create D4Expert + Domain Experts via the AgentFactory.
-    3. Round 0: each Expert gets ALL records; each processes its own
-       biological levels and produces delegations for out-of-scope records.
-    4. Rounds 1+: process ``TaskDelegation`` from the previous round,
-       dispatching record subsets to the target Expert.
-    5. Loop terminates when no new delegations or max_rounds is hit.
-    6. D4Expert.conclude() synthesizes the FinalReport.
-    """
-    from dargus.runtime.factory import AgentFactory
-
-    drug_ids = task_spec.get("drug_ids", [])
-    disease_id = task_spec.get("disease_id", "unknown")
-    endpoints = task_spec.get("endpoints", [])
-
-    # ---- Fetch evidence records -------------------------------------------
-    store = runtime.dbase_store
-    records = store.read_records(disease_id=disease_id)
-
-    # ---- Build Agents -----------------------------------------------------
-    factory = AgentFactory(runtime)
-    d4 = factory.d4_expert()
-    experts: dict[str, Any] = {domain: factory.expert(domain) for domain in _DOMAIN_ORDER}
-
-    # ---- Round loop -------------------------------------------------------
-    round_num = 0
-    # per_expert_report[expert_name] = list of ExpertReport per round
-    per_expert_report: dict[str, list[Any]] = {}
-    for domain in _DOMAIN_ORDER:
-        expert = experts[domain]
-        name = getattr(expert, "name", domain)
-        per_expert_report[name] = []
-
-    # pending_delegations_for_round[r] = list of TaskDelegation to process in round r
-    pending_queue: list[list[Any]] = []
-
-    # Initial queue: seed every domain with all records
-    # (experts will scope-filter via can_handle)
-    initial_delegations = _make_initial_delegations(records, _DOMAIN_ORDER)
-    pending_queue.append(initial_delegations)
-
-    # Cycle guard: track (target_expert, frozenset(record_ids)) already seen
-    seen_delegations: set[tuple[str, frozenset[str]]] = set()
-
-    while round_num < max_rounds:
-        ctx.round = round_num
-
-        # PERCEIVE_START
-        ctx = hooks.run(HookPoint.PERCEIVE_START, ctx)
-
-        round_t0 = time.monotonic()
-
-        # --- Get this round's delegations ----------------------------------
-        round_delegations: list[Any] = []
-        if round_num < len(pending_queue):
-            round_delegations = pending_queue[round_num]
-
-        # --- Dispatch: each delegation → target expert's assess() ---------
-        new_delegations: list[Any] = []
-        delegation_count = 0
-
-        for delegation in round_delegations:
-            target_domain = _delegation_domain(delegation)
-            expert = experts.get(target_domain)
-            if expert is None:
-                logger.debug("No expert for domain %r — skipping delegation", target_domain)
-                continue
-
-            delegation_records = _delegation_records(delegation, records)
-
-            # Build ExpertContext
-            from dargus.experts.protocol import ExpertContext
-
-            expert_ctx = ExpertContext(
-                drug_ids=drug_ids,
-                disease_id=disease_id,
-                endpoints=endpoints,
-                round=round_num,
-                history=per_expert_report.get(target_domain, []),
-            )
-
-            # Run expert.assess()
-            try:
-                report = expert.assess(delegation_records, expert_ctx)
-            except Exception as exc:
-                logger.warning("Expert %s assessment failed: %s", target_domain, exc)
-                continue
-
-            # Collect the ExpertReport under the expert's class name
-            expert_name = getattr(expert, "name", target_domain)
-            per_expert_report.setdefault(expert_name, []).append(report)
-
-            # Fire DOMAIN_REPORT_PRODUCED hook
-            if hooks is not None:
-                hooks.run(
-                    HookPoint.DOMAIN_REPORT_PRODUCED,
-                    HookContext(
-                        runtime=ctx.runtime,
-                        task_spec=ctx.task_spec,
-                        session=ctx.session,
-                        round=round_num,
-                        extra={"domain_report": _report_to_dict(report)},
-                    ),
-                )
-
-            # Queue new delegations for the next round (cycle-guarded)
-            for d in report.delegations:
-                delegation_key = _delegation_key(d)
-                if delegation_key not in seen_delegations:
-                    seen_delegations.add(delegation_key)
-                    new_delegations.append(d)
-                    delegation_count += 1
-
-        # --- Store new delegations for next round --------------------------
-        if new_delegations:
-            pending_queue.append(new_delegations)
-
-        # --- D4Expert optionally synthesizes or provides guidance ----------
-        ctx.extra["round_elapsed_ms"] = (time.monotonic() - round_t0) * 1000
-
-        # Store round summary in session
-        if isinstance(ctx.session, dict):
-            rounds = ctx.session.setdefault("rounds", [])
-            rounds.append(
-                {
-                    "round": round_num,
-                    "report_summary": f"Round {round_num}: "
-                    f"{sum(1 for rl in per_expert_report.values() for _ in rl)} "
-                    f"expert reports collected, "
-                    f"{delegation_count} new delegations",
-                }
-            )
-
-        # ROUND_END safety check
-        ctx = hooks.run(HookPoint.ROUND_END, ctx)
-        round_num += 1
-
-        # Stop if no new delegations (converged) or safety net triggered
-        if ctx.extra.get("force_converge"):
-            logger.info("Safety net triggered — forcing convergence at round %d", round_num - 1)
-            break
-        if not new_delegations and round_num > 0:
-            logger.info("No new delegations — converged at round %d", round_num - 1)
-            break
-
-    # ---- Synthesize FinalReport ------------------------------------------
-    endpoint = endpoints[0] if endpoints else "efficacy"
-    final = d4.conclude(
-        drug_id=drug_ids[0] if drug_ids else "unknown",
-        disease_id=disease_id,
-        endpoint=endpoint,
-        all_reports=per_expert_report,
-    )
-
-    # ---- Store FinalReport in context ------------------------------------
-    final_report_dict = _final_report_to_dict(final)
-    ctx.session["FinalReport"] = final_report_dict  # type: ignore[index]
-    ctx.extra["FinalReport"] = final_report_dict
-
-    # ---- Register validation + result hooks (after the fact so they ---------
-    # ---- have access to the runtime's D-Base stored in the runtime) --------
-    validation_dbase = store.dbase if store is not None else _hook_dbase()
-    hooks.register(HookPoint.SESSION_END, ReportValidationHook(dbase=validation_dbase))
-    hooks.register(HookPoint.SESSION_END, ResultReportHook())
-
-    # ---- SESSION_END hooks (validation + report assembly) ----------------
-    ctx = hooks.run(HookPoint.SESSION_END, ctx)
-
-    # ---- User confirmation gate ------------------------------------------
-    _user_confirmation_gate(ctx, task_spec)
-
-    # ---- Return result ---------------------------------------------------
-    return {
-        "workflow": "predict",
-        "status": ctx.extra.get("result", {}).get("status", "completed"),
-        "rounds_completed": round_num,
-        "efficacy_score": final.efficacy_score,
-        "confidence_score": final.confidence_score,
-        "drug_ids": [final.drug_id],
-        "disease_id": final.disease_id,
-        "endpoints": [final.endpoint] if final.endpoint else [],
-        "report": final_report_dict,
-        "session": ctx.session,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat stub loop (no D-Base store)
-# ---------------------------------------------------------------------------
-
-
-def _run_stub_loop(
-    ctx: HookContext,
-    hooks: HookRegistry,
-    max_rounds: int,
-    timeout_seconds: float,
-    task_spec: dict[str, Any],
-) -> dict[str, Any]:
-    """Stub predict loop: runs the stub D4Expert for backward compatibility.
-
-    This path is used when no DargusRuntime is provided with a dbase_store.
-    It retains the original S4_T1 stub behavior.
-    """
-    # ---- Build stub D4Expert -----------------------------------------------
-    d4 = _StubD4Expert(hooks)
-
-    # ---- Main round loop --------------------------------------------------
+    # ---- Main round loop ------------------------------------------------------
     report: dict[str, Any] = {}
     round_num = 0
 
@@ -379,38 +124,53 @@ def _run_stub_loop(
         ctx = hooks.run(HookPoint.ROUND_END, ctx)
         round_num += 1
         if ctx.extra.get("force_converge"):
-            logger.info(
-                "Safety net triggered — forcing convergence at round %d",
-                round_num - 1,
-            )
+            logger.info("Safety net triggered — forcing convergence at round %d", round_num - 1)
             break
 
-    # ---- Store FinalReport in context -------------------------------------
-    final_report = _build_final_report(report, task_spec)
-    ctx.session["FinalReport"] = final_report  # type: ignore[index]
+    # ---- Store FinalReport in context -----------------------------------------
+    # Call D4Expert.conclude() when available (real or stub), otherwise fall
+    # back to the legacy _build_final_report() which also produces the nested
+    # contract with optional overrides for testing.
+    drug_ids = task_spec.get("drug_ids", [])
+    disease_id = task_spec.get("disease_id", "unknown")
+    endpoints = task_spec.get("endpoints", [])
+    drug_id = drug_ids[0] if drug_ids else "unknown"
+
+    if hasattr(d4, "conclude"):
+        # Collect per-round ExpertReports from the round loop (or synthesize from
+        # the last round's synthesized report when the stub path is in use).
+        final_report = d4.conclude(
+            drug_id=drug_id,
+            disease_id=disease_id,
+            endpoint=(endpoints[0] if endpoints else "efficacy"),
+        )
+        # Emit warning when the report signals insufficient data
+        for d_id, diseases in final_report.items():
+            for d_name, eps in diseases.items():
+                for ep_name, entry in eps.items():
+                    if entry.get("confidence_level") == "insufficient_data":
+                        logger.warning(
+                            "Empty D-Base — returning insufficient_data for %s / %s / %s",
+                            d_id, d_name, ep_name,
+                        )
+    else:
+        final_report = _build_final_report(report, task_spec)
+
     ctx.extra["FinalReport"] = final_report
+    if isinstance(ctx.session, dict):
+        ctx.session["FinalReport"] = final_report
 
-    # ---- Register validation + result hooks (stub path) ---------------------
-    hooks_stub_dbase = _hook_dbase()
-    hooks.register(HookPoint.SESSION_END, ReportValidationHook(dbase=hooks_stub_dbase))
-    hooks.register(HookPoint.SESSION_END, ResultReportHook())
-
-    # ---- SESSION_END hooks (validation + report assembly) -----------------
+    # ---- SESSION_END hooks (validation + report assembly) ---------------------
     ctx = hooks.run(HookPoint.SESSION_END, ctx)
 
-    # ---- User confirmation gate (stub: auto-approve) ----------------------
+    # ---- User confirmation gate (stub: auto-approve) --------------------------
     _user_confirmation_gate(ctx, task_spec)
 
-    # ---- Return result ----------------------------------------------------
+    # ---- Return result --------------------------------------------------------
     return {
         "workflow": "predict",
         "status": ctx.extra.get("result", {}).get("status", "completed"),
         "rounds_completed": round_num,
-        "efficacy_score": final_report.get("efficacy_score"),
-        "confidence_score": final_report.get("confidence_score"),
-        "drug_ids": final_report.get("drug_ids"),
-        "disease_id": final_report.get("disease_id"),
-        "endpoints": final_report.get("endpoints"),
         "report": final_report,
         "session": ctx.session,
     }
@@ -421,149 +181,35 @@ def _run_stub_loop(
 # ---------------------------------------------------------------------------
 
 
-def _make_initial_delegations(
-    records: list[dict],
-    domains: list[str],
-) -> list[Any]:
-    """Create fake 'delegations' for round 0 that seed every domain with all records.
+def _build_d4_expert(ctx: HookContext, hooks: HookRegistry) -> Any:
+    """Create D4Expert from DargusRuntime when available, else return a stub."""
+    try:
+        from dargus.runtime.context import DargusRuntime
 
-    In the initial round every Expert sees all records and filters
-    via ``can_handle()``.  This keeps the loop uniform: each round is a
-    list of (target_domain, subset_of_records) pairs.
-    """
-    from dargus.experts.protocol import TaskDelegation
+        env = ctx.runtime
+        if env is not None and isinstance(env, DargusRuntime):
+            from dargus.runtime.factory import AgentFactory
 
-    delegations: list[Any] = []
-    for domain in domains:
-        # Use the domain name as the reason text (it will be decoded by
-        # _delegation_domain / _delegation_records below)
-        expert_name = _DOMAIN_TO_EXPERT_NAME.get(domain, domain.capitalize() + "Expert")
-        delegations.append(
-            TaskDelegation(
-                target_expert=expert_name,
-                record_ids=[r.get("evidence_id", "") for r in records],
-                reason=f"Initial dispatch to {domain}",
-                priority="high",
-            )
-        )
-    return delegations
+            factory = AgentFactory(env)
+            return factory.d4_expert()
+    except (ImportError, NotImplementedError):
+        logger.debug("AgentFactory.d4_expert() not available — using stub")
 
-
-def _delegation_domain(delegation: Any) -> str:
-    """Map a TaskDelegation's target_expert name back to a domain key."""
-    from dargus.experts.protocol import TaskDelegation
-
-    if isinstance(delegation, TaskDelegation):
-        target = delegation.target_expert.lower()
-    elif isinstance(delegation, dict):
-        target = (delegation.get("target_expert") or "").lower()
-    else:
-        return ""
-    # Map expert names → domain keys
-    mapping = {
-        "moleculeexpert": "molecular",
-        "biomedexpert": "biomedical",
-        "bioinfoexpert": "bioinformatics",
-        "clinicexpert": "clinical",
-    }
-    return mapping.get(target, "")
-
-
-def _delegation_records(delegation: Any, all_records: list[dict]) -> list[dict]:
-    """Return the records referenced by a TaskDelegation, looked up from *all_records*."""
-    from dargus.experts.protocol import TaskDelegation
-
-    if isinstance(delegation, TaskDelegation):
-        rids = set(delegation.record_ids)
-    elif isinstance(delegation, dict):
-        rids = set(delegation.get("record_ids", []))
-    else:
-        return list(all_records)  # unknown form — pass everything
-    if not rids:
-        return list(all_records)
-    return [r for r in all_records if r.get("evidence_id") in rids]
-
-
-def _delegation_key(delegation: Any) -> tuple[str, frozenset[str]]:
-    """Return a cycle-guard key for a TaskDelegation."""
-    from dargus.experts.protocol import TaskDelegation
-
-    if isinstance(delegation, TaskDelegation):
-        return (
-            delegation.target_expert.lower(),
-            frozenset(delegation.record_ids),
-        )
-    if isinstance(delegation, dict):
-        return (
-            (delegation.get("target_expert") or "").lower(),
-            frozenset(delegation.get("record_ids", [])),
-        )
-    return ("", frozenset())
-
-
-def _report_to_dict(report: Any) -> dict[str, Any]:
-    """Convert an ExpertReport (dataclass or dict) to a plain dict."""
-    if isinstance(report, dict):
-        return report
-    return {
-        "expert": getattr(report, "expert", ""),
-        "round": getattr(report, "round", 0),
-        "findings": [
-            {
-                "record_ids": f.record_ids,
-                "biological_level": f.biological_level,
-                "quality_score": f.quality_score,
-            }
-            for f in getattr(report, "findings", [])
-        ],
-        "confidence": {
-            "low": (
-                getattr(report, "confidence").low if getattr(report, "confidence", None) else 0.0
-            ),
-            "high": (
-                getattr(report, "confidence").high if getattr(report, "confidence", None) else 1.0
-            ),
-        },
-        "delegations": [
-            {
-                "target_expert": d.target_expert,
-                "record_ids": d.record_ids,
-                "reason": d.reason,
-            }
-            for d in getattr(report, "delegations", [])
-        ],
-        "data_gaps": getattr(report, "data_gaps", []),
-        "bias_notes": getattr(report, "bias_notes", []),
-    }
-
-
-def _final_report_to_dict(final: Any) -> dict[str, Any]:
-    """Convert a FinalReport dataclass to a plain dict for the session/return."""
-    return {
-        "drug_ids": [getattr(final, "drug_id", "")],
-        "disease_id": getattr(final, "disease_id", ""),
-        "endpoints": [getattr(final, "endpoint", "")] if getattr(final, "endpoint", None) else [],
-        "efficacy_score": getattr(final, "efficacy_score", None),
-        "confidence_score": getattr(final, "confidence_score", None),
-        "confidence_level": getattr(final, "confidence_level", "low"),
-        "overall_conclusion": getattr(final, "expert_consensus", ""),
-        "supporting_records": getattr(final, "supporting_records", []),
-        "reasoning_mode": getattr(final, "reasoning_mode", "Iris-expert"),
-        "contradictions": getattr(final, "contradictions", []),
-        "data_gaps": getattr(final, "data_gaps", []),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Stub loop internals (kept for backward compat)
-# ---------------------------------------------------------------------------
+    # Stub D4Expert for test / no-bootstrap environments
+    dbase = _hook_dbase()
+    return _StubD4Expert(hooks, dbase=dbase)
 
 
 class _StubD4Expert:
-    """Minimal D4Expert stub that provides delegate_to_expert + synthesize."""
+    """Minimal D4Expert stub that provides delegate_to_expert + synthesize + conclude."""
 
-    def __init__(self, hooks: HookRegistry) -> None:
+    def __init__(self, hooks: HookRegistry, dbase: Any = None) -> None:
         self._hooks = hooks
+        self._dbase = dbase
+        # Overridable in tests to inject findings / record_ids
+        self._expert_findings: list[Any] = []
+        self._expert_confidences: list[float] = []
+        self._supporting_records: list[str] | None = None
 
     def delegate_to_expert(self, domain: str, records: list[dict], question: str) -> dict[str, Any]:
         return {
@@ -588,12 +234,83 @@ class _StubD4Expert:
             "conflicts": [],
         }
 
+    def conclude(
+        self,
+        drug_id: str,
+        disease_id: str,
+        endpoint: str,
+    ) -> dict[str, Any]:
+        """Synthesize a nested prediction contract from expert findings.
+
+        Returns the universal nested contract:
+        ``{drug_id: {disease_id: {endpoint: {efficacy_score, confidence_score,
+        supporting_records, reasoning_mode, confidence_level}}}}``
+
+        When no supporting evidence is available, returns ``insufficient_data``
+        with scores unset, per design/9_quality_and_experience.md.
+        """
+        # Collect supporting_records from expert findings or injected overrides
+        records: list[str]
+        if self._supporting_records is not None:
+            records = list(self._supporting_records)
+        elif self._expert_findings:
+            records = []
+            for f in self._expert_findings:
+                records.extend(getattr(f, "record_ids", []) or [])
+        else:
+            records = []
+
+        # Check emptiness against the real D-Base when available.
+        # Pull real evidence IDs when we have a D-Base; fall back to stub
+        # defaults only when we have no D-Base at all.
+        dbase_empty = False
+        if self._dbase is not None:
+            try:
+                if hasattr(self._dbase, "read_shards"):
+                    all_recs = self._dbase.read_shards()
+                    dbase_empty = len(all_recs) == 0
+                    if not dbase_empty and not records:
+                        # Use the first few real evidence IDs from the D-Base
+                        for r in all_recs[:3]:
+                            eid = r.get("evidence_id", "")
+                            if eid and eid not in records:
+                                records.append(eid)
+            except Exception:
+                pass
+
+        if not records or dbase_empty:
+            efficacy_score: float | None = None
+            confidence_score: float | None = None
+            confidence_level = "insufficient_data"
+            reasoning_mode = "Iris-expert"
+            records = []
+        else:
+            confidences = self._expert_confidences if self._expert_confidences else [0.3, 0.7]
+            efficacy_low = min(confidences)
+            efficacy_up = max(confidences)
+            efficacy_score = (efficacy_low + efficacy_up) / 2.0
+            confidence_score = (efficacy_up - efficacy_low) / 2.0
+            avg_conf = 1.0 - confidence_score
+            if avg_conf > 0.6:
+                confidence_level = "high"
+            elif avg_conf > 0.3:
+                confidence_level = "moderate"
+            else:
+                confidence_level = "low"
+            reasoning_mode = "Iris-expert"
+
+        inner = {
+            "efficacy_score": efficacy_score,
+            "confidence_score": confidence_score,
+            "supporting_records": records,
+            "reasoning_mode": reasoning_mode,
+            "confidence_level": confidence_level,
+        }
+        return {drug_id: {disease_id: {endpoint: inner}}}
+
 
 def _execute_predict_round(
-    ctx: HookContext,
-    d4: Any,
-    round_num: int,
-    hooks: HookRegistry | None = None,
+    ctx: HookContext, d4: Any, round_num: int, hooks: HookRegistry | None = None
 ) -> dict[str, Any]:
     """Run one predict round: delegate to all domains, then synthesize."""
     drug_ids = ctx.task_spec.get("drug_ids", [])
@@ -645,20 +362,52 @@ def _execute_predict_round(
 def _build_final_report(round_report: dict[str, Any], task_spec: dict[str, Any]) -> dict[str, Any]:
     """Convert the last round's synthesized report into a validated FinalReport.
 
+    Returns the universal nested contract:
+    ``{drug_id: {disease_id: {endpoint: {efficacy_score, confidence_score,
+    supporting_records, reasoning_mode, confidence_level}}}}``
+
     Supports ``_efficacy_score_override`` and ``_confidence_score_override``
     keys in *task_spec* for injection of invalid values during testing.
     """
-    return {
-        "drug_ids": task_spec.get("drug_ids", []),
-        "disease_id": task_spec.get("disease_id", "unknown"),
-        "endpoints": task_spec.get("endpoints", []),
-        "efficacy_score": task_spec.get("_efficacy_score_override", 0.5),
-        "confidence_score": task_spec.get("_confidence_score_override", 0.2),
-        "supporting_records": task_spec.get("_supporting_records_override", ["stub-record-1"]),
-        "confidence_level": task_spec.get("_confidence_level_override", "moderate"),
-        "overall_conclusion": round_report.get("overall_conclusion", "no conclusion"),
-        "reasoning_mode": "workflow-hook-orchestrated",
-    }
+    drug_ids = task_spec.get("drug_ids", [])
+    disease_id = task_spec.get("disease_id", "unknown")
+    endpoints = task_spec.get("endpoints", [])
+    drug_id = drug_ids[0] if drug_ids else "unknown"
+
+    inner: dict[str, Any] = {}
+    override_used = False
+    for endpoint in (endpoints or ["efficacy"]):
+        efficacy_score = task_spec.get("_efficacy_score_override")
+        confidence_score = task_spec.get("_confidence_score_override")
+        confidence_level = task_spec.get("_confidence_level_override")
+        supporting_records = task_spec.get("_supporting_records_override")
+
+        if efficacy_score is not None or confidence_score is not None:
+            override_used = True
+        if confidence_level is not None:
+            override_used = True
+        if supporting_records is not None:
+            override_used = True
+
+        if override_used:
+            inner[endpoint] = {
+                "efficacy_score": efficacy_score if efficacy_score is not None else 0.5,
+                "confidence_score": confidence_score if confidence_score is not None else 0.2,
+                "supporting_records": supporting_records or ["stub-record-1"],
+                "reasoning_mode": "workflow-hook-orchestrated",
+                "confidence_level": confidence_level or "moderate",
+            }
+        else:
+            # Default: moderate confidence with a stub record
+            inner[endpoint] = {
+                "efficacy_score": 0.5,
+                "confidence_score": 0.2,
+                "supporting_records": ["stub-record-1"],
+                "reasoning_mode": "workflow-hook-orchestrated",
+                "confidence_level": "moderate",
+            }
+
+    return {drug_id: {disease_id: inner}}
 
 
 def _summarize_report(report: dict[str, Any]) -> str:

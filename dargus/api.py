@@ -64,7 +64,7 @@ def predict(
     )
 
 
-def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> Any:
+def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> dict[str, Any]:
     """Ingest data into the global D-Base.
 
     Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
@@ -76,7 +76,7 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
         disease_kb_dir: Optional path to disease knowledge base directory.
 
     Returns:
-        IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
+        IngestResult dict with ``n_records``, ``n_duplicates``, ``n_errors``, etc.
     """
     if reset:
         from dargus.dbase import DBase
@@ -519,7 +519,6 @@ def test_ingest_dir(directory: str) -> dict[str, Any]:
     from pathlib import Path
 
     from dargus.dbase import DBase
-    from dargus.dbase.store import DBaseStore
 
     dir_path = Path(directory).expanduser()
     if not dir_path.is_dir():
@@ -534,56 +533,16 @@ def test_ingest_dir(directory: str) -> dict[str, Any]:
             "error_details": [f"Directory not found: {dir_path}"],
         }
 
-    # Scan for converters
-    from dargus.ingestion.converters.gdsc import GdscConverter
-    from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
-    from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
-    from dargus.ingestion.converters.top_clinical import TopClinicalConverter
+    # Ingest via the single task_spec calling convention
+    from dargus.workflows.ingest import run_ingest
 
     file_map: list[tuple] = []
     for fp in sorted(dir_path.iterdir()):
         if not fp.is_file():
             continue
-        name = fp.name.lower()
-
-        if "gdsc" in name and name.endswith(".csv"):
-            file_map.append((GdscConverter(), fp))
-        elif any(kw in name for kw in ("bindingdb", "davis", "kiba")):
-            assay = "affinity"
-            if "ic50" in name:
-                assay = "IC50"
-            elif "ki" in name:
-                assay = "Ki"
-            elif "kd" in name:
-                assay = "Kd"
-            file_map.append((TdcDtiConverter(assay), fp))
-        elif "solubility" in name:
-            file_map.append((TdcAdmetConverter("solubility"), fp))
-        elif "bioavailability" in name:
-            file_map.append((TdcAdmetConverter("bioavailability"), fp))
-        elif "cyp3a4" in name:
-            file_map.append((TdcAdmetConverter("cyp3a4_substrate"), fp))
-        elif any(
-            kw in name
-            for kw in (
-                "cyp",
-                "caco2",
-                "bbb",
-                "half_life",
-                "clearance",
-                "vdss",
-                "ppbr",
-                "ames",
-                "carcinogens",
-                "ld50",
-            )
-        ):
-            file_map.append((TdcAdmetConverter("admet"), fp))
-        elif "top" in name and "clinical" in name:
-            file_map.append((TopClinicalConverter(), fp))
+        file_map.append(fp)
 
     dbase = DBase.global_instance()
-    manager = DBaseStore(dbase)
 
     added = 0
     duplicates = 0
@@ -592,32 +551,15 @@ def test_ingest_dir(directory: str) -> dict[str, Any]:
     error_details: list[str] = []
     t0 = time.perf_counter()
 
-    for conv_instance, fp in file_map:
+    for fp in file_map:
         try:
-            raw_rows = conv_instance.convert(fp)
-            for row_idx, raw in enumerate(raw_rows):
-                try:
-                    evidence = manager.build_evidence(
-                        raw,
-                        source_metadata={
-                            "type": "file_path",
-                            "id": f"test-ingest:{fp.name}:{row_idx}",
-                        },
-                    )
-                    result = manager.write_record(evidence)
-                    if result is True:
-                        added += 1
-                    else:
-                        duplicates += 1
-                except ValueError as exc:
-                    hard_rejects += 1
-                    error_details.append(f"{fp.name} row {row_idx}: {str(exc)[:120]}")
-                except Exception as exc:
-                    errors += 1
-                    error_details.append(f"{fp.name} row {row_idx}: {exc}")
+            result = run_ingest({"workflow": "ingest", "source_path": str(fp), "max_rounds": 1})
+            added += result.get("n_records", 0)
+            duplicates += result.get("n_duplicates", 0)
+            errors += result.get("n_errors", 0)
         except Exception as exc:
             errors += 1
-            error_details.append(f"{fp.name}: convert failed — {exc}")
+            error_details.append(f"{fp.name}: ingest failed — {exc}")
 
     elapsed = time.perf_counter() - t0
 

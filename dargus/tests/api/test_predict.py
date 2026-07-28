@@ -41,14 +41,13 @@ def test_api_predict_returns_prediction_matrix(minimal_dbase):
         assert 0.0 <= entry["confidence_score"] <= 1.0
 
 
-def test_api_ingest_returns_ingestion_report(minimal_dbase, tmp_path):
-    """dargus.ingest() returns an IngestionReport."""
+def test_api_ingest_returns_dict(minimal_dbase, tmp_path):
+    """dargus.ingest() returns a result dict."""
     datadir = tmp_path / "test_data"
     datadir.mkdir()
     report = dargus.ingest(datadir=str(datadir))
-    assert hasattr(report, "n_records")
-    assert hasattr(report, "n_skipped")
-    assert hasattr(report, "dbase_size")
+    assert isinstance(report, dict)
+    assert "n_records" in report
 
 
 def test_api_query_dbase_returns_list(minimal_dbase):

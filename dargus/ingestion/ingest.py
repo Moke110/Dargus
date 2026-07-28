@@ -9,15 +9,8 @@ from typing import Any
 
 from dargus.dbase import DBase
 from dargus.dbase.store import DBaseStore
-from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
-from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
 
-CONVERTERS: dict[str, callable] = {
-    "tier1_admet_solubility": lambda: TdcAdmetConverter("solubility"),
-    "tier1_admet_lipophilicity": lambda: TdcAdmetConverter("lipophilicity"),
-    "tier1_dti_davis": lambda: TdcDtiConverter("affinity"),
-    "tier1_dti_kiba": lambda: TdcDtiConverter("affinity"),
-}
+CONVERTERS: dict[str, callable] = {}
 
 
 def ingest_dataset(

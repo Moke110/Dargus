@@ -9,7 +9,7 @@ from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.dbase.store import DBaseStore
-from dargus.workflows.ingest import IngestionReport, run_ingest
+from dargus.workflows.ingest import run_ingest
 
 if TYPE_CHECKING:
     from dargus.runtime.lifecycle import LifecycleManager
@@ -75,21 +75,17 @@ class Iris(BaseAgent):
             "n_records": len(records),
         }
 
-    def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> IngestionReport:
+    def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> dict[str, Any]:
         """Run the Ingest workflow on the global D-Base.
 
-        With an injected LifecycleManager this delegates to
-        ``run_ingest(task_spec)``; without one it calls the workflow-level
-        ``run_ingest`` directly.
+        Delegates to ``run_ingest(task_spec)``.
         """
+        _task_spec: dict = {"workflow": "ingest", "source_path": datadir}
+        if disease_kb_dir is not None:
+            _task_spec["disease_kb_dir"] = disease_kb_dir
         if self._lifecycle_manager is not None:
-            _task_spec: dict = {"datadir": datadir}
-            if disease_kb_dir is not None:
-                _task_spec["disease_kb_dir"] = disease_kb_dir
-            result = self._lifecycle_manager.run_ingest(_task_spec)
-            if result is not None:
-                return result
-        return run_ingest(datadir, disease_kb_dir=disease_kb_dir)
+            return self._lifecycle_manager.run_ingest(_task_spec)
+        return run_ingest(_task_spec)
 
     def predict(
         self,

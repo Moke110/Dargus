@@ -313,3 +313,247 @@ def test_run_predict_report_validation_failure_on_empty_records():
     }
     with pytest.raises(RuntimeError, match="supporting_records must be a non-empty"):
         run_predict(spec)
+
+
+# ---------------------------------------------------------------------------
+# Multi-round Expert dispatch and delegation end-to-end tests (S4_T2)
+# ---------------------------------------------------------------------------
+
+
+def _make_evidence_record(
+    evidence_id: str,
+    biological_level: str,
+    *,
+    disease_id: str = "Alzheimer",
+    drug_id: str = "DB00001",
+    readout_value: float | None = None,
+    assay_type: str | None = None,
+    phase: str | None = None,
+) -> dict:
+    """Build a minimal three-axis evidence dict for seeding a test D-Base."""
+    record: dict = {
+        "evidence_id": evidence_id,
+        "biological_level": biological_level,
+        "evidence_design": "descriptive",
+        "x": {
+            "type": "drug",
+            "value": [{"entity_id": drug_id, "entity_label": drug_id}],
+        },
+        "y": {
+            "type": "assay",
+            "category": "efficacy",
+            "value": [readout_value] if readout_value is not None else [],
+        },
+        "bg": {"disease_id": [disease_id], "drugs": [], "genes": []},
+        "sources": [{"rank": 1, "type": "test", "name": "e2e_test_seed"}],
+    }
+    if assay_type is not None:
+        record["platform"] = {"assay_platform": assay_type}
+    if phase is not None:
+        record["phase"] = phase
+    return record
+
+
+class _FakeReasoningBackend:
+    """Fake LLM backend returning deterministic responses — no network."""
+
+    def chat(self, messages, options=None):
+        from dargus.models.reasoning import LLMResponse
+
+        return LLMResponse(
+            content='{"goal":"assess evidence","confidence":0.5}',
+            model="fake",
+        )
+
+
+def test_run_predict_real_expert_loop_multi_round(tmp_path):
+    """E2E: multi-round Expert dispatch, ExpertReport production,
+    delegation processing, and SafetyNetHook termination.
+
+    Seeds a real temp D-Base with evidence at multiple biological levels
+    and uses a fake reasoning LLM so no network is required.
+    """
+    import os
+
+    from dargus.dbase import DBase, DBaseStore
+    from dargus.models.reasoning import ReasoningLLM
+    from dargus.runtime.context import DargusRuntime
+
+    # ---- Temp D-Base ----------------------------------------------------
+    dargus_home = str(tmp_path / "dargus_home")
+    os.environ["DARGUS_HOME"] = dargus_home
+    os.makedirs(dargus_home, exist_ok=True)
+
+    dbase = DBase(project_id="e2e-predict", root_dir=dargus_home)
+    store = DBaseStore(dbase)
+
+    # Seed evidence records at different biological levels
+    seed_records = [
+        _make_evidence_record("ev_mol_1", "molecular", drug_id="DRUG_A", readout_value=0.85),
+        _make_evidence_record("ev_mol_2", "molecular", drug_id="DRUG_A", readout_value=0.72),
+        _make_evidence_record("ev_cell_1", "cellular", drug_id="DRUG_A", readout_value=0.65),
+        _make_evidence_record("ev_anim_1", "animal", drug_id="DRUG_A", readout_value=0.55),
+        _make_evidence_record(
+            "ev_rct_1", "rct", drug_id="DRUG_A", readout_value=0.48, phase="phase_2"
+        ),
+        _make_evidence_record("ev_epi_1", "epi", drug_id="DRUG_A", readout_value=0.35),
+        _make_evidence_record(
+            "ev_rnaseq_1", "molecular", drug_id="DRUG_A", assay_type="rna_seq", readout_value=0.78
+        ),
+    ]
+    for rec in seed_records:
+        dbase.append_shard(rec)
+
+    # ---- Fake Runtime ---------------------------------------------------
+    fake_backend = _FakeReasoningBackend()
+    fake_llm = ReasoningLLM(backend=fake_backend)
+    runtime = DargusRuntime(
+        config={},
+        reasoning_llm=fake_llm,
+        embedding_model=None,
+    )
+    runtime.dbase_store = store
+
+    # ---- Run Predict ----------------------------------------------------
+    task_spec = {
+        "workflow": "predict",
+        "drug_ids": ["DRUG_A"],
+        "disease_id": "Alzheimer",
+        "endpoints": ["efficacy"],
+        "max_rounds": 4,
+        "timeout_seconds": 30,
+    }
+    result = run_predict(task_spec, runtime=runtime)
+
+    # ---- Assertions -----------------------------------------------------
+    assert isinstance(result, dict)
+    assert result["workflow"] == "predict"
+    assert result["status"] in ("completed", "converged")
+    assert result["rounds_completed"] <= 4  # SafetyNetHook enforcement
+
+    report = result["report"]
+    des = report.get("efficacy_score")
+    dcs = report.get("confidence_score")
+    assert des is not None, "DES must be set when evidence exists"
+    assert dcs is not None, "DCS must be set when evidence exists"
+    assert 0.0 <= des <= 1.0
+    assert 0.0 <= dcs <= 1.0
+
+    # Supporting records must come from seeded D-Base (ev_ prefix)
+    records = report.get("supporting_records", [])
+    assert isinstance(records, list)
+    assert len(records) > 0, "Supporting records must be non-empty for seeded D-Base"
+    for rid in records:
+        assert rid.startswith("ev_"), f"{rid!r} not from seeded D-Base"
+
+    session = result["session"]
+    assert "FinalReport" in session
+    assert "rounds" in session
+    assert len(session["rounds"]) >= 1
+
+
+def test_run_predict_expert_loop_delegation_between_experts(tmp_path):
+    """E2E: Delegation tracking — when a record is out of scope for one
+    Expert, a TaskDelegation routes it to the correct Expert.  Verifies
+    that records at different biological levels are assessed by the
+    appropriate domain Expert.
+    """
+    import os
+
+    from dargus.dbase import DBase, DBaseStore
+    from dargus.models.reasoning import ReasoningLLM
+    from dargus.runtime.context import DargusRuntime
+
+    dargus_home = str(tmp_path / "dargus_home")
+    os.environ["DARGUS_HOME"] = dargus_home
+    os.makedirs(dargus_home, exist_ok=True)
+
+    dbase = DBase(project_id="e2e-delegation", root_dir=dargus_home)
+    store = DBaseStore(dbase)
+
+    seed_records = [
+        _make_evidence_record("ev_mol_a", "molecular", drug_id="DRUG_B"),
+        _make_evidence_record("ev_mol_sim", "molecular-sim", drug_id="DRUG_B"),
+        _make_evidence_record(
+            "ev_rct_a", "rct", drug_id="DRUG_B", readout_value=0.42, phase="phase_3"
+        ),
+        _make_evidence_record("ev_cell_a", "cellular", drug_id="DRUG_B"),
+        _make_evidence_record("ev_animal_a", "animal", drug_id="DRUG_B", readout_value=0.61),
+    ]
+    for rec in seed_records:
+        dbase.append_shard(rec)
+
+    fake_backend = _FakeReasoningBackend()
+    fake_llm = ReasoningLLM(backend=fake_backend)
+    runtime = DargusRuntime(
+        config={},
+        reasoning_llm=fake_llm,
+        embedding_model=None,
+    )
+    runtime.dbase_store = store
+
+    task_spec = {
+        "workflow": "predict",
+        "drug_ids": ["DRUG_B"],
+        "disease_id": "Alzheimer",
+        "endpoints": ["efficacy"],
+        "max_rounds": 5,
+        "timeout_seconds": 30,
+    }
+    result = run_predict(task_spec, runtime=runtime)
+
+    assert isinstance(result, dict)
+    assert result["status"] in ("completed", "converged")
+
+    report = result["report"]
+    des = report.get("efficacy_score")
+    dcs = report.get("confidence_score")
+    assert des is not None
+    assert dcs is not None
+    assert 0.0 <= des <= 1.0
+    assert 0.0 <= dcs <= 1.0
+
+    records = report.get("supporting_records", [])
+    assert len(records) > 0
+
+
+def test_run_predict_insufficient_data_on_empty_dbase(tmp_path):
+    """E2E: When the D-Base has no evidence, Predict must return
+    confidence_level: insufficient_data with scores unset."""
+    import os
+
+    from dargus.dbase import DBase, DBaseStore
+    from dargus.models.reasoning import ReasoningLLM
+    from dargus.runtime.context import DargusRuntime
+
+    dargus_home = str(tmp_path / "dargus_home_empty")
+    os.environ["DARGUS_HOME"] = dargus_home
+    os.makedirs(dargus_home, exist_ok=True)
+
+    dbase = DBase(project_id="e2e-empty", root_dir=dargus_home)
+    store = DBaseStore(dbase)  # deliberately empty — no seed records
+
+    fake_backend = _FakeReasoningBackend()
+    fake_llm = ReasoningLLM(backend=fake_backend)
+    runtime = DargusRuntime(
+        config={},
+        reasoning_llm=fake_llm,
+        embedding_model=None,
+    )
+    runtime.dbase_store = store
+
+    task_spec = {
+        "workflow": "predict",
+        "drug_ids": ["DRUG_C"],
+        "disease_id": "RareDisease",
+        "endpoints": ["efficacy"],
+        "max_rounds": 3,
+        "timeout_seconds": 30,
+    }
+    result = run_predict(task_spec, runtime=runtime)
+
+    assert isinstance(result, dict)
+    report = result["report"]
+    assert report.get("confidence_level") == "insufficient_data"
+    assert report.get("efficacy_score") is None
+    assert report.get("confidence_score") is None

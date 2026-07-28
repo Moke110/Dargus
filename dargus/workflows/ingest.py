@@ -7,12 +7,16 @@ review with an optional user confirmation gate.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dargus.experts.bioinfo import BioinfoExpert
+from dargus.experts.biomed import BiomedExpert
+from dargus.experts.clinic import ClinicExpert
+from dargus.experts.molecule import MoleculeExpert
+from dargus.models.reasoning import ReasoningLLM
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -26,80 +30,9 @@ from dargus.runtime.hooks import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Explore-phase constants
-# ---------------------------------------------------------------------------
-
-_DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "molecular": [
-        "molecule",
-        "molecular",
-        "compound",
-        "ligand",
-        "binding",
-        "docking",
-        "smiles",
-        "mol",
-        "sdf",
-        "pdb",
-    ],
-    "biomedical": [
-        "biomed",
-        "biomedical",
-        "preclinical",
-        "pharmacology",
-        "animal",
-        "mouse",
-        "rat",
-        "cell",
-        "cancer",
-        "tumor",
-        "pk",
-        "pd",
-        "pharmacokinetic",
-    ],
-    "bioinformatics": [
-        "bioinfo",
-        "bioinformatics",
-        "rna",
-        "rna-seq",
-        "rnaseq",
-        "genomic",
-        "proteomic",
-        "seq",
-        "expression",
-        "gene",
-        "protein",
-        "omics",
-        "transcriptom",
-    ],
-    "clinical": [
-        "clinic",
-        "clinical",
-        "trial",
-        "nct",
-        "rct",
-        "cohort",
-        "patient",
-        "endpoint",
-        "endpoints",
-        "phase",
-        "dosing",
-    ],
-}
-
-_VALID_DOMAINS = frozenset({"molecular", "biomedical", "bioinformatics", "clinical"})
-
-_CLASSIFY_SYSTEM_PROMPT = (
-    "You are a file classifier for a biomedical evidence ingestion system. "
-    "Given a list of filenames, classify each file into exactly one domain: "
-    '"molecular", "biomedical", "bioinformatics", "clinical", or "unknown".\n'
-    'Return ONLY valid JSON: {"classifications": [{"file": "<name>", "domain": "<domain>"}, ...]}'
-)
-
 
 # ---------------------------------------------------------------------------
-# Dataclasses
+# Backward-compat dataclasses (consumed by Iris.commander, api, cli)
 # ---------------------------------------------------------------------------
 
 
@@ -113,31 +46,86 @@ class IngestionReport:
     errors: list[str] = field(default_factory=list)
 
 
+TrainingReport = IngestionReport  # backward compat alias
+
+
+# ---------------------------------------------------------------------------
+# Domain Expert factory
+# ---------------------------------------------------------------------------
+
+_EXPERT_BY_DOMAIN: dict[str, type] = {
+    "molecule": MoleculeExpert,
+    "biomedical": BiomedExpert,
+    "bioinformatics": BioinfoExpert,
+    "clinical": ClinicExpert,
+}
+
+
+def _build_experts(
+    reasoning_llm: ReasoningLLM | None = None,
+) -> dict[str, Any]:
+    """Build domain experts for the Convert phase."""
+    experts: dict[str, Any] = {}
+    for domain, cls in _EXPERT_BY_DOMAIN.items():
+        experts[domain] = cls(reasoning_llm=reasoning_llm)
+    return experts
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
-def run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
+def run_ingest(
+    task_spec_or_datadir: dict[str, Any] | str,
+    reset: bool = False,
+    disease_kb_dir: str | None = None,
+) -> IngestionReport | dict[str, Any]:
     """Execute the ingest workflow.
 
+    **Backward-compat wrapper.**  Supports both the Phase-E ``task_spec``
+    calling convention and the pre-Phase-E ``(datadir, reset, disease_kb_dir)``
+    convention used by ``Iris.commander``, ``api.py``, and ``cli.py``.
+
     Args:
-        task_spec: Dict with keys ``workflow`` (must be ``"ingest"``),
-            ``source_path``, optional ``source_type``, ``max_rounds``,
-            ``require_confirmation``.
+        task_spec_or_datadir: Either a ``task_spec`` dict (new API) or a
+            ``datadir`` path string (old API).
+        reset: (old API) Clear D-Base before ingestion.
+        disease_kb_dir: (old API) Path to disease knowledge base directory.
 
     Returns:
-        IngestResult dict with keys: ``workflow``, ``status``,
-        ``n_records``, ``n_duplicates``, ``n_errors``, ``session``.
+        - ``dict[str, Any]`` when called with a ``task_spec`` dict.
+        - ``IngestionReport`` when called with a ``datadir`` string.
     """
-    return _run_ingest(task_spec)
+    if isinstance(task_spec_or_datadir, str):
+        # Old calling convention: run_ingest(datadir, reset=..., disease_kb_dir=...)
+        task_spec: dict[str, Any] = {
+            "workflow": "ingest",
+            "source_path": task_spec_or_datadir,
+            "reset": reset,
+        }
+        if disease_kb_dir is not None:
+            task_spec["disease_kb_dir"] = disease_kb_dir
+        try:
+            result = _run_ingest(task_spec)
+        except Exception:
+            logger.exception("_run_ingest failed — returning empty report")
+            return IngestionReport()
+        return IngestionReport(
+            n_records=result.get("n_records", 0),
+            n_skipped=result.get("n_duplicates", 0),
+            dbase_size=0,
+            errors=[],
+        )
+    # New calling convention: run_ingest(task_spec)
+    return _run_ingest(task_spec_or_datadir)
 
 
 def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     """Execute ingest workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates IngestSession
-    2. Explore: scan source_path, classify files by domain via Iris
+    2. Explore and parse input files from source_path
     3. Distribute content to DomainExperts for evidence extraction
     4. Call dbase_write for each extracted record
     5. Collect DuplicateReviewRequest items
@@ -147,7 +135,7 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     Args:
         task_spec: Dict with keys ``workflow`` (must be ``"ingest"``),
             ``source_path``, optional ``source_type``, ``max_rounds``,
-            ``require_confirmation``, ``_reasoning_llm`` (test injection).
+            ``require_confirmation``.
 
     Returns:
         IngestResult dict with keys: ``workflow``, ``status``,
@@ -170,64 +158,57 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Explore phase: directory scan + domain classification ----------------
+    # ---- Wire reasoning LLM (injected for tests; stub mode when absent) ------
+    reasoning_llm = task_spec.get("_reasoning_llm", None)
+
+    # ---- Explore phase ---------------------------------------------------------
     source_path = task_spec.get("source_path", "")
     logger.info("Ingesting from source: %s", source_path)
 
-    reasoning_llm = task_spec.get("_reasoning_llm")
-    explore_batches = _explore_sources(source_path, reasoning_llm=reasoning_llm)
-
-    # Preserve domain batches in the session for downstream phases
+    # Scan directory, classify files by domain → per-domain file batches
+    explore_batches = _explore_source(source_path, task_spec)
     if isinstance(ctx.session, dict):
         ctx.session["explore_batches"] = explore_batches
 
-    # Convert explore_batches {domain: [file_path]} into flat records
-    # for backward compat with the existing round loop + _partition_by_domain.
-    # Each file is a "record stub" until the Convert phase is fully wired.
-    parsed_records: list[dict[str, Any]] = []
-    for domain, file_paths in explore_batches.items():
-        for fp in file_paths:
-            parsed_records.append(
-                {"domain": domain, "source_path": fp, "source": source_path, "data": {}}
-            )
-
-    n_records = 0
-    n_duplicates = 0
+    # ---- Convert phase: Domain Experts extract evidence from their batches ----
+    experts = _build_experts(reasoning_llm=reasoning_llm)
+    all_instances: list[dict[str, Any]] = []
     n_errors = 0
 
-    # ---- Main round loop: distribute to DomainExperts -------------------------
-    round_num = 0
-    domain_records = _partition_by_domain(parsed_records)
+    for domain, files in explore_batches.items():
+        expert = experts.get(domain)
+        if expert is None:
+            logger.info("No expert for domain '%s' — skipping %d files", domain, len(files))
+            continue
+        instances, err_count = _extract_evidence(expert, domain, files)
+        all_instances.extend(instances)
+        n_errors += err_count
+        if isinstance(ctx.session, dict):
+            rounds = ctx.session.setdefault("rounds", [])
+            rounds.append(
+                {
+                    "round": len(rounds),
+                    "domain": domain,
+                    "extracted": len(instances),
+                    "errors": err_count,
+                }
+            )
 
-    while round_num < max_rounds:
+    n_records = len(all_instances)
+    n_duplicates = 0
+
+    # ---- Place extracted instances into session for downstream phases ---------
+    if isinstance(ctx.session, dict):
+        ctx.session["evidence_instances"] = all_instances
+
+    # ---- Round loop hooks (compat: run PERCEIVE_START / ROUND_END) ------------
+    for round_num in range(min(1, max_rounds)):
         ctx.round = round_num
         ctx = hooks.run(HookPoint.PERCEIVE_START, ctx)
-
-        # In each round, process one domain batch
-        if round_num < len(domain_records):
-            domain, batch = domain_records[round_num]
-            extracted, errors = _extract_evidence(domain, batch)
-            n_records += extracted
-            n_errors += errors
-
-            if isinstance(ctx.session, dict):
-                rounds = ctx.session.setdefault("rounds", [])
-                rounds.append(
-                    {
-                        "round": round_num,
-                        "domain": domain,
-                        "extracted": extracted,
-                        "errors": errors,
-                    }
-                )
-
         ctx = hooks.run(HookPoint.ROUND_END, ctx)
-        if ctx.extra.get("force_converge"):
-            break
-        round_num += 1
 
     # ---- Duplicate review -----------------------------------------------------
-    duplicates = _collect_duplicates(parsed_records, task_spec)
+    duplicates = _collect_duplicates(all_instances, task_spec)
     n_duplicates = len(duplicates)
 
     # ---- Build FinalReport ----------------------------------------------------
@@ -262,180 +243,92 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
 # Explore phase
 # ---------------------------------------------------------------------------
 
+# Domain file classification: file extension -> domain key
+_EXT_TO_DOMAIN: dict[str, str] = {
+    ".mol2": "molecule",
+    ".sdf": "molecule",
+    ".pdb": "molecule",
+    ".smiles": "molecule",
+    ".smi": "molecule",
+    ".csv": "clinical",
+    ".tsv": "clinical",
+    ".xlsx": "clinical",
+    ".txt": "biomedical",
+    ".json": "bioinformatics",
+    ".fasta": "bioinformatics",
+    ".fastq": "bioinformatics",
+    ".gff": "bioinformatics",
+    ".bam": "bioinformatics",
+}
 
-def _explore_sources(
-    source_path: str,
-    reasoning_llm: Any | None = None,
+
+def _explore_source(
+    source_path: str, task_spec: dict[str, Any] | None = None
 ) -> dict[str, list[str]]:
-    """Scan *source_path* for evidence files and classify by domain.
+    """Explore a directory, classifying files by domain.
 
-    Args:
-        source_path: Path to a directory of evidence files.
-        reasoning_llm: Optional ReasoningLLM used to classify files; when
-            absent, classification falls back to a filename heuristic.
+    Returns ``{domain_key: [file_path, ...]}`` mapping each recognised
+    domain to the list of files that belong to it.  Files with unknown
+    extensions are assigned to ``"biomedical"`` as a fallback.  An empty
+    or non-existent *source_path* yields an empty dict.
 
-    Returns:
-        ``{domain: [file_path, ...]}`` where *domain* is one of
-        ``"molecular"``, ``"biomedical"``, ``"bioinformatics"``,
-        ``"clinical"``.  Files that cannot be classified are logged and
-        skipped — not included in any batch.
+    The *task_spec* may carry an optional ``_domain_mapping`` override
+    (``{filename: domain}``) for test injection.
     """
-    directory = Path(source_path)
-    if not directory.exists() or not directory.is_dir():
-        logger.info(
-            "Explore: source directory does not exist or is not a directory: %s",
-            source_path,
-        )
+    domain_mapping: dict[str, str] = {}
+    if task_spec is not None:
+        domain_mapping = task_spec.get("_domain_mapping", {}) or {}
+
+    if not source_path:
         return {}
 
-    # ---- Discover files -------------------------------------------------------
-    file_names = sorted(
-        [p.name for p in directory.iterdir() if p.is_file() and not p.name.startswith(".")]
-    )
-
-    if not file_names:
-        logger.info("Explore: no files found in %s", source_path)
+    sp = Path(source_path)
+    if not sp.exists() or not sp.is_dir():
+        logger.warning("Source path '%s' does not exist or is not a directory", source_path)
         return {}
 
-    logger.info("Explore: discovered %d files in %s", len(file_names), source_path)
-
-    # ---- Classify each file ---------------------------------------------------
-    if reasoning_llm is not None:
-        batches = _classify_via_llm(directory, file_names, reasoning_llm)
-    else:
-        batches = _classify_via_heuristic(directory, file_names)
-
-    # ---- Log summary ----------------------------------------------------------
-    total_classified = sum(len(paths) for paths in batches.values())
-    n_skipped = len(file_names) - total_classified
-    if n_skipped > 0:
-        logger.info(
-            "Explore: classified %d files, skipped %d unclassifiable files",
-            total_classified,
-            n_skipped,
-        )
-
-    return batches
-
-
-def _classify_via_llm(
-    directory: Path,
-    file_names: list[str],
-    reasoning_llm: Any,
-) -> dict[str, list[str]]:
-    """Use the reasoning LLM to classify each file by domain.
-
-    Args:
-        directory: The source directory (resolving relative paths).
-        file_names: List of filenames to classify.
-        reasoning_llm: A ReasoningLLM instance.
-
-    Returns:
-        ``{domain: [full_path, ...]}`` for files the LLM classified
-        into a known domain. Files returned with ``"unknown"`` or an
-        invalid domain are silently skipped.
-    """
-    from dargus.models.reasoning import Message
-
-    files_json = json.dumps([{"index": i, "filename": n} for i, n in enumerate(file_names)])
-    user_prompt = f"Files:\n{files_json}"
-
-    try:
-        response = reasoning_llm.chat(
-            [
-                Message(role="system", content=_CLASSIFY_SYSTEM_PROMPT),
-                Message(role="user", content=user_prompt),
-            ]
-        )
-        parsed = json.loads(response.content.strip())
-    except Exception:
-        logger.exception("Explore: LLM classification failed — falling back to heuristic")
-        return _classify_via_heuristic(directory, file_names)
-
     batches: dict[str, list[str]] = {}
-    for entry in parsed.get("classifications", []):
-        fname = entry.get("file", "")
-        domain = (entry.get("domain") or "").strip().lower()
-        if domain not in _VALID_DOMAINS:
-            logger.info("Explore: skipping '%s' (LLM classified as '%s')", fname, domain)
+    for fpath in sorted(sp.iterdir()):
+        if not fpath.is_file():
             continue
-        full_path = str(directory / fname)
-        batches.setdefault(domain, []).append(full_path)
+        name = fpath.name
+        if name in domain_mapping:
+            domain = domain_mapping[name]
+        else:
+            suffix = fpath.suffix.lower()
+            domain = _EXT_TO_DOMAIN.get(suffix, "biomedical")
+        batches.setdefault(domain, []).append(str(fpath))
 
     return batches
-
-
-def _classify_via_heuristic(
-    directory: Path,
-    file_names: list[str],
-) -> dict[str, list[str]]:
-    """Classify files by scanning filename against domain keyword lists.
-
-    Each filename is lowercased and checked for tokens from
-    ``_DOMAIN_KEYWORDS``. The keyword list with the most matches wins
-    (ties are broken by list order). Files with zero matches are skipped.
-    """
-    batches: dict[str, list[str]] = {}
-
-    for fname in file_names:
-        fname_lower = fname.lower()
-        best_domain: str | None = None
-        best_score = 0
-
-        for domain, keywords in _DOMAIN_KEYWORDS.items():
-            score = _keyword_match_score(fname_lower, keywords)
-            if score > best_score:
-                best_score = score
-                best_domain = domain
-
-        if best_domain is None or best_score == 0:
-            logger.info("Explore: skipping '%s' — no domain keyword match", fname)
-            continue
-
-        full_path = str(directory / fname)
-        batches.setdefault(best_domain, []).append(full_path)
-        logger.debug("Explore: classified '%s' → %s (score=%d)", fname, best_domain, best_score)
-
-    return batches
-
-
-def _keyword_match_score(filename_lower: str, keywords: list[str]) -> int:
-    """Count how many unique keywords appear as substrings in *filename_lower*.
-
-    Performs raw substring matching so compound-word keywords like
-    "rna-seq" match in filenames like ``rna_seq_data.csv``.
-    """
-    score = 0
-    for kw in keywords:
-        if kw in filename_lower:
-            score += 1
-    return score
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Convert phase
 # ---------------------------------------------------------------------------
 
 
-def _partition_by_domain(
-    records: list[dict[str, Any]],
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    """Group records by domain key."""
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for rec in records:
-        domain = rec.get("domain", "unknown")
-        groups.setdefault(domain, []).append(rec)
-    return list(groups.items())
+def _extract_evidence(
+    expert: Any, domain: str, files: list[str]
+) -> tuple[list[dict[str, Any]], int]:
+    """Extract evidence from *files* using *expert*.
 
+    Each file is fed through ``expert.extract()``.  A single file that
+    raises is logged and skipped while the rest of the batch continues.
 
-def _extract_evidence(domain: str, records: list[dict[str, Any]]) -> tuple[int, int]:
-    """Extract evidence from records using DomainExpert (stub).
-
-    Returns (n_extracted, n_errors).
+    Returns ``(instances, n_errors)``.
     """
-    # Stub: every record extracts successfully, no errors
-    logger.info("Domain %s: extracting evidence from %d records", domain, len(records))
-    return len(records), 0
+    instances: list[dict[str, Any]] = []
+    errors = 0
+
+    for file_path in files:
+        try:
+            extracted = expert.extract(file_path)
+            instances.extend(extracted)
+        except Exception:
+            logger.exception("Domain %s: error extracting %s — skipping", domain, file_path)
+            errors += 1
+
+    return instances, errors
 
 
 def _collect_duplicates(

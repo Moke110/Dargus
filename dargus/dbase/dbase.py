@@ -95,8 +95,13 @@ class DBase:
                         continue
         return ids
 
-    def append_shard(self, record: dict) -> None:
-        """Append one evidence record to the writer's shard with flock."""
+    def _append_shard(self, record: dict) -> None:
+        """Append one evidence record to the writer's shard with flock (internal).
+
+        This is the raw, unvalidated shard write. Production code MUST NOT call
+        this directly — use the validating single-writer ``DBaseStore.write_record``
+        (or ``supersede`` / ``retract`` / ``update_status`` / ``write_summary``).
+        """
         record.setdefault("evidence_id", "")
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with self.shard_path.open("a", encoding="utf-8") as fh:
@@ -107,6 +112,17 @@ class DBase:
                 os.fsync(fh.fileno())
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    # ── test seam ──────────────────────────────────────────────────────────
+
+    def _seed_record(self, record: dict) -> None:
+        """Test-only seam: write a raw record directly to the shard.
+
+        This bypasses the validating single-writer path. It exists so tests can
+        seed D-Base state without constructing full ``DBaseStore`` + embedding-model
+        plumbing. Production code must go through ``DBaseStore.write_record``.
+        """
+        self._append_shard(record)
 
     def evidence_id_exists(self, evidence_id: str) -> bool:
         """Check if an evidence_id already exists in any shard."""

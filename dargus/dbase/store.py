@@ -140,7 +140,7 @@ class DBaseStore:
             if dup:
                 return dup
 
-        self.dbase.append_shard(record)
+        self.dbase._append_shard(record)
         self.dbase.mark_view_stale()
 
         # ── embedding sidecar (best-effort; record is already durable) ────

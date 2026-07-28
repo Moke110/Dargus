@@ -7,99 +7,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-# ── module-level compat exports (loaded from vocabularies.json) ──────────────
-
-_vm: VocabularyManager | None = None
-
-
-def _get_vm() -> "VocabularyManager":
-    global _vm
-    if _vm is None:
-        _vm = VocabularyManager()
-    return _vm
-
-
-# backward-compatible module-level enum lists (used by existing tests)
-BIOLOGICAL_LEVELS = [
-    "molecular",
-    "molecular-sim",
-    "cellular",
-    "cellular-sim",
-    "exvivo",
-    "exvivo-sim",
-    "animal",
-    "animal-sim",
-    "rct",
-    "epi",
-    "rct-sim",
-]
-
-READOUT_CATEGORIES = [
-    "clinic_efficacy_primary",
-    "clinic_efficacy_secondary",
-    "clinic_efficacy_exploratory",
-    "clinic_toxicity_primary",
-    "clinic_toxicity_secondary",
-    "clinic_toxicity_exploratory",
-    "binding",
-    "pk_adme",
-    "prot_exp",
-    "rna_exp",
-    "viability",
-    "apoptosis",
-    "proliferation",
-    "migration",
-    "invasion",
-    "autophagy",
-    "differentiation",
-    "phosphorylation",
-    "localization",
-    "metabolism",
-    "oxidative_stress",
-    "behavioral",
-    "other",
-]
-
-EVIDENCE_DESIGNS = [
-    "two_arm_comparison",
-    "single_arm",
-    "dose_escalation",
-    "dose_response_curve",
-    "observational_association",
-    "continuous_trajectory",
-    "descriptive",
-]
-
-# CURIE prefix registry
-CURIE_PATTERNS: dict[str, str] = {
-    "chembl": r"^CHEMBL\d+$",
-    "uniprot": r"^([OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2})(-\d+)?$",
-    "mondo": r"^\d{7}$",
-    "doid": r"^\d+$",
-    "hp": r"^\d{7}$",
-    "meddra": r"^\d{8}$",
-    "uberon": r"^\d{7}$",
-    "cl": r"^\d{7}$",
-    "cellosaurus": r"^CVCL_[A-Z0-9]{4}$",
-    "NCBITaxon": r"^\d+$",
-    "clinicaltrials": r"^NCT\d{8}$",
-}
-
-FALLBACK_PREFIXES = frozenset(
-    {
-        "drugbank",
-        "rxnorm",
-        "unii",
-        "iuphar",
-        "pubchem.compound",
-        "complexportal",
-        "refseq",
-        "genbank",
-        "insdc",
-        "bto",
-    }
-)
-
 
 class VocabularyManager:
     """CURIE prefix registry + three-axis enum term registry.
@@ -150,7 +57,7 @@ class VocabularyManager:
         return frozenset(item["value"] for item in vals if item.get("is_sim"))
 
     def log_effect_types(self) -> frozenset:
-        entry = self._data.get("y_effect_type") or {}
+        entry = self._data.get("y_effect_value_type") or {}
         return frozenset(entry.get("log_types", []))
 
     def control_labels(self) -> frozenset:

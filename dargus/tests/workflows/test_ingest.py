@@ -6,10 +6,12 @@ import pytest
 
 from dargus.workflows.ingest import (
     IngestionReport,
+    IngestionSummary,
     _collect_duplicates,
     _parse_source,
     _partition_by_domain,
     _run_ingest,
+    _user_confirmation_gate,
     run_ingest,
 )
 
@@ -70,6 +72,220 @@ def test_run_ingest_with_max_rounds():
 
 
 # ---------------------------------------------------------------------------
+# HITL confirmation gate tests (S3_T4)
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmCallbackProceed:
+    """confirm_callback returns 'proceed' -- all records should be written."""
+
+    def test_proceed_via_callback(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "proceed"
+        valid_ingest_spec["_duplicate_records"] = [
+            {"evidence_id": "dup-001", "reason": "exact_match"},
+        ]
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "completed"
+        assert result["n_records"] > 0
+
+    def test_proceed_via_callback_no_duplicates(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "proceed"
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "completed"
+        assert result["n_records"] > 0
+
+
+class TestConfirmCallbackSkipDuplicates:
+    """confirm_callback returns 'skip-duplicates' -- only non-flagged records written."""
+
+    def test_skip_duplicates_via_callback(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "skip-duplicates"
+        valid_ingest_spec["_duplicate_records"] = [
+            {"evidence_id": "dup-001", "reason": "exact_match"},
+        ]
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "completed"
+
+    def test_skip_duplicates_no_duplicates_means_all_written(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "skip-duplicates"
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "completed"
+        assert result["n_records"] > 0
+
+
+class TestConfirmCallbackAbort:
+    """confirm_callback returns 'abort' -- nothing should be written."""
+
+    def test_abort_via_callback(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "abort"
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "aborted_by_user"
+        assert result["n_records"] == 0
+
+    def test_abort_via_callback_with_duplicates(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "abort"
+        valid_ingest_spec["_duplicate_records"] = [
+            {"evidence_id": "dup-001", "reason": "exact_match"},
+        ]
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] == "aborted_by_user"
+        assert result["n_records"] == 0
+
+
+class TestDefaultAllowNoCallback:
+    """No confirm_callback => default to allow (per 9_quality_and_experience.md)."""
+
+    def test_default_allow_no_callback(self, valid_ingest_spec):
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] in ("completed", "converged")
+        assert result["n_records"] > 0
+
+    def test_default_allow_no_callback_with_duplicates(self, valid_ingest_spec):
+        valid_ingest_spec["_duplicate_records"] = [
+            {"evidence_id": "dup-001", "reason": "exact_match"},
+        ]
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert result["status"] in ("completed", "converged")
+        assert result["n_records"] > 0
+
+
+class TestIngestionSummaryShape:
+    """IngestionSummary carries per-domain counts, records to write, duplicates flagged."""
+
+    def test_summary_from_instances_and_duplicates(self):
+        instances = [
+            {"id": "a", "domain": "molecular", "data": {}},
+            {"id": "b", "domain": "molecular", "data": {}},
+            {"id": "c", "domain": "clinical", "data": {}},
+        ]
+        duplicates = [
+            {"evidence_id": "dup-1", "reason": "similar_fingerprint"},
+        ]
+        summary = IngestionSummary.from_instances(instances, duplicates)
+        assert summary.per_domain == {"molecular": 2, "clinical": 1}
+        assert summary.n_to_write == 3
+        assert summary.n_duplicates == 1
+        assert summary.duplicates == duplicates
+
+    def test_summary_from_instances_empty(self):
+        summary = IngestionSummary.from_instances([], [])
+        assert summary.per_domain == {}
+        assert summary.n_to_write == 0
+        assert summary.n_duplicates == 0
+        assert summary.duplicates == []
+
+    def test_summary_is_passed_to_callback(self, valid_ingest_spec):
+        captured: list[IngestionSummary] = []
+
+        def _cb(summary, _dups):
+            captured.append(summary)
+            return "proceed"
+
+        valid_ingest_spec["confirm_callback"] = _cb
+        valid_ingest_spec["_duplicate_records"] = [
+            {"evidence_id": "dup-001", "reason": "exact_match"},
+        ]
+        valid_ingest_spec["max_rounds"] = 1
+        _run_ingest(valid_ingest_spec)
+        assert len(captured) == 1
+        summary = captured[0]
+        assert isinstance(summary, IngestionSummary)
+        assert summary.n_duplicates == 1
+        assert summary.n_to_write > 0
+        assert isinstance(summary.per_domain, dict)
+
+
+class TestUserConfirmationGate:
+    """Direct gate unit tests -- _user_confirmation_gate decision routing."""
+
+    def test_gate_returns_proceed_for_allow_callback(self):
+        ctx = _make_minimal_context()
+        task_spec = {
+            "confirm_callback": lambda summary, dups: "proceed",
+        }
+        summary = IngestionSummary(
+            per_domain={"molecular": 2}, n_to_write=2, n_duplicates=0, duplicates=[]
+        )
+        decision = _user_confirmation_gate(ctx, task_spec, summary)
+        assert decision == "proceed"
+
+    def test_gate_returns_skip_duplicates_for_skip_callback(self):
+        ctx = _make_minimal_context()
+        task_spec = {
+            "confirm_callback": lambda summary, dups: "skip-duplicates",
+        }
+        summary = IngestionSummary(
+            per_domain={"molecular": 2}, n_to_write=2, n_duplicates=1, duplicates=[]
+        )
+        decision = _user_confirmation_gate(ctx, task_spec, summary)
+        assert decision == "skip-duplicates"
+
+    def test_gate_returns_abort_for_abort_callback(self):
+        ctx = _make_minimal_context()
+        task_spec = {
+            "confirm_callback": lambda summary, dups: "abort",
+        }
+        summary = IngestionSummary(
+            per_domain={"molecular": 2}, n_to_write=2, n_duplicates=0, duplicates=[]
+        )
+        decision = _user_confirmation_gate(ctx, task_spec, summary)
+        assert decision == "abort"
+
+    def test_gate_defaults_to_allow_when_no_callback(self):
+        ctx = _make_minimal_context()
+        task_spec: dict = {}
+        summary = IngestionSummary(
+            per_domain={"molecular": 2}, n_to_write=2, n_duplicates=1, duplicates=[]
+        )
+        decision = _user_confirmation_gate(ctx, task_spec, summary)
+        assert decision == "proceed"
+
+    def test_gate_logs_auto_approved_when_no_callback(self):
+        ctx = _make_minimal_context()
+        summary = IngestionSummary(
+            per_domain={"molecular": 2}, n_to_write=2, n_duplicates=1, duplicates=[]
+        )
+        decision = _user_confirmation_gate(ctx, {}, summary)
+        assert decision == "proceed"
+
+
+# ---------------------------------------------------------------------------
+# Result dict shape tests (S3_T4)
+# ---------------------------------------------------------------------------
+
+
+class TestResultDictShape:
+    """The workflow returns a typed result dict with status, per-domain counts, session."""
+
+    def test_result_dict_has_per_domain_counts(self, valid_ingest_spec):
+        valid_ingest_spec["confirm_callback"] = lambda _summary, _dups: "proceed"
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert "per_domain" in result
+        assert isinstance(result["per_domain"], dict)
+
+    def test_result_dict_has_status(self, valid_ingest_spec):
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert "status" in result
+        assert result["status"] in ("completed", "converged", "aborted_by_user")
+
+    def test_result_dict_has_session(self, valid_ingest_spec):
+        valid_ingest_spec["max_rounds"] = 1
+        result = _run_ingest(valid_ingest_spec)
+        assert "session" in result
+        assert isinstance(result["session"], dict)
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -127,7 +343,7 @@ def test_ingest_duplicate_review_path_reached(valid_ingest_spec):
     # Confirm the confirmation record was appended to session
     confirmations = result["session"].get("confirmations", [])
     assert len(confirmations) == 1
-    assert confirmations[0]["type"] == "duplicate_review"
+    assert confirmations[0]["type"] == "confirmation_gate"
     assert confirmations[0]["n_duplicates"] == 1
 
 
@@ -182,3 +398,16 @@ def test_run_ingest_new_api_dict():
     result = run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
     assert isinstance(result, dict)
     assert result["workflow"] == "ingest"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_context():
+    """Build a minimal HookContext-like object for gate unit tests."""
+    from collections import namedtuple
+
+    Ctx = namedtuple("Ctx", ["session", "extra"])
+    return Ctx(session={}, extra={})

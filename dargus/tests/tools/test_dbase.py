@@ -48,6 +48,7 @@ def _make_evidence(**overrides):
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
+            "assay": "binding_assay",
         },
         "bg": {"disease_id": [], "drugs": [], "genes": []},
         "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
@@ -98,8 +99,16 @@ def test_dbase_query_returns_correct_format():
 def test_dbase_query_respects_limit():
     manager, tmp = _new_manager_with_stub()
     try:
-        manager.write_record(_make_evidence(y={"type": "a", "category": "pk_adme", "value": [1.0]}))
-        manager.write_record(_make_evidence(y={"type": "b", "category": "pk_adme", "value": [2.0]}))
+        manager.write_record(
+            _make_evidence(
+                y={"type": "a", "category": "pk_adme", "value": [1.0], "assay": "binding_assay"}
+            )
+        )
+        manager.write_record(
+            _make_evidence(
+                y={"type": "b", "category": "pk_adme", "value": [2.0], "assay": "binding_assay"}
+            )
+        )
         result = dbase_query(manager, {"limit": 1})
         assert result["count"] == 1
         assert len(result["records"]) == 1
@@ -111,10 +120,14 @@ def test_dbase_query_filters_by_y_type():
     manager, tmp = _new_manager_with_stub()
     try:
         manager.write_record(
-            _make_evidence(y={"type": "logP", "category": "pk_adme", "value": [3.5]})
+            _make_evidence(
+                y={"type": "logP", "category": "pk_adme", "value": [3.5], "assay": "binding_assay"}
+            )
         )
         manager.write_record(
-            _make_evidence(y={"type": "ic50", "category": "binding", "value": [5.0]})
+            _make_evidence(
+                y={"type": "ic50", "category": "binding", "value": [5.0], "assay": "binding_assay"}
+            )
         )
         result = dbase_query(manager, {"y_type": "logP"})
         assert result["count"] >= 1
@@ -130,8 +143,9 @@ def test_dbase_query_empty_filter_returns_all():
         dbase_write(
             manager,
             _make_evidence(
-                y={"type": "ic50", "category": "binding", "value": [5.0]},
+                y={"type": "ic50", "category": "binding", "value": [5.0], "assay": "binding_assay"},
                 biological_level="cellular",
+                cell_line_id="cellosaurus:CVCL_0001",
             ),
         )
         result = dbase_query(manager, {})

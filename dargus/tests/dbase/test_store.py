@@ -22,6 +22,7 @@ def _make_evidence(**overrides):
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
+            "assay": "binding_assay",
         },
         "bg": {"disease_id": [], "drugs": [], "genes": []},
         "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
@@ -134,6 +135,7 @@ def test_manager_build_evidence():
                     "category": "binding",
                     "value": [5.0],
                     "unit": "nM",
+                    "assay": "binding_assay",
                 },
                 "biological_level": "molecular",
             },
@@ -191,8 +193,10 @@ def test_manager_build_evidence_from_three_axis_raw():
                     "category": "viability",
                     "value": [0.5],
                     "unit": "fraction",
+                    "assay": "cell_viability_assay",
                 },
                 "bg": {"disease_id": [], "drugs": [], "genes": []},
+                "cell_line_id": "cellosaurus:CVCL_0001",
             },
             source_metadata={
                 "type": "journal",
@@ -274,7 +278,24 @@ def test_identity_includes_bg_dose():
 
 def test_rct_sim_is_non_clinical():
     """rct-sim derives is_clinical=0 per design/2.1.2."""
-    e = _make_pairwise(biological_level="rct-sim", clinical_design=None)
+    e = _make_pairwise(
+        biological_level="rct-sim",
+        clinical_design=None,
+        y={
+            "type": "HbA1c_change",
+            "category": "clinic_efficacy_primary",
+            "unit": "%",
+            "value": [-0.8, 0.1],
+            "dispersion": [
+                {"type": "CI95", "value": [-1.2, -0.4]},
+                {"type": "CI95", "value": [-0.1, 0.3]},
+            ],
+            "n_total": [500, 500],
+            "direction": "beneficial",
+            "effect": {"value": -0.9, "value_type": "MD"},
+            "assay": "clinical_trial_simulation",
+        },
+    )
     del e["clinical_design"]
     from dargus.dbase.validate import validate_evidence
 

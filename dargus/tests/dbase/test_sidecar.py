@@ -31,7 +31,7 @@ def _make_evidence(**overrides):
             "type": "drug",
             "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
         },
-        "y": {"type": "logP", "category": "pk_adme", "value": [3.5]},
+        "y": {"type": "logP", "category": "pk_adme", "value": [3.5], "assay": "binding_assay"},
         "bg": {"disease_id": [], "drugs": [], "genes": []},
         "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
         "source_entry": "10.1234/test",
@@ -155,7 +155,9 @@ def test_supersede_flow():
         manager, dbase = _new_manager(tmp)
         old = _make_evidence()
         assert manager.write_record(old) is True
-        new = _make_evidence(y={"type": "logP_v2", "category": "pk_adme", "value": [3.6]})
+        new = _make_evidence(
+            y={"type": "logP_v2", "category": "pk_adme", "value": [3.6], "assay": "binding_assay"}
+        )
         assert manager.supersede(old["evidence_id"], new) is True
         st = manager.get_status(old["evidence_id"])
         assert st["status"] == "superseded"
@@ -224,7 +226,14 @@ def test_reembed_skips_non_active_records():
         manager.write_record(_make_evidence())
         fp = dbase.sidecars.active_fingerprint()
         dbase.sidecars.embeddings_path(fp).unlink()
-        record2 = _make_evidence(y={"type": "solubility", "category": "pk_adme", "value": [-4.1]})
+        record2 = _make_evidence(
+            y={
+                "type": "solubility",
+                "category": "pk_adme",
+                "value": [-4.1],
+                "assay": "binding_assay",
+            }
+        )
         manager.write_record(record2)
         manager.retract(record2["evidence_id"])
         dbase.sidecars.embeddings_path(fp).unlink()

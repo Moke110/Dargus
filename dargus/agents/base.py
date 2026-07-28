@@ -14,7 +14,6 @@ import yaml
 
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
-from dargus.knowledge.base import KnowledgeItem, KnowledgeRetriever
 from dargus.models.reasoning import Message, ReasoningLLM
 from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
@@ -28,7 +27,6 @@ class BaseAgent(ABC):
 
     Subclasses declare:
       - PERMITTED_TOOLS: list[str]
-      - PERMITTED_KNOWLEDGE: list[str]
       - SUPPORTED_SKILLS: list[str]
       - SUPPORTED_LEVELS: tuple[str, ...]
     """
@@ -37,7 +35,6 @@ class BaseAgent(ABC):
 
     # --- subclass overrides ---
     PERMITTED_TOOLS: list[str] = []
-    PERMITTED_KNOWLEDGE: list[str] = []
     SUPPORTED_SKILLS: list[str] = []
     SUPPORTED_LEVELS: tuple[str, ...] = ()
     MAX_ROUNDS: int = 5
@@ -49,7 +46,6 @@ class BaseAgent(ABC):
         reasoning_llm: ReasoningLLM | None = None,
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
-        knowledge_retrievers: dict[str, Any] | None = None,
         hook_registry: HookRegistry | None = None,
     ):
         # Backward compat: if first positional arg is a dict, treat as config not name
@@ -65,9 +61,6 @@ class BaseAgent(ABC):
         # DI or defaults — each injected value takes priority; None means "create default"
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         self._skill_registry = skill_registry if skill_registry is not None else SkillRegistry()
-        self._knowledge_retrievers: dict[str, KnowledgeRetriever] = (
-            knowledge_retrievers if knowledge_retrievers is not None else {}
-        )
         self._hook_registry: HookRegistry | None = hook_registry
 
         # Reasoning LLM comes only from DI (the runtime's single model);
@@ -198,39 +191,6 @@ class BaseAgent(ABC):
         )
 
     # ------------------------------------------------------------------
-    # Knowledge injection
-    # ------------------------------------------------------------------
-
-    def _retrieve_knowledge(
-        self,
-        query: str,
-        domain: str | None = None,
-        biological_level: str | None = None,
-    ) -> list[KnowledgeItem]:
-        """Retrieve from all PERMITTED_KNOWLEDGE sources."""
-        results: list[KnowledgeItem] = []
-        for source_name in self.PERMITTED_KNOWLEDGE:
-            retriever = self._knowledge_retrievers.get(source_name)
-            if retriever is None:
-                continue
-            try:
-                items = retriever.search(query, domain=domain, biological_level=biological_level)
-                results.extend(items)
-            except Exception:
-                logger.exception("Knowledge retrieval failed for '%s'", source_name)
-        return results
-
-    def _format_knowledge_for_prompt(self, items: list[KnowledgeItem]) -> str:
-        if not items:
-            return ""
-        lines = ["\n## Retrieved Knowledge\n"]
-        for item in items:
-            lines.append(
-                f"- [{item.source}] {item.entity_type}/{item.entity_id}: {item.content[:500]}"
-            )
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
     # Tool execution
     # ------------------------------------------------------------------
 
@@ -272,10 +232,6 @@ class BaseAgent(ABC):
     ) -> tuple[dict, CallTrace]:
         """Reason phase: LLM generates a structured execution plan."""
         t0 = time.monotonic()
-        knowledge = self._retrieve_knowledge(
-            query=json.dumps(task_spec),
-            biological_level=task_spec.get("biological_level"),
-        )
         system_prompt = self._build_reason_prompt()
         user_prompt = json.dumps(
             {
@@ -283,7 +239,6 @@ class BaseAgent(ABC):
                 "history": history,
                 "available_skills": self.SUPPORTED_SKILLS,
                 "available_tools": self.PERMITTED_TOOLS,
-                "knowledge": [{"id": k.entity_id, "content": k.content[:300]} for k in knowledge],
             },
             ensure_ascii=False,
         )
@@ -298,7 +253,6 @@ class BaseAgent(ABC):
         trace = CallTrace(
             round=round_num,
             phase="reason",
-            knowledge_retrieved=[k.entity_id for k in knowledge],
             output_summary=str(plan.get("goal", ""))[:200],
             elapsed_ms=elapsed,
         )

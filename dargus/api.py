@@ -64,7 +64,7 @@ def predict(
     )
 
 
-def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> Any:
+def ingest(datadir: str, reset: bool = False) -> Any:
     """Ingest data into the global D-Base.
 
     Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
@@ -73,7 +73,6 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
     Args:
         datadir: Path to directory containing data files.
         reset: If True, clear D-Base before ingestion.
-        disease_kb_dir: Optional path to disease knowledge base directory.
 
     Returns:
         IngestionReport with ``n_records``, ``n_skipped``, ``dbase_size``.
@@ -88,7 +87,7 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
         logger.info("API: D-Base reset before ingestion")
 
     iris = _create_iris_with_lm()
-    return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
+    return iris.ingest(datadir)
 
 
 def query_dbase(

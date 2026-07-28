@@ -28,7 +28,6 @@ class D4Expert(Expert):
 
     name = "D4Expert"
     PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
-    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []
 
     SUPPORTED_LEVELS = (
@@ -67,7 +66,6 @@ class D4Expert(Expert):
         reasoning_llm: ReasoningLLM | None = None,
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
-        knowledge_retrievers: dict[str, Any] | None = None,
         hook_registry: HookRegistry | None = None,
         agent_factory: Any | None = None,
     ):
@@ -77,7 +75,6 @@ class D4Expert(Expert):
             reasoning_llm=reasoning_llm,
             tool_registry=tool_registry,
             skill_registry=skill_registry,
-            knowledge_retrievers=knowledge_retrievers,
             hook_registry=hook_registry,
         )
         self._agent_factory = agent_factory

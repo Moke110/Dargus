@@ -172,8 +172,8 @@ def test_run_ingest_backward_compat_with_reset():
 
 
 def test_run_ingest_backward_compat_with_disease_kb_dir():
-    """C2: run_ingest(datadir, disease_kb_dir=...) works."""
-    result = run_ingest("/data/test_dir", disease_kb_dir="/data/kb")
+    """C2: run_ingest(datadir) works — disease_kb_dir parameter removed."""
+    result = run_ingest("/data/test_dir")
     assert isinstance(result, IngestionReport)
 
 

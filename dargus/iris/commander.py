@@ -25,7 +25,6 @@ class Iris(BaseAgent):
         "dbase_query",
         "pubmed_search",
     ]
-    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []  # Iris orchestrates; doesn't execute skills directly
 
     def __init__(
@@ -75,7 +74,7 @@ class Iris(BaseAgent):
             "n_records": len(records),
         }
 
-    def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> IngestionReport:
+    def ingest(self, datadir: str) -> IngestionReport:
         """Run the Ingest workflow on the global D-Base.
 
         With an injected LifecycleManager this delegates to
@@ -83,13 +82,8 @@ class Iris(BaseAgent):
         ``run_ingest`` directly.
         """
         if self._lifecycle_manager is not None:
-            _task_spec: dict = {"datadir": datadir}
-            if disease_kb_dir is not None:
-                _task_spec["disease_kb_dir"] = disease_kb_dir
-            result = self._lifecycle_manager.run_ingest(_task_spec)
-            if result is not None:
-                return result
-        return run_ingest(datadir, disease_kb_dir=disease_kb_dir)
+            return self._lifecycle_manager.run_ingest({"datadir": datadir})
+        return run_ingest(datadir)
 
     def predict(
         self,

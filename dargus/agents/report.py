@@ -11,7 +11,6 @@ class CallTrace:
     phase: str  # "perceive" | "reason" | "act"
     skill_used: str | None = None
     tool_called: str | None = None
-    knowledge_retrieved: list[str] = field(default_factory=list)
     input_summary: str = ""
     output_summary: str = ""
     elapsed_ms: int = 0

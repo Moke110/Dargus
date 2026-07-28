@@ -20,7 +20,6 @@ class Expert(BaseAgent):
       - SUPPORTED_LEVELS: which biological levels it can assess
       - DELEGATION_RULES: {level: target_expert_name} for records outside scope
       - PERMITTED_TOOLS: tools this expert may call during execution
-      - PERMITTED_KNOWLEDGE: knowledge sources this expert may query
       - SUPPORTED_SKILLS: skills this expert may load during planning
     """
 
@@ -34,7 +33,6 @@ class Expert(BaseAgent):
         reasoning_llm: ReasoningLLM | None = None,
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
-        knowledge_retrievers: dict[str, Any] | None = None,
         hook_registry: HookRegistry | None = None,
     ):
         super().__init__(
@@ -42,7 +40,6 @@ class Expert(BaseAgent):
             reasoning_llm=reasoning_llm,
             tool_registry=tool_registry,
             skill_registry=skill_registry,
-            knowledge_retrievers=knowledge_retrievers,
             hook_registry=hook_registry,
         )
         self.dbase = dbase
@@ -100,7 +97,7 @@ class Expert(BaseAgent):
         return (
             f"You are {self.name}, a biomedical domain expert specializing in "
             f"evidence at biological levels: {', '.join(self.SUPPORTED_LEVELS)}.\n"
-            "Given a task specification and available skills/tools/knowledge, "
+            "Given a task specification and available skills/tools, "
             "produce a structured execution plan as JSON.\n\n"
             "Output format:\n"
             '{"goal": "<string>", "steps": [{"skill": "<optional skill name>", '

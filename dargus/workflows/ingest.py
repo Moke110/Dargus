@@ -51,33 +51,29 @@ TrainingReport = IngestionReport  # backward compat alias
 def run_ingest(
     task_spec_or_datadir: dict[str, Any] | str,
     reset: bool = False,
-    disease_kb_dir: str | None = None,
 ) -> IngestionReport | dict[str, Any]:
     """Execute the ingest workflow.
 
     **Backward-compat wrapper.**  Supports both the Phase-E ``task_spec``
-    calling convention and the pre-Phase-E ``(datadir, reset, disease_kb_dir)``
+    calling convention and the pre-Phase-E ``(datadir, reset)``
     convention used by ``Iris.commander``, ``api.py``, and ``cli.py``.
 
     Args:
         task_spec_or_datadir: Either a ``task_spec`` dict (new API) or a
             ``datadir`` path string (old API).
         reset: (old API) Clear D-Base before ingestion.
-        disease_kb_dir: (old API) Path to disease knowledge base directory.
 
     Returns:
         - ``dict[str, Any]`` when called with a ``task_spec`` dict.
         - ``IngestionReport`` when called with a ``datadir`` string.
     """
     if isinstance(task_spec_or_datadir, str):
-        # Old calling convention: run_ingest(datadir, reset=..., disease_kb_dir=...)
+        # Old calling convention: run_ingest(datadir, reset=...)
         task_spec: dict[str, Any] = {
             "workflow": "ingest",
             "source_path": task_spec_or_datadir,
             "reset": reset,
         }
-        if disease_kb_dir is not None:
-            task_spec["disease_kb_dir"] = disease_kb_dir
         try:
             result = _run_ingest(task_spec)
         except Exception:

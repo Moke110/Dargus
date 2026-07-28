@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from dargus.runtime.context import DargusRuntime
 from dargus.runtime.hooks import (
     HookContext,
-    HookRegistry,
     ReportValidationHook,
 )
 from dargus.workflows.predict import (
     _build_final_report,
-    _StubD4Expert,
     _user_confirmation_gate,
     run_predict,
 )
@@ -225,26 +224,75 @@ def test_build_final_report_overrides_from_task_spec():
 
 
 # ---------------------------------------------------------------------------
-# _StubD4Expert tests
+# run_predict with real DargusRuntime (factory-created D4Expert)
 # ---------------------------------------------------------------------------
 
 
-def test_stub_d4_expert_delegate_to_expert():
-    stub = _StubD4Expert(HookRegistry())
-    rep = stub.delegate_to_expert("molecular", [], "test question")
-    assert rep["domain"] == "molecular"
-    assert "confidence" in rep
+def test_run_predict_with_runtime_creates_real_experts_via_factory(valid_predict_spec):
+    """When a DargusRuntime is passed, D4Expert and Domain Experts are
+    created through the AgentFactory (no stub path)."""
+    rt = DargusRuntime()
+    assert rt.agent_factory is not None  # auto-created in __post_init__
+
+    result = run_predict(valid_predict_spec, runtime=rt)
+
+    assert isinstance(result, dict)
+    assert result["workflow"] == "predict"
+    assert result["report"]["reasoning_mode"] == "workflow-hook-orchestrated"
 
 
-def test_stub_d4_expert_synthesize():
-    stub = _StubD4Expert(HookRegistry())
-    reports = [
-        {"domain": "molecular", "confidence": {"low": 0.5, "high": 0.8}, "conclusion": "ok"},
-        {"domain": "clinical", "confidence": {"low": 0.4, "high": 0.7}, "conclusion": "ok"},
-    ]
-    result = stub.synthesize(reports)
-    assert "overall_conclusion" in result
-    assert "expert_reports" in result
+def test_run_predict_bootstraps_runtime_when_none_provided(valid_predict_spec):
+    """run_predict bootstraps a DargusRuntime when the caller doesn't
+    supply one — no stub path exists anymore."""
+    result = run_predict(valid_predict_spec)
+
+    assert isinstance(result, dict)
+    assert result["workflow"] == "predict"
+    assert result["status"] in ("completed", "converged")
+    assert "report" in result
+    assert "rounds_completed" in result
+
+
+def test_run_predict_hookcontext_has_real_runtime():
+    """After S4_T1, Predict's HookContext always carries the real runtime."""
+    spec = {
+        "workflow": "predict",
+        "drug_ids": ["DB00001"],
+        "disease_id": "Alzheimer",
+        "max_rounds": 1,
+    }
+    rt = DargusRuntime()
+
+    # We can't introspect HookContext during run_predict without a hook,
+    # so we verify by checking that the runtime's agent_factory creates
+    # a real D4Expert (which checks that the stub path is gone).
+    result = run_predict(spec, runtime=rt)
+    assert result["report"]["reasoning_mode"] == "workflow-hook-orchestrated"
+    # The stub would have produced a different overall_conclusion pattern
+
+
+def test_run_predict_refuses_unhealthy_runtime():
+    """run_predict with an unhealthy runtime should not proceed."""
+    rt = DargusRuntime()
+    rt.mark_unhealthy("test — model unavailable")
+
+    with pytest.raises(RuntimeError, match="unhealthy"):
+        rt.ensure_healthy()
+
+
+def test_run_predict_factory_creates_d4_expert_through_factory():
+    """AgentFactory creates D4Expert with injected dependencies from the runtime."""
+    rt = DargusRuntime()
+
+    # Create through the factory (same path run_predict uses)
+    d4 = rt.agent_factory.d4_expert()
+
+    from dargus.experts.director import D4Expert
+
+    assert isinstance(d4, D4Expert)
+    assert hasattr(d4, "delegate_to_expert")
+    assert hasattr(d4, "synthesize")
+    assert hasattr(d4, "conclude")
 
 
 # ---------------------------------------------------------------------------

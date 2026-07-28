@@ -49,11 +49,15 @@ def _hook_dbase() -> Any | None:
 # ---------------------------------------------------------------------------
 
 
-def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
+def run_predict(
+    task_spec: dict[str, Any],
+    runtime: Any | None = None,
+) -> dict[str, Any]:
     """Execute predict workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates PredictSession
-    2. Create D4Expert via AgentFactory (or stub)
+    2. Create D4Expert via AgentFactory (bootstraps a DargusRuntime
+       when *runtime* is not supplied)
     3. Main loop (max *max_rounds* / timeout *timeout_seconds*):
        - PERCEIVE_START: SkeletonContextHook injects state
        - D4Expert runs assess + synthesize cycle
@@ -65,6 +69,8 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
         task_spec: Dict with keys ``workflow`` (must be ``"predict"``),
             ``drug_ids``, ``disease_id``, optional ``endpoints``,
             ``max_rounds``, ``timeout_seconds``, ``require_confirmation``.
+        runtime: Optional pre-built :class:`DargusRuntime`.  When None a
+            runtime is bootstrapped from the config file (design/3_runtime.md).
 
     Returns:
         PredictResult dict with keys: ``workflow``, ``status``,
@@ -73,6 +79,17 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
     task_spec.setdefault("workflow", "predict")
     max_rounds = int(task_spec.get("max_rounds", 5))
     timeout_seconds = float(task_spec.get("timeout_seconds", 300.0))
+
+    # ---- Obtain DargusRuntime (bootstrap if not provided) ------------------
+    if runtime is None:
+        from dargus.runtime.bootstrap import bootstrap
+
+        try:
+            runtime = bootstrap()
+        except Exception as exc:
+            raise RuntimeError(
+                f"DargusRuntime bootstrap failed: {exc} — refusing predict session"
+            ) from exc
 
     # ---- Build hook registry --------------------------------------------------
     hooks = HookRegistry(disabled_hooks=_disabled_hooks(task_spec))
@@ -88,14 +105,14 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
     hooks.register(HookPoint.SESSION_END, ReportValidationHook(dbase=_hook_dbase()))
     hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
-    # ---- Create initial context ------------------------------------------------
-    ctx = HookContext(runtime=None, task_spec=task_spec)
+    # ---- Create initial context with real runtime ---------------------------
+    ctx = HookContext(runtime=runtime, task_spec=task_spec)
 
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Build D4Expert (stub when no DargusRuntime) ----------------------------
-    d4 = _build_d4_expert(ctx, hooks)
+    # ---- Build D4Expert via AgentFactory --------------------------------------
+    d4 = runtime.agent_factory.d4_expert()
 
     # ---- Main round loop ------------------------------------------------------
     report: dict[str, Any] = {}
@@ -154,54 +171,6 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_d4_expert(ctx: HookContext, hooks: HookRegistry) -> Any:
-    """Create D4Expert from DargusRuntime when available, else return a stub."""
-    try:
-        from dargus.runtime.context import DargusRuntime
-
-        env = ctx.runtime
-        if env is not None and isinstance(env, DargusRuntime):
-            from dargus.runtime.factory import AgentFactory
-
-            factory = AgentFactory(env)
-            return factory.d4_expert()
-    except (ImportError, NotImplementedError):
-        logger.debug("AgentFactory.d4_expert() not available — using stub")
-
-    # Stub D4Expert for test / no-bootstrap environments
-    return _StubD4Expert(hooks)
-
-
-class _StubD4Expert:
-    """Minimal D4Expert stub that provides delegate_to_expert + synthesize."""
-
-    def __init__(self, hooks: HookRegistry) -> None:
-        self._hooks = hooks
-
-    def delegate_to_expert(self, domain: str, records: list[dict], question: str) -> dict[str, Any]:
-        return {
-            "domain": domain,
-            "conclusion": f"Stub assessment for {domain}: {question[:80]}",
-            "confidence": {"low": 0.5, "high": 0.8},
-            "supporting_evidence": [],
-        }
-
-    def synthesize(self, expert_reports: list[dict[str, Any]]) -> dict[str, Any]:
-        confidences: list[float] = []
-        for r in expert_reports:
-            c = r.get("confidence", {})
-            if isinstance(c, dict):
-                confidences.append(c.get("low", 0.0))
-                confidences.append(c.get("high", 1.0))
-        avg = sum(confidences) / len(confidences) if confidences else 0.5
-        return {
-            "overall_conclusion": f"Synthesized {len(expert_reports)} expert reports",
-            "confidence": "moderate" if avg > 0.3 else "low",
-            "expert_reports": expert_reports,
-            "conflicts": [],
-        }
 
 
 def _execute_predict_round(

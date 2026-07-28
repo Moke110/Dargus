@@ -53,7 +53,7 @@ class LifecycleManager:
         """
         from dargus.workflows.predict import run_predict
 
-        return run_predict(task_spec)
+        return run_predict(task_spec, runtime=self._runtime)
 
     def run_ingest(self, task_spec: dict) -> dict:
         """Execute an ingest workflow via the hook-orchestrated function.

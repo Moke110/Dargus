@@ -218,3 +218,164 @@ def test_validate_dispersion_entries():
     assert validate_evidence(e).ok
     e["y"]["dispersion"] = [{"type": "BOGUS", "value": 1.0}]
     assert not validate_evidence(e).ok
+
+
+# ── S7_T1: enum coverage for sex and clinical_design fields ──────────────────
+
+
+def test_validate_sex_invalid():
+    """sex must be one of male/female/mixed."""
+    e = _make_evidence(sex="unknown_sex")
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("sex" in err for err in result.hard_errors)
+
+
+def test_validate_sex_valid():
+    """Sanctioned sex values pass."""
+    for val in ("male", "female", "mixed"):
+        e = _make_evidence(sex=val)
+        result = validate_evidence(e)
+        assert result.ok, f"sex={val} should be valid but got {result.hard_errors}"
+
+
+def test_validate_clinical_design_comparator_type_invalid():
+    """clinical_design.comparator_type must be a sanctioned value."""
+    e = _make_evidence(
+        biological_level="rct",
+        xy={"count": 2},
+        evidence_design="two_arm_comparison",
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"]},
+        clinical_design={"comparator_type": "bogus"},
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("comparator_type" in err for err in result.hard_errors)
+
+
+def test_validate_clinical_design_blinding_invalid():
+    """clinical_design.blinding must be a sanctioned value."""
+    e = _make_evidence(
+        biological_level="rct",
+        xy={"count": 2},
+        evidence_design="two_arm_comparison",
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"]},
+        clinical_design={"blinding": "fake_blind"},
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("blinding" in err for err in result.hard_errors)
+
+
+def test_validate_clinical_design_phase_invalid():
+    """clinical_design.phase must be a sanctioned value."""
+    e = _make_evidence(
+        biological_level="rct",
+        xy={"count": 2},
+        evidence_design="two_arm_comparison",
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"]},
+        clinical_design={"phase": "phase_9"},
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("phase" in err for err in result.hard_errors)
+
+
+def test_validate_clinical_design_population_invalid():
+    """clinical_design.population must be a sanctioned value."""
+    e = _make_evidence(
+        biological_level="rct",
+        xy={"count": 2},
+        evidence_design="two_arm_comparison",
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"]},
+        clinical_design={"population": "zombies"},
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("population" in err for err in result.hard_errors)
+
+
+def test_validate_clinical_design_enums_sanctioned_pass():
+    """All sanctioned clinical_design enum values pass."""
+    e = _make_evidence(
+        biological_level="rct",
+        xy={"count": 2},
+        evidence_design="two_arm_comparison",
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005148"]},
+        clinical_design={
+            "comparator_type": "placebo",
+            "blinding": "double",
+            "phase": "phase_3",
+            "population": "adults",
+        },
+        sources=[{"rank": 1, "type": "journal", "name": "PMID 12345678"}],
+        source_entry="PMID:12345678",
+        source_time="2025-05-01",
+    )
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors

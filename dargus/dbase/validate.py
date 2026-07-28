@@ -36,6 +36,18 @@ def _load_vocab() -> dict:
     return _vocab
 
 
+def reload_vocab() -> dict:
+    """Force-reload the vocabulary cache from vocabularies.json.
+
+    Public API entry point for testing and for gated-term workflows that
+    need to pick up newly approved terms without a process restart.
+    """
+    global _vocab, _CURIE_PATTERNS
+    _vocab = {}
+    _CURIE_PATTERNS = {}
+    return _load_vocab()
+
+
 def _v(key: str) -> list | dict:
     v = _load_vocab()
     return v.get(key, {})

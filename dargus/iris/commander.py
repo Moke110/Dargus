@@ -82,7 +82,10 @@ class Iris(BaseAgent):
         ``run_ingest`` directly.
         """
         if self._lifecycle_manager is not None:
-            return self._lifecycle_manager.run_ingest({"datadir": datadir})
+            _task_spec: dict = {"datadir": datadir}
+            result = self._lifecycle_manager.run_ingest(_task_spec)
+            if result is not None:
+                return result
         return run_ingest(datadir)
 
     def predict(

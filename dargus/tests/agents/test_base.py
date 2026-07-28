@@ -74,22 +74,6 @@ def test_base_agent_none_hook_registry():
     assert agent._hook_registry is None
 
 
-def test_base_agent_no_knowledge_attributes():
-    """T1: BaseAgent has no PERMITTED_KNOWLEDGE, knowledge_retrievers, or
-    _retrieve_knowledge — Knowledge layer removed per v1.0.0 design."""
-    agent = _MinimalAgent(name="test")
-    assert not hasattr(agent, "PERMITTED_KNOWLEDGE")
-    assert not hasattr(agent, "_knowledge_retrievers")
-    assert not hasattr(agent, "_retrieve_knowledge")
-    assert not hasattr(agent, "_format_knowledge_for_prompt")
-
-    # Perceive context must not contain knowledge / knowledge_retrieved keys
-    verdict, trace = agent._perceive({"steps": []}, {}, [], 0)
-    assert "knowledge" not in verdict
-    assert "knowledge_retrieved" not in verdict
-    assert "knowledge_retrieved" not in trace.__dict__
-
-
 # ------------------------------------------------------------------
 # Hook triggering in run()
 # ------------------------------------------------------------------

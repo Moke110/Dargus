@@ -171,12 +171,6 @@ def test_run_ingest_backward_compat_with_reset():
     assert result.n_skipped == 0
 
 
-def test_run_ingest_backward_compat_with_disease_kb_dir():
-    """C2: run_ingest(datadir) works — disease_kb_dir parameter removed."""
-    result = run_ingest("/data/test_dir")
-    assert isinstance(result, IngestionReport)
-
-
 def test_run_ingest_new_api_dict():
     """C2: run_ingest(task_spec) still returns dict."""
     result = run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})

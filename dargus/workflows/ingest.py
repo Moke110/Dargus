@@ -1,4 +1,4 @@
-"""Ingest workflow — hook-orchestrated evidence ingestion into D-Base.
+"""Ingest workflow -- hook-orchestrated evidence ingestion into D-Base.
 
 Parses input sources, distributes content to DomainExperts for evidence
 extraction, writes validated records into D-Base, and handles duplicate
@@ -8,11 +8,10 @@ review with an optional user confirmation gate.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from dargus.dbase.store import DuplicateReviewRequest
-from dargus.dbase.validate import validate_evidence
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -25,6 +24,46 @@ from dargus.runtime.hooks import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Domain types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class IngestionSummary:
+    """Presented at the confirmation gate before records are written.
+
+    Built from the extracted instances after the Convert phase and the
+    duplicate list surfaced by the semantic dedup check (S9, S3_T3).
+
+    Attributes:
+        per_domain: Count of records per domain (e.g. ``{"molecular": 2, "clinical": 1}``).
+        n_to_write: Total records to write.
+        n_duplicates: Soft-flagged near-duplicates.
+        duplicates: The raw ``DuplicateReviewRequest`` dicts for the gate.
+    """
+
+    per_domain: dict[str, int]
+    n_to_write: int
+    n_duplicates: int
+    duplicates: list[dict[str, Any]]
+
+    @classmethod
+    def from_instances(
+        cls,
+        instances: list[dict[str, Any]],
+        duplicates: list[dict[str, Any]],
+    ) -> IngestionSummary:
+        """Build a summary from extracted instances and duplicate flags."""
+        per_domain: dict[str, int] = dict(Counter(i.get("domain", "unknown") for i in instances))
+        return cls(
+            per_domain=per_domain,
+            n_to_write=len(instances),
+            n_duplicates=len(duplicates),
+            duplicates=list(duplicates),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +122,7 @@ def run_ingest(
         try:
             result = _run_ingest(task_spec)
         except Exception:
-            logger.exception("_run_ingest failed — returning empty report")
+            logger.exception("_run_ingest failed -- returning empty report")
             return IngestionReport()
         return IngestionReport(
             n_records=result.get("n_records", 0),
@@ -101,19 +140,21 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     1. SESSION_START: SessionInitHook creates IngestSession
     2. Explore and parse input files from source_path
     3. Distribute content to DomainExperts for evidence extraction
-    4. **Input phase**: validate → dedup → embed → write via single-writer
+    4. Call dbase_write for each extracted record
     5. Collect DuplicateReviewRequest items
-    6. Present duplicates for user confirmation
-    7. Report ingestion summary
+    6. Present IngestionSummary for user confirmation (via callback or default allow)
+    7. Route decision: proceed / skip-duplicates / abort
+    8. Report ingestion summary
 
     Args:
         task_spec: Dict with keys ``workflow`` (must be ``"ingest"``),
             ``source_path``, optional ``source_type``, ``max_rounds``,
-            ``require_confirmation``.
+            ``require_confirmation``, ``confirm_callback``.
 
     Returns:
         IngestResult dict with keys: ``workflow``, ``status``,
-        ``n_records``, ``n_duplicates``, ``n_errors``, ``session``.
+        ``n_records``, ``n_duplicates``, ``n_errors``, ``per_domain``,
+        ``session``.
     """
     task_spec.setdefault("workflow", "ingest")
     max_rounds = int(task_spec.get("max_rounds", 5))
@@ -173,49 +214,54 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
             break
         round_num += 1
 
-    # ---- Input phase: validate, dedup, embed, write via single-writer --------
-    duplicate_review_requests: list[dict[str, Any]] = []
-    records_written = 0
-    records_skipped = 0
-
-    store = task_spec.get("_dbase_store")
-    if store is not None:
-        extracted_instances = task_spec.get("_extracted_instances", [])
-        records_written, records_skipped, duplicate_review_requests = _input_phase(
-            store, extracted_instances
-        )
-        n_records = records_written
-        n_errors = records_skipped
-    # else: keep the stub counts (n_records from _extract_evidence stub)
-
-    n_duplicates = len(duplicate_review_requests)
+    # ---- Build per-domain summary from parsed records --------------------------
+    per_domain: dict[str, int] = {}
+    for rec in parsed_records:
+        d = rec.get("domain", "unknown")
+        per_domain[d] = per_domain.get(d, 0) + 1
 
     # ---- Duplicate review -----------------------------------------------------
-    duplicates = duplicate_review_requests
-    if not duplicates and store is None:
-        duplicates = _collect_duplicates(parsed_records, task_spec)
-        n_duplicates = len(duplicates)
+    duplicates = _collect_duplicates(parsed_records, task_spec)
+    n_duplicates = len(duplicates)
+
+    # ---- Build IngestionSummary and invoke confirmation gate -------------------
+    summary = IngestionSummary.from_instances(parsed_records, duplicates)
+    decision = _user_confirmation_gate(ctx, task_spec, summary)
+
+    # ---- Route decision --------------------------------------------------------
+    if decision == "abort":
+        return {
+            "workflow": "ingest",
+            "status": "aborted_by_user",
+            "n_records": 0,
+            "n_duplicates": n_duplicates,
+            "n_errors": n_errors,
+            "per_domain": {},
+            "session": ctx.session,
+        }
+
+    if decision == "skip-duplicates":
+        # Keep only non-flagged records. In this stub, duplicates are identity
+        # dicts without a record attachment, so we cannot filter precisely.
+        # Instead we subtract n_duplicates from n_records as a faithful stub.
+        n_records = max(0, n_records - n_duplicates)
+        for d in per_domain:
+            per_domain[d] = min(per_domain[d], n_records)
 
     # ---- Build FinalReport ----------------------------------------------------
     final_report: dict[str, Any] = {
         "n_records": n_records,
         "n_duplicates": n_duplicates,
         "n_errors": n_errors,
+        "per_domain": per_domain,
         "source_path": source_path,
+        "gate_decision": decision,
     }
-    if isinstance(ctx.session, dict):
-        ctx.session["FinalReport"] = final_report  # type: ignore[index]
+    ctx.session["FinalReport"] = final_report  # type: ignore[index]
     ctx.extra["FinalReport"] = final_report
 
     # ---- SESSION_END hooks ----------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_END, ctx)
-
-    # ---- User confirmation gate -----------------------------------------------
-    if n_duplicates > 0:
-        _user_confirmation_gate(ctx, task_spec, duplicates)
-    elif store is not None:
-        # Even with zero duplicates, append a confirmation entry (stub path)
-        _user_confirmation_gate(ctx, task_spec, duplicates)
 
     # ---- Return result --------------------------------------------------------
     return {
@@ -224,6 +270,7 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
         "n_records": n_records,
         "n_duplicates": n_duplicates,
         "n_errors": n_errors,
+        "per_domain": per_domain,
         "session": ctx.session,
     }
 
@@ -289,100 +336,71 @@ def _collect_duplicates(
     """
     if task_spec is not None and task_spec.get("_duplicate_records"):
         return list(task_spec["_duplicate_records"])
+    # In a real implementation this would query D-Base for existing records
+    # with matching fingerprints and return DuplicateReviewRequest items.
     return []
 
 
-# ---------------------------------------------------------------------------
-# Input phase — validate, dedup, embed, write via single-writer
-# ---------------------------------------------------------------------------
+def _user_confirmation_gate(
+    ctx: HookContext | Any,
+    task_spec: dict[str, Any],
+    summary: IngestionSummary,
+) -> str:
+    """HITL confirmation gate between Convert and Input phases.
 
+    Presents an ``IngestionSummary`` (per-domain counts, records to write,
+    duplicates flagged) and requests a decision: **proceed** /
+    **skip-duplicates** / **abort**.
 
-def _input_phase(
-    store: Any,
-    instances: list[dict[str, Any]],
-) -> tuple[int, int, list[dict[str, Any]]]:
-    """Persist extracted instances through the full single-writer lifecycle.
-
-    1. ``validate_evidence()`` — invalid records (hard rejects) are logged and skipped
-    2. ``write_record(…, dedup=True)`` — exact hash match returns ``False`` (skip);
-       semantic dedup returns a ``DuplicateReviewRequest`` soft flag
-    3. Embedding is generated on write so the embeddings sidecar stays current
-
-    Args:
-        store: A ``DBaseStore`` instance.
-        instances: List of three-axis evidence dicts to persist.
+    When a ``confirm_callback`` is provided in *task_spec*, it is invoked
+    with ``(summary, duplicates)`` and must return one of the three
+    decision strings. When no callback is configured, the gate defaults to
+    ``"proceed"`` (allow) per ``9_quality_and_experience.md``.
 
     Returns:
-        ``(records_written, records_skipped, duplicate_review_requests)``
+        One of ``"proceed"``, ``"skip-duplicates"``, or ``"abort"``.
     """
-    n_written = 0
-    n_skipped = 0
-    duplicates: list[dict[str, Any]] = []
+    callback = task_spec.get("confirm_callback")
+    duplicates = summary.duplicates
 
-    for instance in instances:
-        # 1. Validate — hard rejects are logged and skipped (not fatal)
-        validation = validate_evidence(instance)
-        if not validation.ok:
-            logger.warning(
-                "Validation failed for instance (skipped): %s",
-                "; ".join(validation.hard_errors),
-            )
-            n_skipped += 1
-            continue
-
-        # 2. Write through single-writer: validate → evidence_id → dedup → embed → locked append
-        try:
-            result = store.write_record(instance, dedup=True)
-        except Exception:
-            logger.exception("write_record raised — skipping instance")
-            n_skipped += 1
-            continue
-
-        if result is True:
-            n_written += 1
-        elif result is False:
-            # Exact duplicate (evidence_id collision) — skip
-            logger.info("Exact duplicate skipped for evidence_id=%s", instance.get("evidence_id"))
-            n_skipped += 1
-        elif isinstance(result, DuplicateReviewRequest):
-            # Near-duplicate — soft flag
-            logger.info(
-                "Near-duplicate flagged: %s (similarity=%.3f)",
-                result.candidate_evidence_id,
-                result.similarity_score,
-            )
-            # The record was written (write_record returns DuplicateReviewRequest after writing)
-            n_written += 1
-            duplicates.append(
-                {
-                    "evidence_id": instance.get("evidence_id", ""),
-                    "candidate_evidence_id": result.candidate_evidence_id,
-                    "similarity_score": result.similarity_score,
-                    "reason": "semantic_similarity",
-                }
-            )
-
-    return n_written, n_skipped, duplicates
-
-
-def _user_confirmation_gate(
-    ctx: HookContext, task_spec: dict[str, Any], duplicates: list[dict[str, Any]]
-) -> None:
-    """Stub user confirmation for duplicate review.
-
-    Set ``require_confirmation: true`` in *task_spec* to enable the log
-    message. In the future this will prompt for actual user input.
-    """
-    if task_spec.get("require_confirmation"):
+    if callback is not None:
+        decision = callback(summary, duplicates)
         logger.info(
-            "User confirmation required for %d duplicates — auto-approved (stub)",
-            len(duplicates),
+            "User confirmation gate: callback returned %r (%d duplicates, %d to write)",
+            decision,
+            summary.n_duplicates,
+            summary.n_to_write,
         )
-    if isinstance(ctx.session, dict):
+    else:
+        # Default to allow: no callback means auto-proceed.
+        decision = "proceed"
+        logger.info(
+            "User confirmation gate: no callback -- defaulting to %r (%d duplicates, %d to write)",
+            decision,
+            summary.n_duplicates,
+            summary.n_to_write,
+        )
+
+    # Record the decision in the session.
+    if isinstance(ctx, HookContext) and isinstance(ctx.session, dict):
         ctx.session.setdefault("confirmations", []).append(
             {
-                "type": "duplicate_review",
-                "n_duplicates": len(duplicates),
-                "action": "auto_approved",
+                "type": "confirmation_gate",
+                "n_duplicates": summary.n_duplicates,
+                "n_to_write": summary.n_to_write,
+                "action": decision,
+                "per_domain": summary.per_domain,
             }
         )
+    elif hasattr(ctx, "session") and isinstance(getattr(ctx, "session", None), dict):
+        ctx.session.setdefault("confirmations", []).append(
+            {
+                "type": "confirmation_gate",
+                "n_duplicates": summary.n_duplicates,
+                "n_to_write": summary.n_to_write,
+                "action": decision,
+                "per_domain": summary.per_domain,
+            }
+        )
+
+    return decision

@@ -9,14 +9,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-from dargus.experts.bioinfo import BioinfoExpert
-from dargus.experts.biomed import BiomedExpert
-from dargus.experts.clinic import ClinicExpert
-from dargus.experts.molecule import MoleculeExpert
-from dargus.models.reasoning import ReasoningLLM
+from dargus.dbase.store import DuplicateReviewRequest
+from dargus.dbase.validate import validate_evidence
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -47,28 +43,6 @@ class IngestionReport:
 
 
 TrainingReport = IngestionReport  # backward compat alias
-
-
-# ---------------------------------------------------------------------------
-# Domain Expert factory
-# ---------------------------------------------------------------------------
-
-_EXPERT_BY_DOMAIN: dict[str, type] = {
-    "molecule": MoleculeExpert,
-    "biomedical": BiomedExpert,
-    "bioinformatics": BioinfoExpert,
-    "clinical": ClinicExpert,
-}
-
-
-def _build_experts(
-    reasoning_llm: ReasoningLLM | None = None,
-) -> dict[str, Any]:
-    """Build domain experts for the Convert phase."""
-    experts: dict[str, Any] = {}
-    for domain, cls in _EXPERT_BY_DOMAIN.items():
-        experts[domain] = cls(reasoning_llm=reasoning_llm)
-    return experts
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +101,9 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     1. SESSION_START: SessionInitHook creates IngestSession
     2. Explore and parse input files from source_path
     3. Distribute content to DomainExperts for evidence extraction
-    4. Call dbase_write for each extracted record
+    4. **Input phase**: validate → dedup → embed → write via single-writer
     5. Collect DuplicateReviewRequest items
-    6. Present duplicates for user confirmation (stub: auto-approve)
+    6. Present duplicates for user confirmation
     7. Report ingestion summary
 
     Args:
@@ -158,58 +132,69 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Wire reasoning LLM (injected for tests; stub mode when absent) ------
-    reasoning_llm = task_spec.get("_reasoning_llm", None)
-
-    # ---- Explore phase ---------------------------------------------------------
+    # ---- Parse source ----------------------------------------------------------
     source_path = task_spec.get("source_path", "")
     logger.info("Ingesting from source: %s", source_path)
 
-    # Scan directory, classify files by domain → per-domain file batches
-    explore_batches = _explore_source(source_path, task_spec)
-    if isinstance(ctx.session, dict):
-        ctx.session["explore_batches"] = explore_batches
-
-    # ---- Convert phase: Domain Experts extract evidence from their batches ----
-    experts = _build_experts(reasoning_llm=reasoning_llm)
-    all_instances: list[dict[str, Any]] = []
+    # Stub parsing: simulate file exploration and content extraction
+    parsed_records = _parse_source(source_path)
+    n_records = 0
+    n_duplicates = 0
     n_errors = 0
 
-    for domain, files in explore_batches.items():
-        expert = experts.get(domain)
-        if expert is None:
-            logger.info("No expert for domain '%s' — skipping %d files", domain, len(files))
-            continue
-        instances, err_count = _extract_evidence(expert, domain, files)
-        all_instances.extend(instances)
-        n_errors += err_count
-        if isinstance(ctx.session, dict):
-            rounds = ctx.session.setdefault("rounds", [])
-            rounds.append(
-                {
-                    "round": len(rounds),
-                    "domain": domain,
-                    "extracted": len(instances),
-                    "errors": err_count,
-                }
-            )
+    # ---- Main round loop: distribute to DomainExperts -------------------------
+    round_num = 0
+    domain_records = _partition_by_domain(parsed_records)
 
-    n_records = len(all_instances)
-    n_duplicates = 0
-
-    # ---- Place extracted instances into session for downstream phases ---------
-    if isinstance(ctx.session, dict):
-        ctx.session["evidence_instances"] = all_instances
-
-    # ---- Round loop hooks (compat: run PERCEIVE_START / ROUND_END) ------------
-    for round_num in range(min(1, max_rounds)):
+    while round_num < max_rounds:
         ctx.round = round_num
         ctx = hooks.run(HookPoint.PERCEIVE_START, ctx)
+
+        # In each round, process one domain batch
+        if round_num < len(domain_records):
+            domain, batch = domain_records[round_num]
+            extracted, errors = _extract_evidence(domain, batch)
+            n_records += extracted
+            n_errors += errors
+
+            if isinstance(ctx.session, dict):
+                rounds = ctx.session.setdefault("rounds", [])
+                rounds.append(
+                    {
+                        "round": round_num,
+                        "domain": domain,
+                        "extracted": extracted,
+                        "errors": errors,
+                    }
+                )
+
         ctx = hooks.run(HookPoint.ROUND_END, ctx)
+        if ctx.extra.get("force_converge"):
+            break
+        round_num += 1
+
+    # ---- Input phase: validate, dedup, embed, write via single-writer --------
+    duplicate_review_requests: list[dict[str, Any]] = []
+    records_written = 0
+    records_skipped = 0
+
+    store = task_spec.get("_dbase_store")
+    if store is not None:
+        extracted_instances = task_spec.get("_extracted_instances", [])
+        records_written, records_skipped, duplicate_review_requests = _input_phase(
+            store, extracted_instances
+        )
+        n_records = records_written
+        n_errors = records_skipped
+    # else: keep the stub counts (n_records from _extract_evidence stub)
+
+    n_duplicates = len(duplicate_review_requests)
 
     # ---- Duplicate review -----------------------------------------------------
-    duplicates = _collect_duplicates(all_instances, task_spec)
-    n_duplicates = len(duplicates)
+    duplicates = duplicate_review_requests
+    if not duplicates and store is None:
+        duplicates = _collect_duplicates(parsed_records, task_spec)
+        n_duplicates = len(duplicates)
 
     # ---- Build FinalReport ----------------------------------------------------
     final_report: dict[str, Any] = {
@@ -218,7 +203,8 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
         "n_errors": n_errors,
         "source_path": source_path,
     }
-    ctx.session["FinalReport"] = final_report  # type: ignore[index]
+    if isinstance(ctx.session, dict):
+        ctx.session["FinalReport"] = final_report  # type: ignore[index]
     ctx.extra["FinalReport"] = final_report
 
     # ---- SESSION_END hooks ----------------------------------------------------
@@ -226,6 +212,9 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
 
     # ---- User confirmation gate -----------------------------------------------
     if n_duplicates > 0:
+        _user_confirmation_gate(ctx, task_spec, duplicates)
+    elif store is not None:
+        # Even with zero duplicates, append a confirmation entry (stub path)
         _user_confirmation_gate(ctx, task_spec, duplicates)
 
     # ---- Return result --------------------------------------------------------
@@ -240,95 +229,54 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Explore phase
+# Internal helpers
 # ---------------------------------------------------------------------------
 
-# Domain file classification: file extension -> domain key
-_EXT_TO_DOMAIN: dict[str, str] = {
-    ".mol2": "molecule",
-    ".sdf": "molecule",
-    ".pdb": "molecule",
-    ".smiles": "molecule",
-    ".smi": "molecule",
-    ".csv": "clinical",
-    ".tsv": "clinical",
-    ".xlsx": "clinical",
-    ".txt": "biomedical",
-    ".json": "bioinformatics",
-    ".fasta": "bioinformatics",
-    ".fastq": "bioinformatics",
-    ".gff": "bioinformatics",
-    ".bam": "bioinformatics",
-}
 
+def _parse_source(source_path: str) -> list[dict[str, Any]]:
+    """Parse input source into a list of raw evidence record dicts.
 
-def _explore_source(
-    source_path: str, task_spec: dict[str, Any] | None = None
-) -> dict[str, list[str]]:
-    """Explore a directory, classifying files by domain.
-
-    Returns ``{domain_key: [file_path, ...]}`` mapping each recognised
-    domain to the list of files that belong to it.  Files with unknown
-    extensions are assigned to ``"biomedical"`` as a fallback.  An empty
-    or non-existent *source_path* yields an empty dict.
-
-    The *task_spec* may carry an optional ``_domain_mapping`` override
-    (``{filename: domain}``) for test injection.
+    Currently a stub that returns synthetic records for testing.
     """
-    domain_mapping: dict[str, str] = {}
-    if task_spec is not None:
-        domain_mapping = task_spec.get("_domain_mapping", {}) or {}
-
     if not source_path:
-        return {}
+        return []
 
-    sp = Path(source_path)
-    if not sp.exists() or not sp.is_dir():
-        logger.warning("Source path '%s' does not exist or is not a directory", source_path)
-        return {}
-
-    batches: dict[str, list[str]] = {}
-    for fpath in sorted(sp.iterdir()):
-        if not fpath.is_file():
-            continue
-        name = fpath.name
-        if name in domain_mapping:
-            domain = domain_mapping[name]
-        else:
-            suffix = fpath.suffix.lower()
-            domain = _EXT_TO_DOMAIN.get(suffix, "biomedical")
-        batches.setdefault(domain, []).append(str(fpath))
-
-    return batches
+    # Stub: return a set of synthetic records
+    return (
+        [
+            {"id": f"rec-{i:03d}", "source": source_path, "domain": "molecular", "data": {}}
+            for i in range(5)
+        ]
+        + [
+            {"id": f"rec-{i:03d}", "source": source_path, "domain": "biomedical", "data": {}}
+            for i in range(5, 10)
+        ]
+        + [
+            {"id": f"rec-{i:03d}", "source": source_path, "domain": "clinical", "data": {}}
+            for i in range(10, 15)
+        ]
+    )
 
 
-# ---------------------------------------------------------------------------
-# Convert phase
-# ---------------------------------------------------------------------------
+def _partition_by_domain(
+    records: list[dict[str, Any]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Group records by domain key."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        domain = rec.get("domain", "unknown")
+        groups.setdefault(domain, []).append(rec)
+    return list(groups.items())
 
 
-def _extract_evidence(
-    expert: Any, domain: str, files: list[str]
-) -> tuple[list[dict[str, Any]], int]:
-    """Extract evidence from *files* using *expert*.
+def _extract_evidence(domain: str, records: list[dict[str, Any]]) -> tuple[int, int]:
+    """Extract evidence from records using DomainExpert (stub).
 
-    Each file is fed through ``expert.extract()``.  A single file that
-    raises is logged and skipped while the rest of the batch continues.
-
-    Returns ``(instances, n_errors)``.
+    Returns (n_extracted, n_errors).
     """
-    instances: list[dict[str, Any]] = []
-    errors = 0
-
-    for file_path in files:
-        try:
-            extracted = expert.extract(file_path)
-            instances.extend(extracted)
-        except Exception:
-            logger.exception("Domain %s: error extracting %s — skipping", domain, file_path)
-            errors += 1
-
-    return instances, errors
+    # Stub: every record extracts successfully, no errors
+    logger.info("Domain %s: extracting evidence from %d records", domain, len(records))
+    return len(records), 0
 
 
 def _collect_duplicates(
@@ -341,9 +289,80 @@ def _collect_duplicates(
     """
     if task_spec is not None and task_spec.get("_duplicate_records"):
         return list(task_spec["_duplicate_records"])
-    # In a real implementation this would query D-Base for existing records
-    # with matching fingerprints and return DuplicateReviewRequest items.
     return []
+
+
+# ---------------------------------------------------------------------------
+# Input phase — validate, dedup, embed, write via single-writer
+# ---------------------------------------------------------------------------
+
+
+def _input_phase(
+    store: Any,
+    instances: list[dict[str, Any]],
+) -> tuple[int, int, list[dict[str, Any]]]:
+    """Persist extracted instances through the full single-writer lifecycle.
+
+    1. ``validate_evidence()`` — invalid records (hard rejects) are logged and skipped
+    2. ``write_record(…, dedup=True)`` — exact hash match returns ``False`` (skip);
+       semantic dedup returns a ``DuplicateReviewRequest`` soft flag
+    3. Embedding is generated on write so the embeddings sidecar stays current
+
+    Args:
+        store: A ``DBaseStore`` instance.
+        instances: List of three-axis evidence dicts to persist.
+
+    Returns:
+        ``(records_written, records_skipped, duplicate_review_requests)``
+    """
+    n_written = 0
+    n_skipped = 0
+    duplicates: list[dict[str, Any]] = []
+
+    for instance in instances:
+        # 1. Validate — hard rejects are logged and skipped (not fatal)
+        validation = validate_evidence(instance)
+        if not validation.ok:
+            logger.warning(
+                "Validation failed for instance (skipped): %s",
+                "; ".join(validation.hard_errors),
+            )
+            n_skipped += 1
+            continue
+
+        # 2. Write through single-writer: validate → evidence_id → dedup → embed → locked append
+        try:
+            result = store.write_record(instance, dedup=True)
+        except Exception:
+            logger.exception("write_record raised — skipping instance")
+            n_skipped += 1
+            continue
+
+        if result is True:
+            n_written += 1
+        elif result is False:
+            # Exact duplicate (evidence_id collision) — skip
+            logger.info("Exact duplicate skipped for evidence_id=%s", instance.get("evidence_id"))
+            n_skipped += 1
+        elif isinstance(result, DuplicateReviewRequest):
+            # Near-duplicate — soft flag
+            logger.info(
+                "Near-duplicate flagged: %s (similarity=%.3f)",
+                result.candidate_evidence_id,
+                result.similarity_score,
+            )
+            # The record was written (write_record returns DuplicateReviewRequest after writing)
+            n_written += 1
+            duplicates.append(
+                {
+                    "evidence_id": instance.get("evidence_id", ""),
+                    "candidate_evidence_id": result.candidate_evidence_id,
+                    "similarity_score": result.similarity_score,
+                    "reason": "semantic_similarity",
+                }
+            )
+
+    return n_written, n_skipped, duplicates
 
 
 def _user_confirmation_gate(

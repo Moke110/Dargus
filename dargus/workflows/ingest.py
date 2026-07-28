@@ -9,8 +9,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from dargus.experts.bioinfo import BioinfoExpert
+from dargus.experts.biomed import BiomedExpert
+from dargus.experts.clinic import ClinicExpert
+from dargus.experts.molecule import MoleculeExpert
+from dargus.models.reasoning import ReasoningLLM
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -41,6 +47,28 @@ class IngestionReport:
 
 
 TrainingReport = IngestionReport  # backward compat alias
+
+
+# ---------------------------------------------------------------------------
+# Domain Expert factory
+# ---------------------------------------------------------------------------
+
+_EXPERT_BY_DOMAIN: dict[str, type] = {
+    "molecule": MoleculeExpert,
+    "biomedical": BiomedExpert,
+    "bioinformatics": BioinfoExpert,
+    "clinical": ClinicExpert,
+}
+
+
+def _build_experts(
+    reasoning_llm: ReasoningLLM | None = None,
+) -> dict[str, Any]:
+    """Build domain experts for the Convert phase."""
+    experts: dict[str, Any] = {}
+    for domain, cls in _EXPERT_BY_DOMAIN.items():
+        experts[domain] = cls(reasoning_llm=reasoning_llm)
+    return experts
 
 
 # ---------------------------------------------------------------------------
@@ -130,49 +158,57 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Parse source ----------------------------------------------------------
+    # ---- Wire reasoning LLM (injected for tests; stub mode when absent) ------
+    reasoning_llm = task_spec.get("_reasoning_llm", None)
+
+    # ---- Explore phase ---------------------------------------------------------
     source_path = task_spec.get("source_path", "")
     logger.info("Ingesting from source: %s", source_path)
 
-    # Stub parsing: simulate file exploration and content extraction
-    parsed_records = _parse_source(source_path)
-    n_records = 0
-    n_duplicates = 0
+    # Scan directory, classify files by domain → per-domain file batches
+    explore_batches = _explore_source(source_path, task_spec)
+    if isinstance(ctx.session, dict):
+        ctx.session["explore_batches"] = explore_batches
+
+    # ---- Convert phase: Domain Experts extract evidence from their batches ----
+    experts = _build_experts(reasoning_llm=reasoning_llm)
+    all_instances: list[dict[str, Any]] = []
     n_errors = 0
 
-    # ---- Main round loop: distribute to DomainExperts -------------------------
-    round_num = 0
-    domain_records = _partition_by_domain(parsed_records)
+    for domain, files in explore_batches.items():
+        expert = experts.get(domain)
+        if expert is None:
+            logger.info("No expert for domain '%s' — skipping %d files", domain, len(files))
+            continue
+        instances, err_count = _extract_evidence(expert, domain, files)
+        all_instances.extend(instances)
+        n_errors += err_count
+        if isinstance(ctx.session, dict):
+            rounds = ctx.session.setdefault("rounds", [])
+            rounds.append(
+                {
+                    "round": len(rounds),
+                    "domain": domain,
+                    "extracted": len(instances),
+                    "errors": err_count,
+                }
+            )
 
-    while round_num < max_rounds:
+    n_records = len(all_instances)
+    n_duplicates = 0
+
+    # ---- Place extracted instances into session for downstream phases ---------
+    if isinstance(ctx.session, dict):
+        ctx.session["evidence_instances"] = all_instances
+
+    # ---- Round loop hooks (compat: run PERCEIVE_START / ROUND_END) ------------
+    for round_num in range(min(1, max_rounds)):
         ctx.round = round_num
         ctx = hooks.run(HookPoint.PERCEIVE_START, ctx)
-
-        # In each round, process one domain batch
-        if round_num < len(domain_records):
-            domain, batch = domain_records[round_num]
-            extracted, errors = _extract_evidence(domain, batch)
-            n_records += extracted
-            n_errors += errors
-
-            if isinstance(ctx.session, dict):
-                rounds = ctx.session.setdefault("rounds", [])
-                rounds.append(
-                    {
-                        "round": round_num,
-                        "domain": domain,
-                        "extracted": extracted,
-                        "errors": errors,
-                    }
-                )
-
         ctx = hooks.run(HookPoint.ROUND_END, ctx)
-        if ctx.extra.get("force_converge"):
-            break
-        round_num += 1
 
     # ---- Duplicate review -----------------------------------------------------
-    duplicates = _collect_duplicates(parsed_records, task_spec)
+    duplicates = _collect_duplicates(all_instances, task_spec)
     n_duplicates = len(duplicates)
 
     # ---- Build FinalReport ----------------------------------------------------
@@ -204,54 +240,95 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Explore phase
+# ---------------------------------------------------------------------------
+
+# Domain file classification: file extension -> domain key
+_EXT_TO_DOMAIN: dict[str, str] = {
+    ".mol2": "molecule",
+    ".sdf": "molecule",
+    ".pdb": "molecule",
+    ".smiles": "molecule",
+    ".smi": "molecule",
+    ".csv": "clinical",
+    ".tsv": "clinical",
+    ".xlsx": "clinical",
+    ".txt": "biomedical",
+    ".json": "bioinformatics",
+    ".fasta": "bioinformatics",
+    ".fastq": "bioinformatics",
+    ".gff": "bioinformatics",
+    ".bam": "bioinformatics",
+}
+
+
+def _explore_source(
+    source_path: str, task_spec: dict[str, Any] | None = None
+) -> dict[str, list[str]]:
+    """Explore a directory, classifying files by domain.
+
+    Returns ``{domain_key: [file_path, ...]}`` mapping each recognised
+    domain to the list of files that belong to it.  Files with unknown
+    extensions are assigned to ``"biomedical"`` as a fallback.  An empty
+    or non-existent *source_path* yields an empty dict.
+
+    The *task_spec* may carry an optional ``_domain_mapping`` override
+    (``{filename: domain}``) for test injection.
+    """
+    domain_mapping: dict[str, str] = {}
+    if task_spec is not None:
+        domain_mapping = task_spec.get("_domain_mapping", {}) or {}
+
+    if not source_path:
+        return {}
+
+    sp = Path(source_path)
+    if not sp.exists() or not sp.is_dir():
+        logger.warning("Source path '%s' does not exist or is not a directory", source_path)
+        return {}
+
+    batches: dict[str, list[str]] = {}
+    for fpath in sorted(sp.iterdir()):
+        if not fpath.is_file():
+            continue
+        name = fpath.name
+        if name in domain_mapping:
+            domain = domain_mapping[name]
+        else:
+            suffix = fpath.suffix.lower()
+            domain = _EXT_TO_DOMAIN.get(suffix, "biomedical")
+        batches.setdefault(domain, []).append(str(fpath))
+
+    return batches
+
+
+# ---------------------------------------------------------------------------
+# Convert phase
 # ---------------------------------------------------------------------------
 
 
-def _parse_source(source_path: str) -> list[dict[str, Any]]:
-    """Parse input source into a list of raw evidence record dicts.
+def _extract_evidence(
+    expert: Any, domain: str, files: list[str]
+) -> tuple[list[dict[str, Any]], int]:
+    """Extract evidence from *files* using *expert*.
 
-    Currently a stub that returns synthetic records for testing.
+    Each file is fed through ``expert.extract()``.  A single file that
+    raises is logged and skipped while the rest of the batch continues.
+
+    Returns ``(instances, n_errors)``.
     """
-    if not source_path:
-        return []
+    instances: list[dict[str, Any]] = []
+    errors = 0
 
-    # Stub: return a set of synthetic records
-    return (
-        [
-            {"id": f"rec-{i:03d}", "source": source_path, "domain": "molecular", "data": {}}
-            for i in range(5)
-        ]
-        + [
-            {"id": f"rec-{i:03d}", "source": source_path, "domain": "biomedical", "data": {}}
-            for i in range(5, 10)
-        ]
-        + [
-            {"id": f"rec-{i:03d}", "source": source_path, "domain": "clinical", "data": {}}
-            for i in range(10, 15)
-        ]
-    )
+    for file_path in files:
+        try:
+            extracted = expert.extract(file_path)
+            instances.extend(extracted)
+        except Exception:
+            logger.exception("Domain %s: error extracting %s — skipping", domain, file_path)
+            errors += 1
 
-
-def _partition_by_domain(
-    records: list[dict[str, Any]],
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    """Group records by domain key."""
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for rec in records:
-        domain = rec.get("domain", "unknown")
-        groups.setdefault(domain, []).append(rec)
-    return list(groups.items())
-
-
-def _extract_evidence(domain: str, records: list[dict[str, Any]]) -> tuple[int, int]:
-    """Extract evidence from records using DomainExpert (stub).
-
-    Returns (n_extracted, n_errors).
-    """
-    # Stub: every record extracts successfully, no errors
-    logger.info("Domain %s: extracting evidence from %d records", domain, len(records))
-    return len(records), 0
+    return instances, errors
 
 
 def _collect_duplicates(

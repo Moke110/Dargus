@@ -2,7 +2,7 @@
 
 import tempfile
 
-from dargus.dbase import DBase
+from dargus.dbase import DBase, DBaseStore
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
 
 
@@ -30,11 +30,53 @@ def _make_evidence(**overrides):
     return e
 
 
+# ── single-writer invariant ──────────────────────────────────────────────
+
+
+def test_append_shard_not_on_public_surface():
+    """Raw shard append is not reachable on the public DBase surface."""
+    dbase = DBase("test", root_dir=tempfile.mkdtemp())
+    assert not hasattr(dbase, "append_shard")
+    # production writes route through the validating single-writer;
+    # only _append_shard (private) and _seed_record (test seam) exist
+    public_names = [n for n in dir(dbase) if not n.startswith("_")]
+    assert "append_shard" not in public_names
+
+
+def test_test_seam_seeds_records():
+    """The test-only _seed_record seam can seed D-Base state without the store."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        e = _make_evidence(evidence_id="ev_seeded")
+        dbase._seed_record(e)
+        records = dbase.read_shards()
+        assert len(records) == 1
+        assert records[0]["evidence_id"] == "ev_seeded"
+
+
+def test_production_writes_use_validating_path():
+    """DBaseStore.write_record validates before writing; _append_shard is internal."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        store = DBaseStore(dbase)
+        result = store.write_record(_make_evidence())
+        assert result is True
+        records = dbase.read_shards()
+        assert len(records) == 1
+
+    # _append_shard exists but is private
+    assert hasattr(dbase, "_append_shard")
+    assert callable(dbase._append_shard)
+
+
+# ── shard I/O tests (use _seed_record as the test seam) ─────────────────
+
+
 def test_dbase_append_and_read_shards():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
         e = _make_evidence(evidence_id="ev_test123")
-        dbase.append_shard(e)
+        dbase._seed_record(e)
         records = dbase.read_shards()
         assert len(records) == 1
         assert records[0]["evidence_id"] == "ev_test123"
@@ -44,7 +86,7 @@ def test_dbase_evidence_id_exists():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
         e = _make_evidence(evidence_id="ev_real")
-        dbase.append_shard(e)
+        dbase._seed_record(e)
         assert dbase.evidence_id_exists("ev_real")
         assert not dbase.evidence_id_exists("ev_nonexistent")
 
@@ -52,7 +94,7 @@ def test_dbase_evidence_id_exists():
 def test_dbase_clear():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        dbase.append_shard(_make_evidence(evidence_id="ev_1"))
+        dbase._seed_record(_make_evidence(evidence_id="ev_1"))
         assert len(dbase.read_shards()) == 1
         dbase.clear()
         assert len(dbase.read_shards()) == 0

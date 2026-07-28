@@ -135,6 +135,7 @@ def validate_evidence(evidence: dict) -> ValidationResult:
     _rule_y_axis(evidence, result)
     _rule_bg(evidence, result)
     _rule_level_field_groups(evidence, result)
+    _rule_enums(evidence, result)
     _rule_curies(evidence, result)
 
     return result
@@ -508,6 +509,32 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
         result.hard_errors.append(
             f"exvivo_platform present but biological_level={level} (only for exvivo/exvivo-sim)"
         )
+
+
+# ── rule: enum field validation ──────────────────────────────────────────────
+
+
+def _rule_enums(evidence: dict, result: ValidationResult) -> None:
+    """Validate sex and clinical_design enum fields against vocabularies.json."""
+
+    # sex (top-level field)
+    sex = evidence.get("sex")
+    if sex is not None:
+        sex_vals = _vset("sex")
+        if sex not in sex_vals:
+            result.hard_errors.append(f"sex '{sex}' not in {sorted(sex_vals)}")
+
+    # clinical_design sub-fields
+    cd = evidence.get("clinical_design")
+    if cd:
+        for field in ("comparator_type", "blinding", "phase", "population"):
+            val = cd.get(field)
+            if val is not None:
+                allowed = _vset(field)
+                if val not in allowed:
+                    result.hard_errors.append(
+                        f"clinical_design.{field} '{val}' not in {sorted(allowed)}"
+                    )
 
 
 # ── rule: CURIE validation ───────────────────────────────────────────────────

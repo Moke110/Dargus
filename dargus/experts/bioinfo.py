@@ -42,7 +42,6 @@ class BioinfoExpert(Expert):
 
     name = "BioinfoExpert"
     PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
-    PERMITTED_KNOWLEDGE = ["dbase"]
     SUPPORTED_SKILLS = []
 
     SUPPORTED_LEVELS = (

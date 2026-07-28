@@ -16,7 +16,6 @@ class TestDargusRuntime:
         assert rt.embedding_model is None
         assert rt.tool_registry is None
         assert rt.skill_registry is None
-        assert rt.knowledge_retrievers == {}
         assert rt.dbase_store is None
         assert rt.hook_registry is None
 

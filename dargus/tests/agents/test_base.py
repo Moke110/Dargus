@@ -13,7 +13,6 @@ class _MinimalAgent(BaseAgent):
 
     name = "_MinimalAgent"
     PERMITTED_TOOLS = []
-    PERMITTED_KNOWLEDGE = []
     SUPPORTED_SKILLS = []
 
 
@@ -73,16 +72,6 @@ def test_base_agent_none_hook_registry():
     """When hook_registry is None (default), no hooks run — no crash."""
     agent = _MinimalAgent(name="test")
     assert agent._hook_registry is None
-
-
-def test_base_agent_injected_knowledge_retrievers():
-    """Injected knowledge retrievers are used."""
-    mock_retriever = MagicMock()
-    agent = _MinimalAgent(
-        name="test",
-        knowledge_retrievers={"test_source": mock_retriever},
-    )
-    assert agent._knowledge_retrievers["test_source"] is mock_retriever
 
 
 # ------------------------------------------------------------------

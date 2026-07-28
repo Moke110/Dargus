@@ -9,7 +9,6 @@ def test_call_trace_defaults():
     assert trace.phase == "reason"
     assert trace.skill_used is None
     assert trace.tool_called is None
-    assert trace.knowledge_retrieved == []
     assert trace.error is None
 
 

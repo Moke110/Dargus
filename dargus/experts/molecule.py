@@ -18,7 +18,6 @@ class MoleculeExpert(Expert):
 
     name = "MoleculeExpert"
     PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
-    PERMITTED_KNOWLEDGE = ["dbase"]
     SUPPORTED_SKILLS = ["dti_prediction", "admet_assessment", "molecular_similarity"]
 
     SUPPORTED_LEVELS = ("molecular", "molecular-sim")

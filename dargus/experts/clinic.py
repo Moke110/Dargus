@@ -30,7 +30,6 @@ class ClinicExpert(Expert):
 
     name = "ClinicExpert"
     PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
-    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []
 
     SUPPORTED_LEVELS = ("rct", "epi", "rct-sim")

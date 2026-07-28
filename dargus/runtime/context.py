@@ -1,7 +1,7 @@
 """DargusRuntime — the single process-lifetime owner of runtime singletons.
 
 v1.0.0 (design/3_runtime.md): one runtime owns configuration, the single
-reasoning LLM, tool/skill/knowledge registries, D-Base tools, the
+reasoning LLM, tool/skill registries, D-Base tools, the
 HookRegistry, the AgentFactory, a session-scoped ToolCache, and the health
 flag. All Agents receive their dependencies from the runtime, either
 directly or through the AgentFactory.
@@ -33,7 +33,6 @@ class DargusRuntime:
     embedding_model: EmbeddingModel | None = None
     tool_registry: Any | None = None
     skill_registry: Any | None = None
-    knowledge_retrievers: dict[str, Any] = field(default_factory=dict)
     dbase_store: Any | None = None
     hook_registry: Any | None = None
     agent_factory: Any | None = None

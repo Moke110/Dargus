@@ -59,7 +59,6 @@ class AgentFactory:
             "reasoning_llm": rt.reasoning_llm,
             "tool_registry": rt.tool_registry,
             "skill_registry": rt.skill_registry,
-            "knowledge_retrievers": rt.knowledge_retrievers,
             "hook_registry": rt.hook_registry,
         }
 

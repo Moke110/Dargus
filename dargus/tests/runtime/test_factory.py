@@ -6,7 +6,7 @@ from dargus.agents.base import BaseAgent
 from dargus.experts.bioinfo import BioinfoExpert
 from dargus.experts.biomed import BiomedExpert
 from dargus.experts.clinic import ClinicExpert
-from dargus.experts.director import FourDExpert
+from dargus.experts.director import D4Expert
 from dargus.experts.molecule import MoleculeExpert
 from dargus.iris.commander import Iris
 from dargus.runtime.context import DargusRuntime
@@ -77,7 +77,7 @@ class TestExpertCreation:
     def test_d4_expert_creates_coordinator_with_factory(self):
         factory = AgentFactory(DargusRuntime())
         d4 = factory.d4_expert()
-        assert isinstance(d4, FourDExpert)
+        assert isinstance(d4, D4Expert)
         assert d4._agent_factory is factory
 
     def test_iris_creates_commander_with_factory(self):
@@ -90,10 +90,10 @@ class TestExpertCreation:
         class _Manager:
             dbase = object()
 
-        rt = DargusRuntime(dbase_manager=_Manager())
+        rt = DargusRuntime(dbase_store=_Manager())
         factory = AgentFactory(rt)
         expert = factory.expert("molecular")
-        assert expert.dbase is rt.dbase_manager.dbase
+        assert expert.dbase is rt.dbase_store.dbase
 
 
 class TestTermination:

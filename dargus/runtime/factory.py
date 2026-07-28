@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Domain key → expert class path, used by ``expert()``. Also consulted by
-# FourDExpert when delegating a task to a domain expert.
+# D4Expert when delegating a task to a domain expert.
 _DOMAIN_EXPERT_PATHS: dict[str, str] = {
     "molecular": "dargus.experts.molecule.MoleculeExpert",
     "biomedical": "dargus.experts.biomed.BiomedExpert",
@@ -64,10 +64,10 @@ class AgentFactory:
         }
 
     def _dbase(self) -> Any:
-        """D-Base for Expert wiring: the runtime's manager store, else global."""
-        manager = self._runtime.dbase_manager
-        if manager is not None:
-            return manager.dbase
+        """D-Base for Expert wiring: the runtime's DBaseStore, else global."""
+        store = self._runtime.dbase_store
+        if store is not None:
+            return store.dbase
         from dargus.dbase import DBase
 
         return DBase.global_instance()
@@ -104,10 +104,10 @@ class AgentFactory:
         return expert_cls(dbase=self._dbase(), **self._di_kwargs())
 
     def d4_expert(self):
-        """Create the FourDExpert coordinator."""
-        from dargus.experts.director import FourDExpert
+        """Create the D4Expert coordinator."""
+        from dargus.experts.director import D4Expert
 
-        return FourDExpert(dbase=self._dbase(), agent_factory=self, **self._di_kwargs())
+        return D4Expert(dbase=self._dbase(), agent_factory=self, **self._di_kwargs())
 
     def iris(self):
         """Create the Iris commander Agent."""

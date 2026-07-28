@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from dargus.runtime.context import RuntimeContext
+from dargus.runtime.context import DargusRuntime
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -28,9 +28,9 @@ from dargus.runtime.hooks import (
 
 
 def _make_ctx(**overrides: Any) -> HookContext:
-    """Build a HookContext with a default RuntimeContext and overrides applied."""
+    """Build a HookContext with a default DargusRuntime and overrides applied."""
     kwargs: dict[str, Any] = {
-        "runtime": RuntimeContext(),
+        "runtime": DargusRuntime(),
         "task_spec": {},
         "session": None,
         "agent": None,
@@ -250,12 +250,6 @@ class TestSessionInitHook:
         ctx = _make_ctx(task_spec={"workflow": "ingest"})
         result = hook(ctx)
         assert result.session["workflow"] == "ingest"
-
-    def test_valid_benchmark_workflow(self):
-        hook = SessionInitHook()
-        ctx = _make_ctx(task_spec={"workflow": "benchmark"})
-        result = hook(ctx)
-        assert result.session["workflow"] == "benchmark"
 
     def test_session_has_expected_structure(self):
         hook = SessionInitHook()
@@ -775,12 +769,12 @@ class TestHookChainIntegration:
         registry.register(HookPoint.ROUND_END, SafetyNetHook(max_rounds=5))
         registry.register(HookPoint.SESSION_END, ResultReportHook())
 
-        ctx = _make_ctx(task_spec={"workflow": "benchmark"})
+        ctx = _make_ctx(task_spec={"workflow": "predict"})
 
         # SESSION_START
         ctx = registry.run(HookPoint.SESSION_START, ctx)
         assert ctx.session is not None
-        assert ctx.session["workflow"] == "benchmark"
+        assert ctx.session["workflow"] == "predict"
 
         # PERCEIVE_START
         ctx = registry.run(HookPoint.PERCEIVE_START, ctx)

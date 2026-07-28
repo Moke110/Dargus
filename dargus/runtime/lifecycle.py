@@ -68,17 +68,3 @@ class LifecycleManager:
         from dargus.workflows.ingest import run_ingest
 
         return run_ingest(task_spec)
-
-    def run_benchmark(self, task_spec: dict) -> dict:
-        """Execute a benchmark workflow via the hook-orchestrated function.
-
-        Args:
-            task_spec: Dict with ``workflow``, ``holdout_ids``, optional
-                ``drug_ids``, ``disease_id``, ``endpoints``.
-
-        Returns:
-            BenchmarkResult dict from ``dargus.workflows.benchmark.run_benchmark``.
-        """
-        from dargus.workflows.benchmark import run_benchmark
-
-        return run_benchmark(task_spec)

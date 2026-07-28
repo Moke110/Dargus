@@ -1,4 +1,4 @@
-"""DiseaseRAG — disease-domain knowledge retrieval (stub for v0.16.0)."""
+"""DiseaseRAG — disease-domain knowledge retrieval."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 class DiseaseRAG(KnowledgeRetriever):
     """Disease ontology and gene-disease association knowledge retrieval.
 
-    In v0.16.0, this is a stub that returns empty results with graceful
-    degradation. The full vector index will be populated during 0.17.x Ingest.
+    Currently a stub that returns empty results. The Knowledge system is
+    out of scope for v1.0.0 (design/6_skills_tools_knowledge.md).
     """
 
     def __init__(self):
@@ -34,7 +34,7 @@ class DiseaseRAG(KnowledgeRetriever):
         return None
 
     def index_items(self, items: list[KnowledgeItem]) -> None:
-        """Index knowledge items for future retrieval (populated in 0.17.x)."""
+        """Index knowledge items for future retrieval."""
         for item in items:
             self._index.setdefault(item.entity_type, []).append(item)
         logger.info(

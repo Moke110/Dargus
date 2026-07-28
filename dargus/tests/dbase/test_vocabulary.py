@@ -1,4 +1,4 @@
-"""Tests for VocabularyManager v0.15.0 — CURIE registry + enums."""
+"""Tests for VocabularyManager — CURIE registry + enums."""
 
 import tempfile
 from pathlib import Path

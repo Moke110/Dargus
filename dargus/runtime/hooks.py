@@ -184,7 +184,7 @@ class HookRegistry:
 # B2: SessionInitHook
 # ---------------------------------------------------------------------------
 
-_VALID_WORKFLOWS = frozenset({"predict", "ingest", "benchmark"})
+_VALID_WORKFLOWS = frozenset({"predict", "ingest"})
 
 
 class SessionInitHook:
@@ -353,7 +353,7 @@ class ReportValidationError(ValueError):
 
 class ReportValidationHook:
     """Validates reports on ``DOMAIN_REPORT_PRODUCED``, ``D4_REPORT_PRODUCED``,
-    and :attr:`HookPoint.SESSION_END` (replaces AcceptanceGateHook).
+    and :attr:`HookPoint.SESSION_END`.
 
     Checks (design/5_hooks.md §ReportValidationHook):
     1. report format (must be a dict),

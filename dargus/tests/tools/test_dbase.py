@@ -1,4 +1,4 @@
-"""Tests for D-Base Tool wrappers (v0.17.0 Phase C)."""
+"""Tests for D-Base Tool wrappers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
+from dargus.dbase.store import DBaseStore
 from dargus.models.embedding import Embedding, EmbeddingBackend, EmbeddingModel
 from dargus.tools.dbase import dbase_query, dbase_status, dbase_write
 
@@ -59,19 +59,19 @@ def _make_evidence(**overrides):
 
 
 def _new_manager_with_stub():
-    """Create a DBaseManager backed by a tempdir DBase with a stub embedding model."""
+    """Create a DBaseStore backed by a tempdir DBase with a stub embedding model."""
     tmp = tempfile.TemporaryDirectory()
     dbase = DBase("test", root_dir=tmp.name)
     emb_model = EmbeddingModel(_StubEmbeddingBackend())
-    manager = DBaseManager(dbase, embedding_model=emb_model)
+    manager = DBaseStore(dbase, embedding_model=emb_model)
     return manager, tmp
 
 
 def _new_manager_without_embedding():
-    """Create a DBaseManager backed by a tempdir DBase, no embedding model."""
+    """Create a DBaseStore backed by a tempdir DBase, no embedding model."""
     tmp = tempfile.TemporaryDirectory()
     dbase = DBase("test", root_dir=tmp.name)
-    manager = DBaseManager(dbase)
+    manager = DBaseStore(dbase)
     return manager, tmp
 
 
@@ -214,7 +214,7 @@ def test_dbase_status_reflects_written_records():
 
 
 # ---------------------------------------------------------------------------
-# DBaseManager with injected EmbeddingModel
+# DBaseStore with injected EmbeddingModel
 # ---------------------------------------------------------------------------
 
 
@@ -224,12 +224,9 @@ def test_manager_with_injected_embedding_model():
     tmp = tempfile.TemporaryDirectory()
     try:
         dbase = DBase("test", root_dir=tmp.name)
-        manager = DBaseManager(dbase, embedding_model=emb_model)
-        nlp = manager.nlp
-        assert nlp._embedding_model is not None
-        vec = nlp.embed_text("hello")
-        assert vec.dtype == np.float32
-        assert vec.shape == (384,)
+        manager = DBaseStore(dbase, embedding_model=emb_model)
+        vec = manager._embed("hello")
+        assert len(vec) == 384
         # Stub produces distinct vectors per text — verify we got a non-zero vector
         assert not np.allclose(vec, np.zeros(384, dtype=np.float32))
     finally:
@@ -240,43 +237,38 @@ def test_manager_without_injection_uses_lazy_default():
     """Without injection, _embedding_model starts as None and gets lazily created.
 
     The lazy default creates a real SentenceTransformer model, which may or may
-    not be available.  We only check that the nlp property returns something
-    and that the manager tracks the model field correctly.
+    not be available, so we only check that the manager tracks the model field
+    correctly without triggering the lazy default here.
     """
     tmp = tempfile.TemporaryDirectory()
     try:
         dbase = DBase("test", root_dir=tmp.name)
-        manager = DBaseManager(dbase)
-        # Before accessing nlp, _nlp is None and _embedding_model is None
-        assert manager._nlp is None
+        manager = DBaseStore(dbase)
         assert manager._embedding_model is None
-        # We do not force-trigger the lazy default here because it may
-        # attempt to load sentence-transformers.
     finally:
         tmp.cleanup()
 
 
 def test_manager_passing_none_embedding_model_uses_default():
-    """DBaseManager with explicit None should initialize _embedding_model to None."""
+    """DBaseStore with explicit None should initialize _embedding_model to None."""
     tmp = tempfile.TemporaryDirectory()
     try:
         dbase = DBase("test", root_dir=tmp.name)
-        manager = DBaseManager(dbase, embedding_model=None)
+        manager = DBaseStore(dbase, embedding_model=None)
         assert manager._embedding_model is None
-        # Accessing nlp would trigger lazy default (real model) — skip it.
     finally:
         tmp.cleanup()
 
 
 # ---------------------------------------------------------------------------
-# DBaseManager without injected embedding model
+# DBaseStore without injected embedding model
 # ---------------------------------------------------------------------------
 
 
 def test_manager_init_without_embedding_model_still_works():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         # Constructor with DBase only must still work; embedding is lazy
         assert manager.dbase is not None
         assert manager._embedding_model is None

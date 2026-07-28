@@ -1,12 +1,12 @@
-"""Tests for public exports v0.15.0."""
+"""Tests for public exports."""
 
-from dargus.dbase import DBase, DBaseManager, VocabularyManager
+from dargus.dbase import DBase, DBaseStore, VocabularyManager
 from dargus.experts import BiomedExpert, Expert, MoleculeExpert
 
 
 def test_dbase_public_exports():
     assert callable(DBase)
-    assert callable(DBaseManager)
+    assert callable(DBaseStore)
 
 
 def test_vocabulary_public_exports():

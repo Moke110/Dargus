@@ -1,4 +1,4 @@
-"""ClinicExpert — rct and epidemiological evidence assessment (v0.15.0)."""
+"""ClinicExpert — rct and epidemiological evidence assessment."""
 
 from __future__ import annotations
 

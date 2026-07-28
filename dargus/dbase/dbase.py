@@ -1,4 +1,4 @@
-"""D-Base v0.15.5 — keyed-object evidence store with shard JSONL + Parquet view."""
+"""D-Base — keyed-object evidence store with shard JSONL + Parquet view."""
 
 from __future__ import annotations
 

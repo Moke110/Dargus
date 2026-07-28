@@ -1,4 +1,4 @@
-"""Contract tests for dargus.api facade — v0.15.0 evidence dict API."""
+"""Contract tests for the dargus.api facade."""
 
 import pytest
 
@@ -64,14 +64,6 @@ def test_api_status_returns_dict(minimal_dbase):
     assert "dargus_home" in status
     assert "n_records" in status
     assert "working_dbase" in status
-
-
-def test_api_benchmark_validates_config(minimal_dbase):
-    """dargus.benchmark() aborts when the holdout selection matches zero records."""
-    import dargus
-
-    with pytest.raises(ValueError, match="zero records"):
-        dargus.benchmark(strip={"source.type": "benchmark"})
 
 
 def test_api_query_expert_returns_stub():

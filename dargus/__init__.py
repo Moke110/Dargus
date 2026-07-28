@@ -1,9 +1,8 @@
 """Dargus — clinical efficacy prediction system."""
 
-__version__ = "0.17.0"
+__version__ = "0.18.0"
 
 from dargus.api import (
-    benchmark,
     ingest,
     predict,
     query_dbase,
@@ -20,7 +19,6 @@ __all__ = [
     "query_dbase",
     "query_expert",
     "status",
-    "benchmark",
     "ingest",
     "__version__",
 ]

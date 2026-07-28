@@ -1,4 +1,4 @@
-"""BiomedExpert — preclinical biology evidence assessment (v0.15.0)."""
+"""BiomedExpert — preclinical biology evidence assessment."""
 
 from __future__ import annotations
 

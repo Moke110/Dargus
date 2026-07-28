@@ -1,4 +1,4 @@
-"""Iris — orchestrates Expert assessment via BaseAgent Harness (v0.16.0)."""
+"""Iris — orchestrates Expert assessment via the BaseAgent harness."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
 from dargus.dbase.paths import default_dargus_home, working_dbase
+from dargus.dbase.store import DBaseStore
 from dargus.workflows.ingest import IngestionReport, run_ingest
 
 if TYPE_CHECKING:
@@ -60,9 +60,9 @@ class Iris(BaseAgent):
                 logger.debug("Iris: SkillRegistry init skipped (skills dir missing)", exc_info=True)
                 self._skill_registry = None
 
-    def _global_manager(self) -> DBaseManager:
+    def _global_manager(self) -> DBaseStore:
         dbase = DBase.global_instance()
-        return DBaseManager(dbase)
+        return DBaseStore(dbase)
 
     def status(self) -> dict[str, Any]:
         """Report global D-Base status."""
@@ -143,14 +143,14 @@ class Iris(BaseAgent):
                     from dargus.experts.bioinfo import BioinfoExpert
                     from dargus.experts.biomed import BiomedExpert
                     from dargus.experts.clinic import ClinicExpert
-                    from dargus.experts.director import FourDExpert
+                    from dargus.experts.director import D4Expert
                     from dargus.experts.molecule import MoleculeExpert
 
                     molecule = MoleculeExpert(dbase=manager.dbase)
                     biomed = BiomedExpert(dbase=manager.dbase)
                     bioinfo = BioinfoExpert(dbase=manager.dbase)
                     clinic = ClinicExpert(dbase=manager.dbase)
-                    director = FourDExpert(dbase=manager.dbase)
+                    director = D4Expert(dbase=manager.dbase)
 
                 mol_report = molecule.assess(records, ctx)
                 bio_report = biomed.assess(records, ctx)

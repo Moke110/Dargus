@@ -1,4 +1,4 @@
-"""Test v0.9.0 Expert base class."""
+"""Test Expert base class."""
 
 import pytest
 

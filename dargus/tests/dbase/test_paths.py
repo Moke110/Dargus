@@ -1,4 +1,4 @@
-"""Tests for D-Base path utilities v0.15.2."""
+"""Tests for D-Base path utilities."""
 
 import os
 import tempfile

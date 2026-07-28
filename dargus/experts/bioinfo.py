@@ -1,4 +1,4 @@
-"""BioinfoExpert — high-throughput/omics evidence assessment (v0.15.0)."""
+"""BioinfoExpert — high-throughput/omics evidence assessment."""
 
 from __future__ import annotations
 

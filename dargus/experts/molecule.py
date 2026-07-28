@@ -1,4 +1,4 @@
-"""MoleculeExpert — molecular-level evidence assessment (v0.15.0)."""
+"""MoleculeExpert — molecular-level evidence assessment."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Iris prediction agent — inherits BaseAgent Harness (v0.16.0)."""
+"""Iris prediction agent — inherits the BaseAgent harness."""
 
 from dargus.iris.commander import Iris
 

@@ -1,37 +1,7 @@
 """Tests for LifecycleManager."""
 
-import os
-
 from dargus.runtime.context import DargusRuntime
 from dargus.runtime.lifecycle import LifecycleManager
-
-
-def _seed_benchmark_dbase(tmp_path, monkeypatch):
-    """Isolated global D-Base (via DARGUS_HOME) with one evidence record."""
-    home = str(tmp_path / "dargus_home")
-    os.makedirs(home, exist_ok=True)
-    monkeypatch.setenv("DARGUS_HOME", home)
-
-    from dargus.dbase import DBase
-    from dargus.dbase.manager import DBaseManager
-
-    manager = DBaseManager(DBase.global_instance())
-    record = {
-        "biological_level": "rct",
-        "evidence_design": "descriptive",
-        "xy": {"count": 1},
-        "x": {
-            "type": "drug",
-            "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
-        },
-        "y": {"type": "response_rate", "category": "clinic_efficacy_primary", "value": [0.7]},
-        "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
-        "sources": [{"rank": 1, "type": "journal", "name": "10.1234/lifecycle"}],
-        "source_entry": "10.1234/lifecycle",
-        "source_time": "2026-01-01",
-    }
-    assert manager.write_record(record, dedup=False) is True
-    return record["evidence_id"]
 
 
 class TestLifecycleManager:
@@ -113,14 +83,3 @@ class TestLifecycleManager:
         result = lm.run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
         assert isinstance(result, dict)
         assert result["workflow"] == "ingest"
-
-    def test_run_benchmark_delegates_to_workflow(self, tmp_path, monkeypatch):
-        """LifecycleManager.run_benchmark delegates to the workflow function."""
-        holdout_id = _seed_benchmark_dbase(tmp_path, monkeypatch)
-        rt = DargusRuntime()
-        lm = LifecycleManager(rt)
-        result = lm.run_benchmark(
-            {"workflow": "benchmark", "holdout_ids": [holdout_id], "max_rounds": 1}
-        )
-        assert isinstance(result, dict)
-        assert result["workflow"] == "benchmark"

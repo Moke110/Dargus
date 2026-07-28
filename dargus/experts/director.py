@@ -1,4 +1,4 @@
-"""FourDExpert — Disease & Drug Development Director."""
+"""D4Expert — Disease & Drug Development Director."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from dargus.runtime.hooks import HookRegistry
 from dargus.tools.registry import ToolRegistry
 
 
-class FourDExpert(Expert):
+class D4Expert(Expert):
     """Disease & Drug Development Director.
 
     Holds broad-but-shallow knowledge across the full drug development
@@ -26,7 +26,7 @@ class FourDExpert(Expert):
     discussion guidance between rounds.
     """
 
-    name = "FourDExpert"
+    name = "D4Expert"
     PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
     PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []
@@ -83,9 +83,9 @@ class FourDExpert(Expert):
         self._agent_factory = agent_factory
 
     def assess(self, records, context):
-        """FourDExpert does not assess individual records directly."""
+        """D4Expert does not assess individual records directly."""
         return ExpertReport(
-            expert="FourDExpert",
+            expert="D4Expert",
             round=context.round,
             findings=[],
             confidence=ConfidenceInterval(low=0.0, high=1.0, sources=[]),
@@ -225,7 +225,7 @@ class FourDExpert(Expert):
         confidence_scores: list[float] = []
 
         for expert_name, reports in all_reports.items():
-            if expert_name == "FourDExpert":
+            if expert_name == "D4Expert":
                 continue
             for report in reports:
                 for finding in report.findings:
@@ -281,7 +281,7 @@ class FourDExpert(Expert):
                 confidence_level = "low"
 
         # Consensus summary
-        expert_names = [n for n in all_reports if n != "FourDExpert"]
+        expert_names = [n for n in all_reports if n != "D4Expert"]
         consensus = (
             f"{len(expert_names)} experts assessed {len(all_findings)} evidence items. "
             f"Overall confidence: {confidence_level}."

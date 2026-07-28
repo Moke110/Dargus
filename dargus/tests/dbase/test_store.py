@@ -1,11 +1,11 @@
-"""Tests for DBaseManager v1.0.0 — three-axis evidence dict API (50-field schema)."""
+"""Tests for DBaseStore v1.0.0 — three-axis evidence dict API (50-field schema)."""
 
 import tempfile
 
 import pytest
 
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
+from dargus.dbase.store import DBaseStore
 
 
 def _make_evidence(**overrides):
@@ -84,7 +84,7 @@ def _make_pairwise(**overrides):
 def test_manager_write_record():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         result = manager.write_record(_make_evidence())
         assert result is True
         assert len(dbase.read_shards()) == 1
@@ -93,7 +93,7 @@ def test_manager_write_record():
 def test_manager_write_pairwise_record():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         result = manager.write_record(_make_pairwise())
         assert result is True
         record = dbase.read_shards()[0]
@@ -104,7 +104,7 @@ def test_manager_write_pairwise_record():
 def test_manager_reset_clears_all_records():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         manager.write_record(_make_evidence())
         manager.reset()
         assert len(dbase.read_shards()) == 0
@@ -113,7 +113,7 @@ def test_manager_reset_clears_all_records():
 def test_manager_read_records():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         manager.write_record(_make_evidence())
         records = manager.read_records(y_type="logP")
         assert len(records) >= 1
@@ -122,7 +122,7 @@ def test_manager_read_records():
 def test_manager_build_evidence():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         record = manager.build_evidence(
             {
                 "x": {
@@ -155,7 +155,7 @@ def test_manager_build_evidence():
 def test_manager_write_record_rejects_invalid():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         with pytest.raises(ValueError):
             manager.write_record(_make_evidence(biological_level="invalid_level"))
 
@@ -163,7 +163,7 @@ def test_manager_write_record_rejects_invalid():
 def test_manager_read_records_by_filters():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         manager.write_record(_make_evidence())
         records = manager.read_records(y_type="logP")
         assert len(records) >= 1
@@ -177,7 +177,7 @@ def test_manager_build_evidence_from_three_axis_raw():
     """build_evidence with three-axis raw input."""
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         record = manager.build_evidence(
             {
                 "biological_level": "cellular",
@@ -210,7 +210,7 @@ def test_manager_duplicate_detection():
     """Writing the same evidence twice returns False."""
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         evidence = _make_evidence()
         result1 = manager.write_record(evidence)
         assert result1 is True
@@ -221,7 +221,7 @@ def test_manager_duplicate_detection():
 def test_manager_read_record_by_id():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         evidence = _make_evidence()
         manager.write_record(evidence)
         eid = evidence["evidence_id"]

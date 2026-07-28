@@ -4,7 +4,7 @@ from dargus.experts.base import Expert
 from dargus.experts.bioinfo import BioinfoExpert
 from dargus.experts.biomed import BiomedExpert
 from dargus.experts.clinic import ClinicExpert
-from dargus.experts.director import FourDExpert
+from dargus.experts.director import D4Expert
 from dargus.experts.molecule import MoleculeExpert
 from dargus.experts.protocol import (
     ConfidenceInterval,
@@ -21,7 +21,7 @@ __all__ = [
     "BiomedExpert",
     "BioinfoExpert",
     "ClinicExpert",
-    "FourDExpert",
+    "D4Expert",
     "ExpertReport",
     "EvidenceAssessment",
     "TaskDelegation",

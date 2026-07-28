@@ -1,4 +1,4 @@
-"""Test v0.15.0 ClinicExpert."""
+"""Test ClinicExpert."""
 
 from dargus.experts.clinic import ClinicExpert
 from dargus.experts.protocol import ExpertContext, ExpertReport

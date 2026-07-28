@@ -1,4 +1,4 @@
-"""Test v0.15.0 MolecularExpert."""
+"""Test MoleculeExpert."""
 
 from dargus.experts.molecule import MoleculeExpert
 from dargus.experts.protocol import ExpertContext, ExpertReport

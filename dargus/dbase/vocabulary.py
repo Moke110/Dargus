@@ -1,4 +1,4 @@
-"""D-Base vocabulary manager v0.15.5 — three-axis enum registry loaded from vocabularies.json."""
+"""D-Base vocabulary manager — three-axis enum registry loaded from vocabularies.json."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ FALLBACK_PREFIXES = frozenset(
 
 
 class VocabularyManager:
-    """CURIE prefix registry + three-axis enum term registry (v0.15.5).
+    """CURIE prefix registry + three-axis enum term registry.
 
     Loads all controlled vocabularies from vocabularies.json (§3.0–§3.14).
     """

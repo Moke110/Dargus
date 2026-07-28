@@ -80,10 +80,10 @@ def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None)
     """
     if reset:
         from dargus.dbase import DBase
-        from dargus.dbase.manager import DBaseManager
+        from dargus.dbase.store import DBaseStore
 
         dbase = DBase.global_instance()
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         manager.reset()
         logger.info("API: D-Base reset before ingestion")
 
@@ -107,9 +107,9 @@ def query_dbase(
         List of matching D-Base records.
     """
     dbase = DBase.global_instance()
-    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.store import DBaseStore
 
-    mgr = DBaseManager(dbase)
+    mgr = DBaseStore(dbase)
     return mgr.read_records(
         disease_id=disease_id,
         x_entity=drug_ids[0] if drug_ids and len(drug_ids) == 1 else None,
@@ -124,64 +124,6 @@ def status() -> dict[str, Any]:
     """
     iris = _create_iris_with_lm()
     return iris.status()
-
-
-def benchmark(
-    strip: dict[str, Any],
-    split: dict[str, Any] | None = None,
-    output_dir: str | None = None,
-) -> dict[str, Any]:
-    """Run a bench-full-stack benchmark.
-
-    Bootstraps the DargusRuntime and runs through LifecycleManager;
-    refuses the session when the runtime is unhealthy.
-
-    Args:
-        strip: Filter dict for extracting matching records from the global D-Base.
-        split: Optional split config, e.g. ``{"test_size": 0.2, "random_state": 42}``.
-        output_dir: Optional output directory for reports.
-
-    Returns:
-        Dict with keys ``metrics``, ``predictions``, ``conditions``.
-    """
-    task_spec = {
-        "workflow": "benchmark",
-        "holdout_ids": strip.get("holdout_ids", []),
-        "drug_ids": strip.get("drug_ids", []),
-        "disease_id": strip.get("disease_id", "unknown"),
-        "endpoints": strip.get("endpoints", []),
-        "max_rounds": strip.get("max_rounds", 5),
-    }
-    if split:
-        task_spec["split"] = split
-    if output_dir:
-        task_spec["output_dir"] = output_dir
-
-    # ---- Runtime path -----------------------------------------------------
-    from dargus.runtime.bootstrap import bootstrap
-
-    runtime = bootstrap()
-    runtime.ensure_healthy()
-    from dargus.runtime.lifecycle import LifecycleManager
-
-    lm = LifecycleManager(runtime)
-    lm.startup()
-    try:
-        result = lm.run_benchmark(task_spec)
-    finally:
-        lm.shutdown()
-    return {
-        "metrics": {
-            "accuracy": result.get("accuracy", 0.0),
-            "precision": result.get("precision", 0.0),
-            "recall": result.get("recall", 0.0),
-            "f1": result.get("f1", 0.0),
-        },
-        "predictions": result.get("report", {}),
-        "conditions": strip,
-        "n_test": result.get("n_test", 0),
-        "status": result.get("status"),
-    }
 
 
 def query_expert(expert_name: str) -> dict:
@@ -396,7 +338,7 @@ def clear_dbase(confirm_code: str, expected_code: str) -> bool:
     import secrets
 
     from dargus.dbase import DBase
-    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.store import DBaseStore
 
     # Verify confirmation code
     if not secrets.compare_digest(confirm_code, expected_code):
@@ -405,7 +347,7 @@ def clear_dbase(confirm_code: str, expected_code: str) -> bool:
 
     try:
         dbase = DBase.global_instance()
-        manager = DBaseManager(dbase)
+        manager = DBaseStore(dbase)
         manager.reset()
         logger.info("API: D-Base cleared")
         return True
@@ -469,10 +411,10 @@ def test_write_evidence(raw: dict, source_id: str = "test-dbase:cli") -> dict[st
         Dict with keys: evidence_id, biological_level, y_type, status.
     """
     from dargus.dbase import DBase
-    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.store import DBaseStore
 
     dbase = DBase.global_instance()
-    manager = DBaseManager(dbase)
+    manager = DBaseStore(dbase)
 
     evidence = manager.build_evidence(
         raw,
@@ -502,7 +444,7 @@ def test_bulk_input(directory: str) -> dict[str, Any]:
     from pathlib import Path
 
     from dargus.dbase import DBase
-    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.store import DBaseStore
 
     dir_path = Path(directory).expanduser()
     if not dir_path.is_dir():
@@ -519,7 +461,7 @@ def test_bulk_input(directory: str) -> dict[str, Any]:
 
     json_files = sorted(dir_path.glob("*.json"))
     dbase = DBase.global_instance()
-    manager = DBaseManager(dbase)
+    manager = DBaseStore(dbase)
 
     added = 0
     duplicates = 0
@@ -577,7 +519,7 @@ def test_ingest_dir(directory: str) -> dict[str, Any]:
     from pathlib import Path
 
     from dargus.dbase import DBase
-    from dargus.dbase.manager import DBaseManager
+    from dargus.dbase.store import DBaseStore
 
     dir_path = Path(directory).expanduser()
     if not dir_path.is_dir():
@@ -641,7 +583,7 @@ def test_ingest_dir(directory: str) -> dict[str, Any]:
             file_map.append((TopClinicalConverter(), fp))
 
     dbase = DBase.global_instance()
-    manager = DBaseManager(dbase)
+    manager = DBaseStore(dbase)
 
     added = 0
     duplicates = 0

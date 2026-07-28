@@ -25,7 +25,7 @@ class DargusRuntime:
     """Holds all shared, pre-warmed resources for a single process/session.
 
     Fields marked as ``Any`` are forward references to types concretised in
-    later phases (SkillRegistry, DBaseManager).
+    later phases (SkillRegistry, DBaseStore).
     """
 
     config: dict[str, Any] = field(default_factory=dict)
@@ -34,7 +34,7 @@ class DargusRuntime:
     tool_registry: Any | None = None
     skill_registry: Any | None = None
     knowledge_retrievers: dict[str, Any] = field(default_factory=dict)
-    dbase_manager: Any | None = None
+    dbase_store: Any | None = None
     hook_registry: Any | None = None
     agent_factory: Any | None = None
     tool_cache: Any | None = None
@@ -80,7 +80,3 @@ class DargusRuntime:
 def health_check(runtime: DargusRuntime) -> bool:
     """Return True if both reasoning_llm and embedding_model are present."""
     return runtime.reasoning_llm is not None and runtime.embedding_model is not None
-
-
-# Backward-compatible alias (v0.19.x name). Removed in the legacy cleanup.
-RuntimeContext = DargusRuntime

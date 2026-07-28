@@ -1,18 +1,18 @@
-"""D-Base Tool wrappers — plain functions wrapping DBaseManager methods."""
+"""D-Base Tool wrappers — plain functions wrapping DBaseStore methods."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from dargus.dbase.manager import DBaseManager
+from dargus.dbase.store import DBaseStore
 from dargus.tools.base import Tool, ToolParam
 
 
-def dbase_query(manager: DBaseManager, query: dict) -> dict:
+def dbase_query(manager: DBaseStore, query: dict) -> dict:
     """Query D-Base. Returns matching records.
 
     Args:
-        manager: A DBaseManager instance wired to a DBase store.
+        manager: A DBaseStore instance wired to a DBase store.
         query: Filter dict with optional keys: x_entity, disease_id, y_type,
                y_category, level, evidence_design, limit.
 
@@ -33,11 +33,11 @@ def dbase_query(manager: DBaseManager, query: dict) -> dict:
     return {"records": records, "count": len(records)}
 
 
-def dbase_write(manager: DBaseManager, record: dict) -> dict:
+def dbase_write(manager: DBaseStore, record: dict) -> dict:
     """Write evidence record. Internally calls EmbeddingModel for embedding generation.
 
     Args:
-        manager: A DBaseManager instance wired to a DBase store.
+        manager: A DBaseStore instance wired to a DBase store.
         record: Three-axis evidence dict to write.
 
     Returns:
@@ -68,11 +68,11 @@ def dbase_write(manager: DBaseManager, record: dict) -> dict:
     }
 
 
-def dbase_status(manager: DBaseManager) -> dict:
+def dbase_status(manager: DBaseStore) -> dict:
     """Get D-Base status: record count, index info, etc.
 
     Args:
-        manager: A DBaseManager instance wired to a DBase store.
+        manager: A DBaseStore instance wired to a DBase store.
 
     Returns:
         Dict with ``record_count``, ``shard_count``, ``has_parquet_view``.
@@ -87,7 +87,7 @@ def dbase_status(manager: DBaseManager) -> dict:
 
 
 def dbase_update_status(
-    manager: DBaseManager,
+    manager: DBaseStore,
     evidence_id: str,
     status: str,
     superseded_by: str | None = None,
@@ -95,7 +95,7 @@ def dbase_update_status(
     """Append a lifecycle status transition to the status sidecar.
 
     Args:
-        manager: A DBaseManager instance wired to a DBase store.
+        manager: A DBaseStore instance wired to a DBase store.
         evidence_id: Target record id.
         status: New status — active / superseded / retracted /
             holdout-test / holdout-valid.
@@ -109,11 +109,11 @@ def dbase_update_status(
     return {"evidence_id": evidence_id, "status": manager.get_status(evidence_id)["status"]}
 
 
-def dbase_write_summary(manager: DBaseManager, evidence_id: str, summary: str) -> dict:
+def dbase_write_summary(manager: DBaseStore, evidence_id: str, summary: str) -> dict:
     """Write or replace the LLM summary sidecar entry for a record.
 
     Args:
-        manager: A DBaseManager instance wired to a DBase store.
+        manager: A DBaseStore instance wired to a DBase store.
         evidence_id: Target record id.
         summary: Summary text.
 
@@ -129,7 +129,7 @@ def dbase_write_summary(manager: DBaseManager, evidence_id: str, summary: str) -
 # ---------------------------------------------------------------------------
 
 
-def make_dbase_tools(manager: DBaseManager) -> list[Tool]:
+def make_dbase_tools(manager: DBaseStore) -> list[Tool]:
     """Bind the dbase_* functions to :class:`Tool` objects for a registry."""
     query_tool = Tool(
         name="dbase_query",
@@ -202,7 +202,7 @@ def make_dbase_tools(manager: DBaseManager) -> list[Tool]:
     return [query_tool, write_tool, status_tool, update_status_tool, summary_tool]
 
 
-def register_dbase_tools(manager: DBaseManager, registry: Any) -> None:
+def register_dbase_tools(manager: DBaseStore, registry: Any) -> None:
     """Register bound dbase_* Tools into a ToolRegistry (replacing stubs)."""
     for tool in make_dbase_tools(manager):
         registry._tools[tool.name] = tool

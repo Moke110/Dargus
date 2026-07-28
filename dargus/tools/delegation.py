@@ -1,4 +1,4 @@
-"""delegate_to_expert — Tool wrapper for FourDExpert coordination."""
+"""delegate_to_expert — Tool wrapper for D4Expert coordination."""
 
 from __future__ import annotations
 
@@ -7,23 +7,23 @@ from typing import TYPE_CHECKING, Any
 from dargus.tools.base import Tool, ToolParam
 
 if TYPE_CHECKING:
-    from dargus.experts.director import FourDExpert
+    from dargus.experts.director import D4Expert
 
 
 def delegate_to_expert(
-    d4_expert: FourDExpert,
+    d4_expert: D4Expert,
     domain: str,
     records: list,
     question: str,
 ) -> dict[str, Any]:
     """Delegate evidence assessment to a DomainExpert. Returns ExpertReport.
 
-    This is a thin wrapper — the real logic is in :class:`FourDExpert`.
+    This is a thin wrapper — the real logic is in :class:`D4Expert`.
     The tool function exists so it can be registered and called by agents
     in the P-R-A loop.
 
     Args:
-        d4_expert: The FourDExpert coordinator instance.
+        d4_expert: The D4Expert coordinator instance.
         domain: Domain key (``"molecular"``, ``"biomedical"``, etc.).
         records: List of evidence records to assess.
         question: The assessment question.
@@ -35,11 +35,11 @@ def delegate_to_expert(
     return d4_expert.delegate_to_expert(domain, records, question)
 
 
-def make_delegate_tool(d4_expert: FourDExpert) -> Tool:
+def make_delegate_tool(d4_expert: D4Expert) -> Tool:
     """Create a Tool wrapping :func:`delegate_to_expert` for the P-R-A loop.
 
     Args:
-        d4_expert: The FourDExpert coordinator instance to bind.
+        d4_expert: The D4Expert coordinator instance to bind.
 
     Returns:
         A :class:`Tool` ready for registration and execution.

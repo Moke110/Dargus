@@ -1,4 +1,4 @@
-"""Test v0.15.0 BioinfoExpert."""
+"""Test BioinfoExpert."""
 
 from dargus.experts.bioinfo import BioinfoExpert
 from dargus.experts.protocol import ExpertContext, ExpertReport

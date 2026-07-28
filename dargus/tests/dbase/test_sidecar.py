@@ -4,8 +4,8 @@ import json
 import tempfile
 
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
 from dargus.dbase.sidecar import SidecarStore, model_fingerprint
+from dargus.dbase.store import DBaseStore
 from dargus.models.embedding import Embedding, EmbeddingBackend, EmbeddingModel
 
 
@@ -44,7 +44,7 @@ def _make_evidence(**overrides):
 def _new_manager(tmp):
     dbase = DBase("test", root_dir=tmp)
     emb = EmbeddingModel(_StubEmbeddingBackend())
-    return DBaseManager(dbase, embedding_model=emb), dbase
+    return DBaseStore(dbase, embedding_model=emb), dbase
 
 
 # ── SidecarStore primitives ──────────────────────────────────────────────────
@@ -141,7 +141,7 @@ def test_write_record_stores_embedding_in_sidecar():
 def test_write_without_embedding_model_still_writes():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
-        manager = DBaseManager(dbase)  # no embedding model
+        manager = DBaseStore(dbase)  # no embedding model
         record = _make_evidence()
         assert manager.write_record(record) is True
         assert len(dbase.read_shards()) == 1

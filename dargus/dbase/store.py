@@ -1,17 +1,15 @@
-"""DBaseManager v1.0.0 — sole write/read gate with three-axis evidence dict API."""
+"""DBaseStore v1.0.0 — sole write/read gate with three-axis evidence dict API."""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dargus.dbase.dbase import DBase
 from dargus.dbase.sidecar import model_fingerprint
+from dargus.dbase.text import record_to_text
 from dargus.dbase.validate import compute_evidence_id, validate_evidence
-from dargus.models.embedding import EmbeddingModel
-
-if TYPE_CHECKING:
-    from dargus.dbase.nlp import DBaseNLP
+from dargus.models.embedding import Embedding, EmbeddingModel
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,7 @@ class DuplicateReviewRequest:
         self.candidate_evidence_id = candidate_evidence_id
 
 
-class DBaseManager:
+class DBaseStore:
     """Single read/write interface to D-Base (v1.0.0 three-axis, 50-field)."""
 
     def __init__(
@@ -46,18 +44,22 @@ class DBaseManager:
         self.dbase = dbase
         self._embedding_model = embedding_model
         self.dedup_threshold = dedup_threshold
-        self._nlp: DBaseNLP | None = None
 
-    # ── nlp (lazy) ──────────────────────────────────────────────────────────
+    # ── embedding ───────────────────────────────────────────────────────────
 
-    @property
-    def nlp(self) -> DBaseNLP:
-        """Lazily-initialised DBaseNLP instance, wired to the manager's EmbeddingModel."""
-        if self._nlp is None:
-            from dargus.dbase.nlp import DBaseNLP
+    def _get_embedding_model(self) -> EmbeddingModel:
+        """The store's EmbeddingModel, lazily defaulting to the project model."""
+        if self._embedding_model is None:
+            from dargus.models.embedding import SentenceTransformerBackend
 
-            self._nlp = DBaseNLP(embedding_model=self._embedding_model)
-        return self._nlp
+            backend = SentenceTransformerBackend("all-MiniLM-L6-v2")
+            self._embedding_model = EmbeddingModel(backend)
+        return self._embedding_model
+
+    def _embed(self, text: str) -> list[float]:
+        """Embed one text with the store's model, returning a plain vector."""
+        emb: Embedding = self._get_embedding_model().embed([text])[0]
+        return [float(v) for v in emb]
 
     # ── read ────────────────────────────────────────────────────────────────
 
@@ -106,7 +108,7 @@ class DBaseManager:
     def _model_fp(self) -> str | None:
         """Fingerprint of the configured embedding model, if any."""
         try:
-            return model_fingerprint(self.nlp.model_name)
+            return model_fingerprint(self._get_embedding_model().model_name)
         except Exception:
             return None
 
@@ -143,8 +145,7 @@ class DBaseManager:
 
         # ── embedding sidecar (best-effort; record is already durable) ────
         try:
-            text = self.nlp.record_to_text(record)
-            vector = self.nlp.embed_text(text).tolist()
+            vector = self._embed(record_to_text(record))
             fp = self._model_fp()
             if fp:
                 self.dbase.sidecars.append_embedding(eid, vector, fp)
@@ -213,8 +214,7 @@ class DBaseManager:
                 skipped += 1
                 continue
             try:
-                text = self.nlp.record_to_text(record)
-                vector = self.nlp.embed_text(text).tolist()
+                vector = self._embed(record_to_text(record))
                 self.dbase.sidecars.append_embedding(eid, vector, fp)
                 written += 1
             except Exception:
@@ -224,7 +224,7 @@ class DBaseManager:
 
     def _semantic_check(self, record: dict) -> DuplicateReviewRequest | None:
         try:
-            text = self.nlp.record_to_text(record)
+            text = record_to_text(record)
             similar = self.read_records_semantic(
                 text,
                 top_k=5,
@@ -408,7 +408,8 @@ class DBaseManager:
     ) -> list[tuple[dict, float]]:
         """Semantic search over evidence records."""
         try:
-            nlp = self.nlp
+            model = self._get_embedding_model()
+            query_vector: Embedding = model.embed([query_text])[0]
             candidates = self.read_records(
                 x_entity=x_entity,
                 disease_id=disease_id,
@@ -416,8 +417,8 @@ class DBaseManager:
             )
             scored: list[tuple[dict, float]] = []
             for record in candidates:
-                text = nlp.record_to_text(record)
-                score = nlp.similarity(query_text, text)
+                record_vector: Embedding = model.embed([record_to_text(record)])[0]
+                score = EmbeddingModel.similarity(query_vector, record_vector)
                 scored.append((record, score))
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored[:top_k]
@@ -461,7 +462,7 @@ class DBaseManager:
         fp = self.dbase.sidecars.active_fingerprint()
         vectors: dict[str, list[float]] = self.dbase.sidecars.read_embeddings(fp) if fp else {}
 
-        query_vector = self.nlp.embed_text(query_text).tolist()
+        query_vector = self._embed(query_text)
 
         scored: list[tuple[dict, float]] = []
         for record in candidates:

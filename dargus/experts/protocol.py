@@ -1,4 +1,4 @@
-"""v0.9.0 Expert protocol types — communication contract between Experts."""
+"""Expert protocol types — communication contract between Experts (design/4.1)."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ class ExpertReport:
 
 @dataclass
 class FinalReport:
-    """Final synthesized report from 4DExpert after convergence.
+    """Final synthesized report from D4Expert after convergence.
 
     Scores follow the DES ± DCS contract (design/4.1): ``efficacy_score``
     (DES) and ``confidence_score`` (DCS), both 0–1 — or both ``None`` when

@@ -1,4 +1,4 @@
-"""Ingestion pipeline v0.15.0."""
+"""Ingestion pipeline."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
+from dargus.dbase.store import DBaseStore
 from dargus.ingestion.converters.tdc_admet import TdcAdmetConverter
 from dargus.ingestion.converters.tdc_dti import TdcDtiConverter
 
@@ -33,7 +33,7 @@ def ingest_dataset(
     converter_factory = CONVERTERS[dataset_name]
     converter = converter_factory()
 
-    manager = DBaseManager(dbase)
+    manager = DBaseStore(dbase)
     n_added = 0
     for path in Path(data_dir).glob("*"):
         if not path.is_file():
@@ -64,7 +64,7 @@ def ingest_dataset(
 def populate_project(
     project_id: str,
     dataset_names: list[str],
-    data_root: str = "data/benchmarks",
+    data_root: str = "data",
     projects_root: str = "projects",
 ) -> dict[str, Any]:
     totals = {}

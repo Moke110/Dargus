@@ -7,7 +7,7 @@ import tempfile
 import pytest
 
 from dargus.dbase import DBase
-from dargus.dbase.manager import DBaseManager
+from dargus.dbase.store import DBaseStore
 from dargus.models.embedding import Embedding, EmbeddingBackend, EmbeddingModel
 from dargus.tools.base import Tool
 from dargus.tools.cache import ToolCache
@@ -56,7 +56,7 @@ def _make_evidence(**overrides):
 def _new_manager(tmp):
     dbase = DBase("test", root_dir=tmp)
     emb = EmbeddingModel(_StubEmbeddingBackend())
-    return DBaseManager(dbase, embedding_model=emb), dbase
+    return DBaseStore(dbase, embedding_model=emb), dbase
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ def test_dedup_threshold_configurable():
     with tempfile.TemporaryDirectory() as tmp:
         dbase = DBase("test", root_dir=tmp)
         emb = EmbeddingModel(_StubEmbeddingBackend())
-        manager = DBaseManager(dbase, embedding_model=emb, dedup_threshold=0.99)
+        manager = DBaseStore(dbase, embedding_model=emb, dedup_threshold=0.99)
         assert manager.dedup_threshold == 0.99
 
 

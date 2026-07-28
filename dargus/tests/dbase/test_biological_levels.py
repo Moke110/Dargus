@@ -1,4 +1,4 @@
-"""Test v0.15.0 biological level vocabulary."""
+"""Test biological level vocabulary."""
 
 from dargus.dbase.vocabulary import BIOLOGICAL_LEVELS, READOUT_CATEGORIES
 

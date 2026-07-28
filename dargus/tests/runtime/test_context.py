@@ -2,7 +2,7 @@
 
 import pytest
 
-from dargus.runtime.context import DargusRuntime, RuntimeContext, health_check
+from dargus.runtime.context import DargusRuntime, health_check
 from dargus.tools.cache import ToolCache
 
 
@@ -17,7 +17,7 @@ class TestDargusRuntime:
         assert rt.tool_registry is None
         assert rt.skill_registry is None
         assert rt.knowledge_retrievers == {}
-        assert rt.dbase_manager is None
+        assert rt.dbase_store is None
         assert rt.hook_registry is None
 
     def test_starts_healthy(self):
@@ -55,10 +55,6 @@ class TestDargusRuntime:
         fake_emb = object()
         rt.embedding_model = fake_emb  # type: ignore[assignment]
         assert rt.embedding_model is fake_emb
-
-    def test_runtime_context_alias(self):
-        """RuntimeContext remains a backward-compatible alias."""
-        assert RuntimeContext is DargusRuntime
 
 
 class TestHealthFlag:

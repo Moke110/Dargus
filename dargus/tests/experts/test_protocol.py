@@ -1,4 +1,4 @@
-"""Test v0.9.0 Expert protocol types."""
+"""Test Expert protocol types."""
 
 from dargus.experts.protocol import (
     ConfidenceInterval,

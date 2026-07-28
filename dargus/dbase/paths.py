@@ -1,4 +1,4 @@
-"""D-Base path utilities — v0.15.2."""
+"""D-Base path utilities."""
 
 from __future__ import annotations
 

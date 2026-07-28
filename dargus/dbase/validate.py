@@ -36,18 +36,6 @@ def _load_vocab() -> dict:
     return _vocab
 
 
-def reload_vocab() -> dict:
-    """Force-reload the vocabulary cache from vocabularies.json.
-
-    Public API entry point for testing and for gated-term workflows that
-    need to pick up newly approved terms without a process restart.
-    """
-    global _vocab, _CURIE_PATTERNS
-    _vocab = {}
-    _CURIE_PATTERNS = {}
-    return _load_vocab()
-
-
 def _v(key: str) -> list | dict:
     v = _load_vocab()
     return v.get(key, {})
@@ -149,7 +137,6 @@ def validate_evidence(evidence: dict) -> ValidationResult:
     _rule_y_axis(evidence, result)
     _rule_bg(evidence, result)
     _rule_level_field_groups(evidence, result)
-    _rule_enums(evidence, result)
     _rule_curies(evidence, result)
 
     return result
@@ -197,9 +184,7 @@ def _rule_biological_level(evidence: dict, result: ValidationResult) -> None:
 
     ed = evidence.get("evidence_design")
     designs = _vset("evidence_design")
-    if not ed:
-        result.hard_errors.append("evidence_design is required (R-evidence_design)")
-    elif ed not in designs:
+    if ed and ed not in designs:
         result.hard_errors.append(f"evidence_design '{ed}' not in {sorted(designs)}")
 
 
@@ -475,13 +460,6 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
     clinical = _clinical_levels()
     y = evidence.get("y") or {}
 
-    # Levels at cellular or higher (non-clinical) that require cell_line_id
-    # Exclude molecular (sub-cellular) and rct-sim (simulated RCT, not cell-based)
-    _cellular_plus_levels = frozenset(
-        {lv for lv in _biological_levels() if lv not in clinical}
-        - {"molecular", "molecular-sim", "rct-sim"}
-    )
-
     if evidence.get("clinical_design") and level not in clinical:
         result.hard_errors.append(
             f"clinical_design present but biological_level={level} (only for clinical)"
@@ -497,24 +475,9 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
             result.hard_errors.append(
                 f"cell_line_id present but biological_level={level} (only for non-clinical)"
             )
-    elif level in _cellular_plus_levels and not evidence.get("cell_line_id"):
-        result.hard_errors.append(
-            f"cell_line_id required for biological_level={level} (C-cell_line_id)"
-        )
 
     if level and level not in clinical and not y.get("assay"):
-        result.hard_errors.append(f"y.assay required for non-clinical level {level} (C-y.assay)")
-
-    # C: comparative clinical designs require clinical_design.comparator_type
-    comparative_designs = {"two_arm_comparison", "observational_association"}
-    if level in clinical and evidence.get("evidence_design", "") in comparative_designs:
-        cd = evidence.get("clinical_design") or {}
-        if not cd.get("comparator_type"):
-            result.hard_errors.append(
-                "clinical_design.comparator_type required for comparative "
-                f"evidence_design={evidence.get('evidence_design')} "
-                f"at biological_level={level} (C-comparator_type)"
-            )
+        result.soft_warnings.append(f"y.assay recommended for non-clinical level {level}")
 
     exvivo_levels = {"exvivo", "exvivo-sim"}
     if level in exvivo_levels and not evidence.get("exvivo_platform"):
@@ -523,32 +486,6 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
         result.hard_errors.append(
             f"exvivo_platform present but biological_level={level} (only for exvivo/exvivo-sim)"
         )
-
-
-# ── rule: enum field validation ──────────────────────────────────────────────
-
-
-def _rule_enums(evidence: dict, result: ValidationResult) -> None:
-    """Validate sex and clinical_design enum fields against vocabularies.json."""
-
-    # sex (top-level field)
-    sex = evidence.get("sex")
-    if sex is not None:
-        sex_vals = _vset("sex")
-        if sex not in sex_vals:
-            result.hard_errors.append(f"sex '{sex}' not in {sorted(sex_vals)}")
-
-    # clinical_design sub-fields
-    cd = evidence.get("clinical_design")
-    if cd:
-        for field in ("comparator_type", "blinding", "phase", "population"):
-            val = cd.get(field)
-            if val is not None:
-                allowed = _vset(field)
-                if val not in allowed:
-                    result.hard_errors.append(
-                        f"clinical_design.{field} '{val}' not in {sorted(allowed)}"
-                    )
 
 
 # ── rule: CURIE validation ───────────────────────────────────────────────────

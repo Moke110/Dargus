@@ -51,7 +51,10 @@ def _hook_dbase() -> Any | None:
 # ---------------------------------------------------------------------------
 
 
-def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
+def run_predict(
+    task_spec: dict[str, Any],
+    runtime: Any | None = None,
+) -> dict[str, Any]:
     """Execute predict workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates PredictSession
@@ -151,7 +154,9 @@ def run_predict(task_spec: dict[str, Any]) -> dict[str, Any]:
                     if entry.get("confidence_level") == "insufficient_data":
                         logger.warning(
                             "Empty D-Base — returning insufficient_data for %s / %s / %s",
-                            d_id, d_name, ep_name,
+                            d_id,
+                            d_name,
+                            ep_name,
                         )
     else:
         final_report = _build_final_report(report, task_spec)
@@ -376,7 +381,7 @@ def _build_final_report(round_report: dict[str, Any], task_spec: dict[str, Any])
 
     inner: dict[str, Any] = {}
     override_used = False
-    for endpoint in (endpoints or ["efficacy"]):
+    for endpoint in endpoints or ["efficacy"]:
         efficacy_score = task_spec.get("_efficacy_score_override")
         confidence_score = task_spec.get("_confidence_score_override")
         confidence_level = task_spec.get("_confidence_level_override")

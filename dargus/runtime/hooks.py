@@ -391,14 +391,22 @@ class ReportValidationHook:
         # Flat:    {"efficacy_score": 0.5, ...} or {"n_records": N, ...} (ingest)
         # Heuristic: if NO top-level key is a known inner key AND at least
         # one top-level value is a dict, treat it as nested.
-        _INNER_KEYS = frozenset({
-            "efficacy_score", "confidence_score", "supporting_records",
-            "confidence_level", "reasoning_mode",
-        })
+        # Guard: ingest-style reports (n_records, source_path, etc.) are never nested.
+        _INNER_KEYS = frozenset(
+            {
+                "efficacy_score",
+                "confidence_score",
+                "supporting_records",
+                "confidence_level",
+                "reasoning_mode",
+            }
+        )
+        _INGEST_KEYS = frozenset({"n_records", "source_path"})
         has_inner = any(k in _INNER_KEYS for k in report)
         has_dict_val = any(isinstance(v, dict) for v in report.values())
+        is_ingest = any(k in _INGEST_KEYS for k in report)
 
-        if not has_inner and has_dict_val:
+        if not has_inner and has_dict_val and not is_ingest:
             self._validate_nested(report, violations)
         elif has_inner:
             # Flat prediction dict
@@ -475,9 +483,7 @@ class ReportValidationHook:
                     )
                     continue
                 if not endpoints:
-                    violations.append(
-                        f"missing endpoint under {drug_id}/{disease_id}"
-                    )
+                    violations.append(f"missing endpoint under {drug_id}/{disease_id}")
                     continue
                 for endpoint, entry in endpoints.items():
                     if not isinstance(entry, dict):
@@ -488,7 +494,9 @@ class ReportValidationHook:
                         )
                         continue
                     self._validate_endpoint_entry(
-                        entry, f"{drug_id}/{disease_id}/{endpoint}", violations,
+                        entry,
+                        f"{drug_id}/{disease_id}/{endpoint}",
+                        violations,
                     )
 
     def _validate_endpoint_entry(
@@ -499,8 +507,11 @@ class ReportValidationHook:
     ) -> None:
         """Validate a single endpoint prediction entry."""
         _REQUIRED_KEYS = {
-            "efficacy_score", "confidence_score", "supporting_records",
-            "reasoning_mode", "confidence_level",
+            "efficacy_score",
+            "confidence_score",
+            "supporting_records",
+            "reasoning_mode",
+            "confidence_level",
         }
         missing = _REQUIRED_KEYS - set(entry.keys())
         for mk in sorted(missing):
@@ -521,13 +532,9 @@ class ReportValidationHook:
                 if key in entry:
                     val = entry[key]
                     if not isinstance(val, (int, float, type(None))):
-                        violations.append(
-                            f"{path}: {key} must be numeric or None, got {val!r}"
-                        )
+                        violations.append(f"{path}: {key} must be numeric or None, got {val!r}")
                     elif isinstance(val, (int, float)) and not (0 <= val <= 1):
-                        violations.append(
-                            f"{path}: {key} must be in [0, 1], got {val!r}"
-                        )
+                        violations.append(f"{path}: {key} must be in [0, 1], got {val!r}")
                     elif val is None and confidence_level != "insufficient_data":
                         violations.append(
                             f"{path}: {key} must not be None when "
@@ -539,8 +546,7 @@ class ReportValidationHook:
         if records is not None and confidence_level != "insufficient_data":
             if not isinstance(records, list) or len(records) == 0:
                 violations.append(
-                    f"{path}: supporting_records must be a non-empty list, "
-                    f"got {records!r}"
+                    f"{path}: supporting_records must be a non-empty list, " f"got {records!r}"
                 )
 
         # evidence_id existence in D-Base
@@ -549,9 +555,7 @@ class ReportValidationHook:
                 if not isinstance(rid, str) or not rid.startswith("ev_"):
                     continue  # non-evidence citation forms are out of scope
                 if not self.dbase.evidence_id_exists(rid):
-                    violations.append(
-                        f"{path}: supporting record {rid!r} not found in D-Base"
-                    )
+                    violations.append(f"{path}: supporting record {rid!r} not found in D-Base")
 
 
 # ---------------------------------------------------------------------------

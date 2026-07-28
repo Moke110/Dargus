@@ -33,7 +33,7 @@ def test_help_contains_commands():
     """The help text lists available commands."""
     assert "/help" in _HELP
     assert "/quit" in _HELP
-    assert "/model" in _HELP
+    assert "/config" in _HELP
     assert "/clear-dbase" in _HELP
 
 

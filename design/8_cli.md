@@ -31,7 +31,7 @@ There are no other one-shot commands. Capabilities formerly exposed as subcomman
 - **No alternate screen buffer.** All output stays in the terminal scrollback.
 - **Logo and greeting.** A boxed ASCII wordmark appears when the terminal is wide enough; a text fallback is shown on narrow terminals.
 - **Prompt loop.** `> ` waits for input. Special commands start with `/`.
-- **Built-in slash commands:** `/help`, `/quit`, `/model`, `/test`, `/clear-dbase`. `/model` opens the same configuration menu as `dargus config`; `/test` opens the same test menu as `dargus test`.
+- **Built-in slash commands:** `/help`, `/quit`, `/config`, `/test`, `/clear-dbase`. `/config` opens the same configuration menu as `dargus config`; `/test` opens the same test menu as `dargus test`.
 - **Configuration hint.** If no LLM API key is configured, the REPL shows setup instructions instead of failing silently.
 - **Input routing.** Any input that is not a slash command goes to Iris.
 

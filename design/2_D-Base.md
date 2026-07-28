@@ -71,10 +71,11 @@ Three fields live outside the 50-field evidence record, each in its own append-o
 - Exact + semantic deduplication.
 - Semantic search over evidence embeddings.
 - Separate sidecar tables with re-embedding support.
-- Single-writer API with per-field updates and summary management.
+- Single-writer API with summary management.
 - Append-only JSONL shards plus a derived Parquet view.
 
 ## Out of Scope
 
 - **Schema extension (`D-Base.add_field()`).** A researcher-facing function to extend the 50-field schema with new fields. Schema changes affect validation, embedding, and vocabulary registries, so this requires a formal migration path.
 - **Knowledge graph over D-Base.** D-Base v1.0.0 is a flat keyed-object store. A future release could layer a heterogeneous knowledge graph on top, linking drugs, targets, pathways, diseases, and trials while keeping D-Base as the authoritative evidence source.
+- **Per-field record update.** Records are immutable and superseded by newer records (T10 design decision). There is no API for updating individual fields of an existing record.

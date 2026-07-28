@@ -30,7 +30,7 @@ _HELP = """\
 Available commands:
   /help         — show this message
   /quit         — exit
-  /model        — interactive LLM configuration wizard
+  /config       — interactive LLM configuration wizard
   /clear-dbase  — clear all records from the global D-Base
   /test         — run internal test suite
 
@@ -71,7 +71,12 @@ def run_repl() -> None:
     console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))
 
     console.print()
-    console.print(Text(f"v{__version__}  ·  /help  /quit  /model", style=Style(color="grey50")))
+    console.print(
+        Text(
+            f"v{__version__}  ·  /help  /quit  /config /test /clear-dbase",
+            style=Style(color="grey50"),
+        )
+    )
 
     # API key status
     if api.has_api_key():
@@ -114,7 +119,7 @@ def run_repl() -> None:
             console.print(Panel(_HELP, border_style="white", padding=(0, 2)))
             console.print()
             continue
-        if cmd == "/model":
+        if cmd == "/config":
             from dargus.cli.commands.config import run_config_menu
 
             run_config_menu()

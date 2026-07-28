@@ -182,7 +182,9 @@ def _rule_biological_level(evidence: dict, result: ValidationResult) -> None:
 
     ed = evidence.get("evidence_design")
     designs = _vset("evidence_design")
-    if ed and ed not in designs:
+    if not ed:
+        result.hard_errors.append("evidence_design is required (R-evidence_design)")
+    elif ed not in designs:
         result.hard_errors.append(f"evidence_design '{ed}' not in {sorted(designs)}")
 
 
@@ -458,6 +460,13 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
     clinical = _clinical_levels()
     y = evidence.get("y") or {}
 
+    # Levels at cellular or higher (non-clinical) that require cell_line_id
+    # Exclude molecular (sub-cellular) and rct-sim (simulated RCT, not cell-based)
+    _cellular_plus_levels = frozenset(
+        {lv for lv in _biological_levels() if lv not in clinical}
+        - {"molecular", "molecular-sim", "rct-sim"}
+    )
+
     if evidence.get("clinical_design") and level not in clinical:
         result.hard_errors.append(
             f"clinical_design present but biological_level={level} (only for clinical)"
@@ -473,9 +482,24 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
             result.hard_errors.append(
                 f"cell_line_id present but biological_level={level} (only for non-clinical)"
             )
+    elif level in _cellular_plus_levels and not evidence.get("cell_line_id"):
+        result.hard_errors.append(
+            f"cell_line_id required for biological_level={level} (C-cell_line_id)"
+        )
 
     if level and level not in clinical and not y.get("assay"):
-        result.soft_warnings.append(f"y.assay recommended for non-clinical level {level}")
+        result.hard_errors.append(f"y.assay required for non-clinical level {level} (C-y.assay)")
+
+    # C: comparative clinical designs require clinical_design.comparator_type
+    comparative_designs = {"two_arm_comparison", "observational_association"}
+    if level in clinical and evidence.get("evidence_design", "") in comparative_designs:
+        cd = evidence.get("clinical_design") or {}
+        if not cd.get("comparator_type"):
+            result.hard_errors.append(
+                "clinical_design.comparator_type required for comparative "
+                f"evidence_design={evidence.get('evidence_design')} "
+                f"at biological_level={level} (C-comparator_type)"
+            )
 
     exvivo_levels = {"exvivo", "exvivo-sim"}
     if level in exvivo_levels and not evidence.get("exvivo_platform"):

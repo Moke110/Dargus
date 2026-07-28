@@ -43,7 +43,7 @@ def _make_evidence(**overrides):
             "type": "drug",
             "value": [{"entity_id": "chembl:CHEMBL25", "entity_label": "aspirin"}],
         },
-        "y": {"type": "logP", "category": "pk_adme", "value": [3.5]},
+        "y": {"type": "logP", "category": "pk_adme", "value": [3.5], "assay": "binding_assay"},
         "bg": {"disease_id": ["mondo:0005148"], "drugs": [], "genes": []},
         "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
         "source_entry": "10.1234/test",
@@ -204,12 +204,22 @@ def test_route_field_match_and_sidecar_ranking():
         manager, dbase = _new_manager(tmp)
         r1 = _make_evidence(source_entry="10.1234/a")
         r2 = _make_evidence(
-            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            y={
+                "type": "solubility",
+                "category": "pk_adme",
+                "value": [-4.1],
+                "assay": "binding_assay",
+            },
             source_entry="10.1234/b",
         )
         r3 = _make_evidence(
             biological_level="rct",
-            y={"type": "response_rate", "category": "clinic_efficacy_primary", "value": [0.7]},
+            y={
+                "type": "response_rate",
+                "category": "clinic_efficacy_primary",
+                "value": [0.7],
+                "assay": "binding_assay",
+            },
             source_entry="10.1234/c",
         )
         for r in (r1, r2, r3):
@@ -241,7 +251,12 @@ def test_route_bg_drugs_filter():
                 "type": "drug",
                 "value": [{"entity_id": "chembl:CHEMBL99", "entity_label": "other"}],
             },
-            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            y={
+                "type": "solubility",
+                "category": "pk_adme",
+                "value": [-4.1],
+                "assay": "binding_assay",
+            },
             source_entry="10.1234/b",
         )
         manager.write_record(r1)
@@ -256,7 +271,12 @@ def test_route_skips_records_without_sidecar_vector():
         manager, dbase = _new_manager(tmp)
         r1 = _make_evidence(source_entry="10.1234/a")
         r2 = _make_evidence(
-            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            y={
+                "type": "solubility",
+                "category": "pk_adme",
+                "value": [-4.1],
+                "assay": "binding_assay",
+            },
             source_entry="10.1234/b",
         )
         manager.write_record(r1)
@@ -299,7 +319,12 @@ def test_semantic_check_scoped_by_y_type():
     with tempfile.TemporaryDirectory() as tmp:
         manager, _ = _new_manager(tmp)
         existing = _make_evidence(
-            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            y={
+                "type": "solubility",
+                "category": "pk_adme",
+                "value": [-4.1],
+                "assay": "binding_assay",
+            },
             source_entry="10.1234/existing",
         )
         manager.write_record(existing, dedup=False)

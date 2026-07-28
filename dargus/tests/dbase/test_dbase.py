@@ -20,6 +20,7 @@ def _make_evidence(**overrides):
             "type": "logP",
             "category": "pk_adme",
             "value": [3.5],
+            "assay": "binding_assay",
         },
         "bg": {"disease_id": [], "drugs": [], "genes": []},
         "sources": [{"rank": 1, "type": "journal", "name": "10.1234/test"}],
@@ -218,3 +219,155 @@ def test_validate_dispersion_entries():
     assert validate_evidence(e).ok
     e["y"]["dispersion"] = [{"type": "BOGUS", "value": 1.0}]
     assert not validate_evidence(e).ok
+
+
+# ── T6: required & conditional fields as hard errors ──────────────────────────
+
+
+def test_validate_rejects_missing_evidence_design():
+    """R: evidence_design is a hard required field — absent must be rejected."""
+    e = _make_evidence()
+    del e["evidence_design"]
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("evidence_design" in err for err in result.hard_errors)
+
+
+def test_validate_rejects_cellular_missing_cell_line_id():
+    """C: non-clinical cellular+ levels require cell_line_id."""
+    e = _make_evidence(
+        biological_level="cellular",
+        evidence_design="descriptive",
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("cell_line_id" in err for err in result.hard_errors)
+
+
+def test_validate_accepts_cellular_with_cell_line_id():
+    """A cellular record with cell_line_id passes."""
+    e = _make_evidence(
+        biological_level="cellular",
+        evidence_design="descriptive",
+        cell_line_id="cellosaurus:CVCL_0001",
+    )
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+
+
+def test_validate_rejects_clinical_with_cell_line_id():
+    """C: clinical records must not carry cell_line_id."""
+    e = _make_evidence(
+        biological_level="rct",
+        evidence_design="two_arm_comparison",
+        cell_line_id="cellosaurus:CVCL_0001",
+        xy={"count": 2},
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25", "entity_label": "drug"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005180"], "drugs": [], "genes": []},
+        clinical_design={
+            "comparator_type": "placebo",
+            "phase": "phase_3",
+            "population": "adults",
+            "study_id": "clinicaltrials:NCT01234567",
+        },
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("cell_line_id" in err for err in result.hard_errors)
+
+
+def test_validate_rejects_nonclinical_missing_y_assay():
+    """C: non-clinical records require y.assay (hard error, not warning)."""
+    e = _make_evidence()
+    del e["y"]["assay"]
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("y.assay" in err for err in result.hard_errors)
+
+
+def test_validate_rejects_comparative_clinical_missing_comparator_type():
+    """C: comparative clinical designs require clinical_design.comparator_type."""
+    e = _make_evidence(
+        biological_level="rct",
+        evidence_design="two_arm_comparison",
+        xy={"count": 2},
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25", "entity_label": "drug"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005180"], "drugs": [], "genes": []},
+        clinical_design={
+            "phase": "phase_3",
+            "population": "adults",
+            "study_id": "clinicaltrials:NCT01234567",
+        },
+    )
+    result = validate_evidence(e)
+    assert not result.ok
+    assert any("comparator_type" in err for err in result.hard_errors)
+
+
+def test_validate_accepts_comparative_clinical_with_comparator_type():
+    """A comparative clinical record with comparator_type passes."""
+    e = _make_evidence(
+        biological_level="rct",
+        evidence_design="two_arm_comparison",
+        xy={"count": 2},
+        x={
+            "type": "drug",
+            "value": [
+                {"entity_id": "chembl:CHEMBL25", "entity_label": "drug"},
+                {"entity_id": None, "entity_label": "placebo"},
+            ],
+        },
+        y={
+            "type": "test",
+            "category": "clinic_efficacy_primary",
+            "value": [1.0, 2.0],
+            "direction": "beneficial",
+        },
+        bg={"disease_id": ["mondo:0005180"], "drugs": [], "genes": []},
+        clinical_design={
+            "comparator_type": "placebo",
+            "phase": "phase_3",
+            "population": "adults",
+            "study_id": "clinicaltrials:NCT01234567",
+        },
+    )
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+
+
+def test_validate_conformant_records_pass():
+    """All currently-valid records stay valid after tightening."""
+    e = _make_evidence()
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors
+
+
+def test_validate_molecular_level_exempt_from_cell_line_id():
+    """Molecular-level records are exempt from cell_line_id requirement."""
+    e = _make_evidence(biological_level="molecular")
+    result = validate_evidence(e)
+    assert result.ok, result.hard_errors

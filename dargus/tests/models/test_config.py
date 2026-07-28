@@ -144,6 +144,21 @@ class TestLoadModelConfig:
         assert mc.reasoning_temperature == 0.0
         assert mc.reasoning_max_tokens == 4096
         assert mc.reasoning_api_key_env == ""
+        assert mc.reasoning_base_url == ""
         assert mc.embedding_provider == ""
         assert mc.embedding_model == ""
         assert mc.embedding_api_key_env == ""
+
+    def test_reasoning_config_with_base_url(self, monkeypatch):
+        """Reasoning config with base_url parses correctly."""
+        config_dict = {
+            "models": {
+                "reasoning": {
+                    "provider": "openai_compatible",
+                    "model": "deepseek-v4-pro",
+                    "base_url": "https://api.deepseek.com",
+                },
+            }
+        }
+        mc = load_model_config(config_dict, EnvSecretsManager())
+        assert mc.reasoning_base_url == "https://api.deepseek.com"

@@ -10,7 +10,7 @@ import yaml
 from dargus.config.paths import get_config_path
 from dargus.models.config import EnvSecretsManager, load_model_config
 from dargus.models.embedding import EmbeddingModel, SentenceTransformerBackend
-from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM
+from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM, ReasoningOptions
 from dargus.runtime.context import DargusRuntime
 
 logger = logging.getLogger(__name__)
@@ -79,8 +79,15 @@ def bootstrap(config_path: str | None = None) -> DargusRuntime:
         provider=model_config.reasoning_provider,
         model=model_config.reasoning_model,
         api_key=reasoning_api_key,
+        base_url=model_config.reasoning_base_url or None,
     )
-    reasoning_llm = ReasoningLLM(backend=reasoning_backend)
+    reasoning_llm = ReasoningLLM(
+        backend=reasoning_backend,
+        default_options=ReasoningOptions(
+            temperature=model_config.reasoning_temperature,
+            max_tokens=model_config.reasoning_max_tokens,
+        ),
+    )
 
     # Embedding backend + model (only if embedding config is provided)
     embedding_model = None

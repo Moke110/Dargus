@@ -40,6 +40,7 @@ class ModelConfig:
     reasoning_temperature: float = 0.0
     reasoning_max_tokens: int = 4096
     reasoning_api_key_env: str = ""
+    reasoning_base_url: str = ""
 
     # --- embedding ---
     embedding_provider: str = ""
@@ -58,6 +59,7 @@ def load_model_config(config_dict: dict | None, secrets: SecretsManager) -> Mode
             temperature: 0.0
             max_tokens: 4096
             api_key_env: ANTHROPIC_API_KEY
+            base_url: https://api.anthropic.com  # optional
           embedding:
             provider: openai
             model: text-embedding-3-small
@@ -86,6 +88,7 @@ def load_model_config(config_dict: dict | None, secrets: SecretsManager) -> Mode
         raise KeyError("models.reasoning.model is required")
 
     reasoning_api_key_env = reasoning_cfg.get("api_key_env", "")
+    reasoning_base_url = reasoning_cfg.get("base_url", "")
     if reasoning_api_key_env:
         secrets.get_secret(reasoning_api_key_env)
 
@@ -101,6 +104,7 @@ def load_model_config(config_dict: dict | None, secrets: SecretsManager) -> Mode
         reasoning_temperature=float(reasoning_cfg.get("temperature", 0.0)),
         reasoning_max_tokens=int(reasoning_cfg.get("max_tokens", 4096)),
         reasoning_api_key_env=reasoning_api_key_env,
+        reasoning_base_url=reasoning_base_url,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
         embedding_api_key_env=embedding_api_key_env,

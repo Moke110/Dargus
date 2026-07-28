@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Backward-compat dataclasses (consumed by Iris.commander, api, cli)
+# Dataclasses
 # ---------------------------------------------------------------------------
 
 
@@ -40,53 +40,24 @@ class IngestionReport:
     errors: list[str] = field(default_factory=list)
 
 
-TrainingReport = IngestionReport  # backward compat alias
-
-
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
-def run_ingest(
-    task_spec_or_datadir: dict[str, Any] | str,
-    reset: bool = False,
-) -> IngestionReport | dict[str, Any]:
+def run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     """Execute the ingest workflow.
 
-    **Backward-compat wrapper.**  Supports both the Phase-E ``task_spec``
-    calling convention and the pre-Phase-E ``(datadir, reset)``
-    convention used by ``Iris.commander``, ``api.py``, and ``cli.py``.
-
     Args:
-        task_spec_or_datadir: Either a ``task_spec`` dict (new API) or a
-            ``datadir`` path string (old API).
-        reset: (old API) Clear D-Base before ingestion.
+        task_spec: Dict with keys ``workflow`` (must be ``"ingest"``),
+            ``source_path``, optional ``source_type``, ``max_rounds``,
+            ``require_confirmation``.
 
     Returns:
-        - ``dict[str, Any]`` when called with a ``task_spec`` dict.
-        - ``IngestionReport`` when called with a ``datadir`` string.
+        IngestResult dict with keys: ``workflow``, ``status``,
+        ``n_records``, ``n_duplicates``, ``n_errors``, ``session``.
     """
-    if isinstance(task_spec_or_datadir, str):
-        # Old calling convention: run_ingest(datadir, reset=...)
-        task_spec: dict[str, Any] = {
-            "workflow": "ingest",
-            "source_path": task_spec_or_datadir,
-            "reset": reset,
-        }
-        try:
-            result = _run_ingest(task_spec)
-        except Exception:
-            logger.exception("_run_ingest failed — returning empty report")
-            return IngestionReport()
-        return IngestionReport(
-            n_records=result.get("n_records", 0),
-            n_skipped=result.get("n_duplicates", 0),
-            dbase_size=0,
-            errors=[],
-        )
-    # New calling convention: run_ingest(task_spec)
-    return _run_ingest(task_spec_or_datadir)
+    return _run_ingest(task_spec)
 
 
 def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:

@@ -69,6 +69,13 @@ def test_run_ingest_with_max_rounds():
     assert result["n_records"] >= 0
 
 
+def test_run_ingest_accepts_task_spec_dict():
+    """run_ingest(task_spec) returns dict."""
+    result = run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
+    assert isinstance(result, dict)
+    assert result["workflow"] == "ingest"
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -132,7 +139,7 @@ def test_ingest_duplicate_review_path_reached(valid_ingest_spec):
 
 
 # ---------------------------------------------------------------------------
-# Backward-compat dataclasses
+# Dataclasses
 # ---------------------------------------------------------------------------
 
 
@@ -142,37 +149,3 @@ def test_ingestion_report_defaults():
     assert r.n_skipped == 0
     assert r.dbase_size == 0
     assert r.errors == []
-
-
-def test_training_report_is_ingestion_report():
-    from dargus.workflows.ingest import TrainingReport
-
-    r = TrainingReport(n_records=10)
-    assert isinstance(r, IngestionReport)
-    assert r.n_records == 10
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat run_ingest(datadir) signature tests
-# ---------------------------------------------------------------------------
-
-
-def test_run_ingest_backward_compat_datadir_string():
-    """C2: run_ingest(datadir) returns IngestionReport for backward compat."""
-    result = run_ingest("/data/test_dir")
-    assert isinstance(result, IngestionReport)
-    assert result.n_records > 0
-
-
-def test_run_ingest_backward_compat_with_reset():
-    """C2: run_ingest(datadir, reset=True) works."""
-    result = run_ingest("/data/test_dir", reset=True)
-    assert isinstance(result, IngestionReport)
-    assert result.n_skipped == 0
-
-
-def test_run_ingest_new_api_dict():
-    """C2: run_ingest(task_spec) still returns dict."""
-    result = run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
-    assert isinstance(result, dict)
-    assert result["workflow"] == "ingest"

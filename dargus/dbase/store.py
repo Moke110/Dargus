@@ -406,20 +406,43 @@ class DBaseStore:
         disease_id: str | None = None,
         y_type: str | None = None,
     ) -> list[tuple[dict, float]]:
-        """Semantic search over evidence records."""
+        """Semantic search over evidence records using sidecar vectors.
+
+        Candidate selection uses field filters (x_entity, disease_id, y_type).
+        The query text is embedded once, then candidates are ranked by cosine
+        similarity against vectors in the active embedding-model fingerprint
+        sidecar (``sidecars/embeddings-{model_fp}.jsonl``) — no per-record
+        re-embedding. Records without a vector for the active fingerprint are
+        skipped (graceful degradation; ``reembed()`` fills gaps later).
+
+        Both query-time semantic read and write-time dedup share this one
+        sidecar-backed path.
+        """
         try:
-            model = self._get_embedding_model()
-            query_vector: Embedding = model.embed([query_text])[0]
             candidates = self.read_records(
                 x_entity=x_entity,
                 disease_id=disease_id,
                 y_type=y_type,
             )
+            if not candidates:
+                return []
+
+            fp = self.dbase.sidecars.active_fingerprint()
+            vectors: dict[str, list[float]] = self.dbase.sidecars.read_embeddings(fp) if fp else {}
+
+            query_vector = self._embed(query_text)
+
             scored: list[tuple[dict, float]] = []
             for record in candidates:
-                record_vector: Embedding = model.embed([record_to_text(record)])[0]
-                score = EmbeddingModel.similarity(query_vector, record_vector)
+                eid = record.get("evidence_id")
+                vector = vectors.get(eid)
+                if vector is None or len(vector) == 0:
+                    continue
+                if len(vector) != len(query_vector):
+                    continue
+                score = EmbeddingModel.similarity(query_vector, list(vector))
                 scored.append((record, score))
+
             scored.sort(key=lambda x: x[1], reverse=True)
             return scored[:top_k]
         except (KeyboardInterrupt, SystemExit):

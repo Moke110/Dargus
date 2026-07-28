@@ -268,3 +268,150 @@ def test_sidecar_files_created_on_disk():
         assert (sidecars / f"embeddings-{fp}.jsonl").exists()
         manifest = json.loads((sidecars / "embeddings_manifest.json").read_text())
         assert manifest["active"] == fp
+
+
+# ── T9: semantic dedup and read use embeddings sidecar ─────────────────────
+
+
+def _spyable_embedding_backend():
+    """Return a backend whose embed() call count can be inspected."""
+
+    class _SpyBackend:
+        _model_name = "spy-embedder-v1"
+
+        def __init__(self):
+            self.call_count = 0
+
+        def embed(self, texts: list[str]) -> list[Embedding]:
+            self.call_count += 1
+            out: list[Embedding] = []
+            for text in texts:
+                seed = abs(hash(text)) % 10000
+                out.append([0.01 * ((seed + i) % 100) for i in range(384)])
+            return out
+
+    return _SpyBackend()
+
+
+def test_semantic_read_loads_vectors_from_sidecar_not_reembed():
+    """read_records_semantic reads vectors from the sidecar, zero re-embed calls."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        backend = _spyable_embedding_backend()
+        emb = EmbeddingModel(backend)
+        manager = DBaseStore(dbase, embedding_model=emb)
+
+        # Write 3 records — each writes its own embedding to sidecar
+        r1 = _make_evidence(source_entry="10.1234/a")
+        r2 = _make_evidence(
+            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            source_entry="10.1234/b",
+        )
+        r3 = _make_evidence(
+            y={"type": "ic50", "category": "binding", "value": [5.0]},
+            source_entry="10.1234/c",
+        )
+        for r in (r1, r2, r3):
+            manager.write_record(r)
+
+        # Capture embed call count AFTER all writes
+        call_count_before = backend.call_count
+
+        results = manager.read_records_semantic("aspirin logP", top_k=10)
+
+        # Only the query text should be embedded — no per-candidate re-embedding
+        assert backend.call_count == call_count_before + 1
+
+        # Results should be ranked by similarity (descending)
+        assert len(results) == 3
+        scores = [s for _, s in results]
+        assert scores == sorted(scores, reverse=True)
+        assert all(s > 0 for s in scores)
+
+
+def test_semantic_read_finds_sidecar_only_vector():
+    """A record whose vector exists only in the sidecar is found by semantic read."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        backend = _spyable_embedding_backend()
+        emb = EmbeddingModel(backend)
+        manager = DBaseStore(dbase, embedding_model=emb)
+
+        # Write a record the normal way (vector goes to sidecar)
+        r1 = _make_evidence(source_entry="10.1234/a")
+        manager.write_record(r1)
+
+        # Manually insert a record + its sidecar vector WITHOUT write_record
+        r2 = _make_evidence(
+            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            source_entry="10.1234/b",
+        )
+        from dargus.dbase.validate import compute_evidence_id
+
+        eid2 = compute_evidence_id(r2)
+        r2["evidence_id"] = eid2
+        dbase.append_shard(r2)
+        # Write the vector directly into the sidecar (simulating reembed output)
+        fp = dbase.sidecars.active_fingerprint()
+        dbase.sidecars.append_embedding(eid2, [0.01 * i for i in range(384)], fp)
+
+        results = manager.read_records_semantic("aspirin", top_k=10)
+        eids = {r["evidence_id"] for r, _ in results}
+        assert eid2 in eids
+
+
+def test_semantic_read_skips_records_without_sidecar_vector():
+    """Records with no vector for the active fingerprint are skipped gracefully."""
+    with tempfile.TemporaryDirectory() as tmp:
+        manager, dbase = _new_manager(tmp)
+
+        r1 = _make_evidence(source_entry="10.1234/a")
+        r2 = _make_evidence(
+            y={"type": "solubility", "category": "pk_adme", "value": [-4.1]},
+            source_entry="10.1234/b",
+        )
+        manager.write_record(r1)
+        manager.write_record(r2)
+
+        # Remove r2's vector from the active sidecar
+        fp = dbase.sidecars.active_fingerprint()
+        path = dbase.sidecars.embeddings_path(fp)
+        lines = [line for line in path.read_text().splitlines() if r2["evidence_id"] not in line]
+        path.write_text("\n".join(lines) + "\n")
+
+        results = manager.read_records_semantic("aspirin logP", top_k=10)
+        eids = {r["evidence_id"] for r, _ in results}
+        assert r1["evidence_id"] in eids  # r1 has vector, so it's included
+        assert r2["evidence_id"] not in eids  # r2 has no vector, skipped
+
+
+def test_write_dedup_uses_sidecar_backed_semantic_read():
+    """Write-time semantic dedup check uses the same sidecar-backed lookup path."""
+    with tempfile.TemporaryDirectory() as tmp:
+        dbase = DBase("test", root_dir=tmp)
+        backend = _spyable_embedding_backend()
+        emb = EmbeddingModel(backend)
+        manager = DBaseStore(dbase, embedding_model=emb)
+
+        # Write first record
+        r1 = _make_evidence(
+            y={"type": "logP", "category": "pk_adme", "value": [3.5]},
+            source_entry="10.1234/a",
+        )
+        manager.write_record(r1)
+
+        call_count_before = backend.call_count
+
+        # Write a very similar record — should trigger semantic check
+        r2 = _make_evidence(
+            y={"type": "logP", "category": "pk_adme", "value": [3.6]},
+            source_entry="10.1234/b",
+        )
+
+        from dargus.dbase.store import DuplicateReviewRequest
+
+        result = manager.write_record(r2)
+        # The semantic check uses the sidecar, so only the query text is embedded
+        assert backend.call_count <= call_count_before + 2
+
+        assert isinstance(result, (bool, DuplicateReviewRequest))

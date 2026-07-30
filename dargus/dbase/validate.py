@@ -496,9 +496,7 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
         _molecular = {"molecular", "molecular-sim"}
         _sim = _sim_levels()
         if level not in _molecular | _sim and not y.get("assay"):
-            result.hard_errors.append(
-                f"y.assay required for non-clinical biological_level={level}"
-            )
+            result.hard_errors.append(f"y.assay required for non-clinical biological_level={level}")
 
     # S6_T1 — comparator_type required for comparative clinical designs
     if level in clinical:

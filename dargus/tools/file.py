@@ -65,8 +65,7 @@ def _build_write_file_tool() -> Tool:
                 type="path",
                 required=True,
                 description=(
-                    "Path to write to "
-                    "(absolute or relative, must be inside the workspace)."
+                    "Path to write to " "(absolute or relative, must be inside the workspace)."
                 ),
             ),
             ToolParam(
@@ -79,7 +78,7 @@ def _build_write_file_tool() -> Tool:
         output={
             "type": "object",
             "properties": {
-            "path": {
+                "path": {
                     "type": "string",
                     "description": "Canonical path the file was written to.",
                 },

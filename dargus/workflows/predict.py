@@ -58,7 +58,7 @@ def run_predict(
     """Execute predict workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates PredictSession
-    2. Create D4Expert via AgentFactory (or stub)
+    2. Bootstrap DargusRuntime when not provided; create D4Expert via AgentFactory
     3. Main loop (max *max_rounds* / timeout *timeout_seconds*):
        - PERCEIVE_START: SkeletonContextHook injects state
        - D4Expert runs assess + synthesize cycle
@@ -70,6 +70,10 @@ def run_predict(
         task_spec: Dict with keys ``workflow`` (must be ``"predict"``),
             ``drug_ids``, ``disease_id``, optional ``endpoints``,
             ``max_rounds``, ``timeout_seconds``, ``require_confirmation``.
+        runtime: Optional pre-built ``DargusRuntime``. When None, a runtime
+            is bootstrapped from the unified config file.  Only stays None
+            when bootstrap itself fails — in that case the workflow still
+            produces a valid result using the stub expert path.
 
     Returns:
         PredictResult dict with keys: ``workflow``, ``status``,
@@ -78,6 +82,17 @@ def run_predict(
     task_spec.setdefault("workflow", "predict")
     max_rounds = int(task_spec.get("max_rounds", 5))
     timeout_seconds = float(task_spec.get("timeout_seconds", 300.0))
+
+    # ---- Bootstrap runtime when not provided ---------------------------------
+    if runtime is None:
+        try:
+            from dargus.runtime.bootstrap import bootstrap
+
+            runtime = bootstrap()
+            logger.info("Predict: bootstrapped DargusRuntime from config")
+        except Exception:
+            logger.warning("Predict: bootstrap failed — using stub expert path", exc_info=True)
+            runtime = None
 
     # ---- Build hook registry --------------------------------------------------
     hooks = HookRegistry(disabled_hooks=_disabled_hooks(task_spec))
@@ -94,12 +109,12 @@ def run_predict(
     hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
     # ---- Create initial context ------------------------------------------------
-    ctx = HookContext(runtime=None, task_spec=task_spec)
+    ctx = HookContext(runtime=runtime, task_spec=task_spec)
 
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Build D4Expert (stub when no DargusRuntime) ----------------------------
+    # ---- Build D4Expert via AgentFactory (or stub when no runtime) -------------
     d4 = _build_d4_expert(ctx, hooks)
 
     # ---- Main round loop ------------------------------------------------------
@@ -131,23 +146,63 @@ def run_predict(
             break
 
     # ---- Store FinalReport in context -----------------------------------------
-    # Call D4Expert.conclude() when available (real or stub), otherwise fall
-    # back to the legacy _build_final_report() which also produces the nested
-    # contract with optional overrides for testing.
     drug_ids = task_spec.get("drug_ids", [])
     disease_id = task_spec.get("disease_id", "unknown")
     endpoints = task_spec.get("endpoints", [])
     drug_id = drug_ids[0] if drug_ids else "unknown"
 
     if hasattr(d4, "conclude"):
-        # Collect per-round ExpertReports from the round loop (or synthesize from
-        # the last round's synthesized report when the stub path is in use).
-        final_report = d4.conclude(
+        # Collect per-round ExpertReports from the round loop, then pass them
+        # to D4Expert.conclude(drug_id, disease_id, endpoint, all_reports).
+        collected_reports: dict[str, list[Any]] = {}
+        session_rounds = []
+        if isinstance(ctx.session, dict):
+            session_rounds = ctx.session.get("rounds", [])
+        for rd in session_rounds:
+            for r in rd.get("expert_reports", []) or []:
+                domain = r.get("domain", "unknown")
+                collected_reports.setdefault(domain, []).append(r)
+
+        if not collected_reports and hasattr(d4, "_expert_findings"):
+            # Stub expert: use its internal findings array if present
+            collected_reports = {"Stub": [{"findings": d4._expert_findings}]}
+
+        # Build ExpertReports from collected round data; if empty, pass empty dict
+        conclusion = d4.conclude(
             drug_id=drug_id,
             disease_id=disease_id,
             endpoint=(endpoints[0] if endpoints else "efficacy"),
+            all_reports=collected_reports or {},
         )
-        # Emit warning when the report signals insufficient data
+        # Normalize to the nested dict contract:
+        #   {drug_id: {disease_id: {endpoint: {...}}}}
+        # Real D4Expert returns FinalReport dataclass; stub returns dict.
+        if hasattr(conclusion, "__dataclass_fields__"):
+            # FinalReport dataclass — convert to nested contract dict
+            final_report = {
+                drug_id: {
+                    disease_id: {
+                        (endpoints[0] if endpoints else "efficacy"): {
+                            "efficacy_score": conclusion.efficacy_score,
+                            "confidence_score": conclusion.confidence_score,
+                            "confidence_level": conclusion.confidence_level,
+                            "reasoning_mode": conclusion.reasoning_mode,
+                            "supporting_records": conclusion.supporting_records,
+                            "expert_consensus": conclusion.expert_consensus,
+                            "contradictions": conclusion.contradictions,
+                            "data_gaps": conclusion.data_gaps,
+                        }
+                    }
+                }
+            }
+        elif isinstance(conclusion, dict) and drug_id in conclusion:
+            # Already in nested contract form (stub)
+            final_report = dict(conclusion)
+        else:
+            # Flat dict — wrap into nested contract
+            final_report = {
+                drug_id: {disease_id: {endpoints[0] if endpoints else "efficacy": conclusion}}
+            }
         for d_id, diseases in final_report.items():
             for d_name, eps in diseases.items():
                 for ep_name, entry in eps.items():
@@ -159,6 +214,7 @@ def run_predict(
                             ep_name,
                         )
     else:
+        # Stub fallback: used when bootstrap failed and no runtime is available
         final_report = _build_final_report(report, task_spec)
 
     ctx.extra["FinalReport"] = final_report

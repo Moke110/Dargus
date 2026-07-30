@@ -93,9 +93,7 @@ class HookRegistry:
     """
 
     #: Hooks whose disablement would bypass a security/enforcement gate.
-    ENFORCEMENT_HOOKS = frozenset(
-        {"SafetyNetHook", "ReportValidationHook", "WorkspaceGuardHook"}
-    )
+    ENFORCEMENT_HOOKS = frozenset({"SafetyNetHook", "ReportValidationHook", "WorkspaceGuardHook"})
 
     def __init__(self, disabled_hooks: set[str] | None = None) -> None:
         self._hooks: dict[HookPoint, list[Hook]] = {}

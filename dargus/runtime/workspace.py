@@ -46,7 +46,7 @@ class WorkspaceGuard:
         """
         self._root: str = os.path.realpath(root or os.getcwd())
         self._authorized: set[str] = set()
-        for p in (authorized_paths or []):
+        for p in authorized_paths or []:
             self._authorized.add(os.path.realpath(p))
 
     # ------------------------------------------------------------------

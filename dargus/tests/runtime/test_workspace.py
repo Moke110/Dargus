@@ -127,9 +127,7 @@ class TestReadChecks:
         with pytest.raises(_WorkspaceError, match="not in any Authorized Path"):
             guard.check_read(str(f))
 
-    def test_read_authorized_file_exact_match(
-        self, guard: WorkspaceGuard, authorized_dir: Path
-    ):
+    def test_read_authorized_file_exact_match(self, guard: WorkspaceGuard, authorized_dir: Path):
         f = authorized_dir / "input.pdf"
         f.write_text("data")
         guard.authorize(str(f))

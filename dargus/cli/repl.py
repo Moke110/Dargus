@@ -43,9 +43,7 @@ def run_repl() -> None:
         logo_text = Text("\n").join(logo_lines)
         version_text = Text(f"v{__version__}", style=Style(color="grey50"))
         desc_text = Text(DESCRIPTION, style=Style(color="grey70"))
-        combined = Text.assemble(
-            logo_text, Text("\n\n"), version_text, Text("\n"), desc_text
-        )
+        combined = Text.assemble(logo_text, Text("\n\n"), version_text, Text("\n"), desc_text)
         console.print(Panel(combined, border_style="white", padding=(0, 2)))
     else:
         desc_text = Text(DESCRIPTION, style=Style(color="grey70"))

@@ -35,7 +35,7 @@ dargus
 In the REPL, you can:
 - Type natural language queries directly
 - Use `/help` to see available commands
-- Use `/model` to configure LLM
+- Use `/config` to configure LLM
 - Use `/test` to run test suite
 - Use `/quit` to exit
 

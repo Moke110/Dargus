@@ -1,23 +1,24 @@
 models:
   reasoning:
-    provider: openai_compatible
+    provider: openai
     model: deepseek-v4-pro
     api_key_env: DARGUS_LLM_API_KEY
-    base_url: https://api.deepseek.com
+    base_url: https://api.deepseek.com/v1
     temperature: 0.0
     max_tokens: 2048
   embedding:
     provider: sentence_transformers
     model: all-MiniLM-L6-v2
-
 test:
   bulk_input_dir: test/ingest/slices
   ingest_dir: /home/chang/dargus-dev/data
-
 logging:
   level: INFO
   format: '%(asctime)s | %(name)s | %(levelname)s | %(message)s'
-
 safety:
   disclaimer: Dargus outputs are for research purposes only and do not constitute
     clinical advice.
+llm:
+  model: deepseek-v4-pro
+  base_url: https://api.deepseek.com/v1
+  provider: openai

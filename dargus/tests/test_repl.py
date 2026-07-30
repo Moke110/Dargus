@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from dargus.cli.repl import _GREETING, _HELP
+from dargus.cli.repl import _HELP
 
 
 @pytest.fixture(autouse=True)
@@ -17,16 +17,33 @@ def _clear_api_key():
 
 
 def test_greeting_contains_iris():
-    """The startup greeting mentions Iris."""
-    assert "Iris" in _GREETING
-    assert "Dargus" in _GREETING
+    """The startup greeting mentions Iris and Dargus."""
+    import io
+
+    from dargus.cli.repl import run_repl
+
+    with patch.dict(os.environ, {"DARGUS_LLM_API_KEY": "sk-test"}):
+        with patch("builtins.input", side_effect=["/quit"]):
+            with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                run_repl()
+                output = fake_out.getvalue()
+                assert "Iris" in output
+                assert "Dargus" in output
 
 
-def test_greeting_contains_examples():
-    """The greeting includes example queries."""
-    assert "predict aspirin" in _GREETING
-    assert "metformin" in _GREETING
-    assert "status" in _GREETING
+def test_greeting_contains_key_phrases():
+    """The greeting includes 'director and coordinator' and the research offer."""
+    import io
+
+    from dargus.cli.repl import run_repl
+
+    with patch.dict(os.environ, {"DARGUS_LLM_API_KEY": "sk-test"}):
+        with patch("builtins.input", side_effect=["/quit"]):
+            with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                run_repl()
+                output = fake_out.getvalue()
+                assert "coordinator agent" in output
+                assert "with your" in output
 
 
 def test_help_contains_commands():
@@ -135,8 +152,8 @@ def test_run_repl_prints_logo_on_startup():
             assert "█" in output  # █ (full block from logo)
 
 
-def test_run_repl_prints_tagline_on_startup():
-    """The REPL prints the tagline on startup."""
+def test_run_repl_prints_description_on_startup():
+    """The REPL prints the description on startup."""
     import io
 
     from dargus.cli.repl import run_repl
@@ -145,7 +162,7 @@ def test_run_repl_prints_tagline_on_startup():
         with patch("sys.stdout", new=io.StringIO()) as fake_out:
             run_repl()
             output = fake_out.getvalue()
-            assert "Data-driven Analysis" in output
+            assert "Clinical drug" in output  # wraps on narrow test terminals
 
 
 def test_run_repl_api_key_message():
@@ -167,4 +184,4 @@ def test_run_repl_api_key_message():
             with patch("sys.stdout", new=io.StringIO()) as fake_out:
                 run_repl()
                 output = fake_out.getvalue()
-                assert "How can I help" in output
+                assert "with your" in output

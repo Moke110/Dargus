@@ -13,7 +13,6 @@ from rich.text import Text
 # ---------------------------------------------------------------- styles
 STYLE_D = Style(color="white", bold=True)
 STYLE_ARGUS = Style(color="white", bold=True)
-STYLE_TAGLINE = Style(color="grey70", italic=True)
 
 GAP = "  "  # gap between D and A (same as letter spacing)
 SPACING = "  "  # letter spacing inside "ARGUS"
@@ -83,7 +82,10 @@ S = [
     "╚█████╝",
 ]
 
-TAGLINE = " Data-driven Analysis & Reasoning Grounded in Unified Science"
+DESCRIPTION = (
+    "Clinical drug efficacy prediction with unified biomedicine "
+    "database and domain-specific agents"
+)
 
 
 # ---------------------------------------------------------------- assembly

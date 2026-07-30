@@ -139,7 +139,7 @@ class TestConfirmCallbackAbort:
 
 
 class TestDefaultAllowNoCallback:
-    """No confirm_callback => default to allow (per 9_quality_and_experience.md)."""
+    """No confirm_callback => default to allow (per CLAUDE.md)."""
 
     def test_default_allow_no_callback(self, valid_ingest_spec):
         valid_ingest_spec["max_rounds"] = 1

@@ -1,6 +1,6 @@
 """AgentFactory — the single creation/termination point for every Agent.
 
-v1.0.0 (design/3_runtime.md): the factory creates and terminates every
+v1.0.0 (design/2_runtime_structure.md): the factory creates and terminates every
 Agent — Iris, Domain Experts, and D4Expert — injecting runtime-provided
 dependencies so any dependency can be replaced with a fake or stub without
 changing Agent code.
@@ -124,7 +124,7 @@ class AgentFactory:
         Agents hold no external resources today, so termination is a
         best-effort ``close()`` hook plus a log line; it exists so the
         factory remains the single lifecycle boundary required by
-        design/3_runtime.md.
+        design/2_runtime_structure.md.
         """
         close = getattr(agent, "close", None)
         if callable(close):

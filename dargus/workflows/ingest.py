@@ -355,7 +355,7 @@ def _user_confirmation_gate(
     When a ``confirm_callback`` is provided in *task_spec*, it is invoked
     with ``(summary, duplicates)`` and must return one of the three
     decision strings. When no callback is configured, the gate defaults to
-    ``"proceed"`` (allow) per ``9_quality_and_experience.md``.
+    ``"proceed"`` (allow) per ``CLAUDE.md``.
 
     Returns:
         One of ``"proceed"``, ``"skip-duplicates"``, or ``"abort"``.

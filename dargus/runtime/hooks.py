@@ -1,6 +1,6 @@
 """Hook system — registration, triggering, and execution for Dargus runtime hooks.
 
-Design: ``design/5_hooks.md``. Eleven hook points around the
+Design: ``design/4_harness.md``. Eleven hook points around the
 Perceive → Reason → Act harness and the report flow; six core hooks.
 """
 
@@ -40,7 +40,7 @@ class HookPoint(Enum):
 class HookContext:
     """Context passed to each hook during execution.
 
-    Reserved keys (design/5_hooks.md): ``session``, ``round``, ``agent``,
+    Reserved keys (design/4_harness.md): ``session``, ``round``, ``agent``,
     ``tools``, ``task_spec``, ``result``, ``error``, ``report_valid``.
     Fields use ``Any`` for forward references to types not yet built
     (WorkflowSession, BaseAgent, CallTrace) so the hook system has no
@@ -298,7 +298,7 @@ class SafetyNetHook:
     Stops the loop (via ``force_converge``) when any limit is reached:
     ``max_rounds`` total rounds, ``round_timeout`` wall-clock per round,
     ``session_timeout`` wall-clock for the whole session. There is no
-    minimum-evidence-coverage rule (design/5_hooks.md). Never raises.
+    minimum-evidence-coverage rule (design/4_harness.md). Never raises.
     """
 
     def __init__(
@@ -343,7 +343,7 @@ class SafetyNetHook:
 class ReportValidationError(ValueError):
     """Raised by :class:`ReportValidationHook` when a report is invalid.
 
-    Carries a structured list of violations (design/5_hooks.md).
+    Carries a structured list of violations (design/4_harness.md).
     """
 
     def __init__(self, violations: list[str]) -> None:
@@ -355,7 +355,7 @@ class ReportValidationHook:
     """Validates reports on ``DOMAIN_REPORT_PRODUCED``, ``D4_REPORT_PRODUCED``,
     and :attr:`HookPoint.SESSION_END`.
 
-    Checks (design/5_hooks.md §ReportValidationHook):
+    Checks (design/4_harness.md §ReportValidationHook):
     1. report format (must be a dict),
     2. presence and valid range of ``efficacy_score`` (DES) and
        ``confidence_score`` (DCS) — waived when ``confidence_level`` is

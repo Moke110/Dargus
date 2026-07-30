@@ -95,6 +95,9 @@ class LiteLLMBackend:
         try:
             import litellm
 
+            litellm.set_verbose = False
+            litellm.suppress_debug_info = True
+
             model_id = f"{self._provider}/{self._model}"
 
             kwargs: dict = {

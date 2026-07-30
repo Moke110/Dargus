@@ -20,7 +20,7 @@ class TestDargusRuntime:
         assert rt.hook_registry is None
 
     def test_starts_healthy(self):
-        """The runtime starts healthy (design/3_runtime.md health flag)."""
+        """The runtime starts healthy (design/2_runtime_structure.md health flag)."""
         rt = DargusRuntime()
         assert rt.healthy is True
         assert rt.unhealthy_reason is None

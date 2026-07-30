@@ -11,20 +11,7 @@ from rich.style import Style
 from rich.text import Text
 
 from dargus import __version__
-from dargus.cli.ui.logo import TAGLINE, build_logo
-
-_GREETING = """\
-Hi, I'm Iris, the director agent of Project Dargus.
-
-Dargus is a clinical efficacy prediction system for drug-development
-researchers. I coordinate multi-level evidence analysis across molecular,
-biomedical, bioinformatics, and clinical domains to predict drug efficacy
-with confidence intervals.
-
-You can ask me things like:
-  • predict aspirin for migraine
-  • what's the evidence for metformin in type 2 diabetes?
-  • status"""
+from dargus.cli.ui.logo import DESCRIPTION, build_logo
 
 _HELP = """\
 Available commands:
@@ -44,43 +31,47 @@ def run_repl() -> None:
     console = Console()
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
     # ── intro block ───────────────────────────────────────────────────────────────
-    # Logo (boxed) — only when terminal is wide enough; text fallback otherwise
+    # Logo (boxed) with vertical separator + description — only when terminal is
+    # wide enough; text fallback otherwise.
     _LOGO_MIN_WIDTH = 56
     term_w = shutil.get_terminal_size().columns
     if term_w >= _LOGO_MIN_WIDTH:
         logo_lines = build_logo()
         logo_text = Text("\n").join(logo_lines)
-        tagline_text = Text(TAGLINE, style=Style(color="grey70", italic=True))
         version_text = Text(f"v{__version__}", style=Style(color="grey50"))
+        desc_text = Text(DESCRIPTION, style=Style(color="grey70"))
         combined = Text.assemble(
-            logo_text, Text("\n"), tagline_text, Text("\n\n"), version_text, Text("  ")
+            logo_text, Text("\n\n"), version_text, Text("\n"), desc_text
         )
         console.print(Panel(combined, border_style="white", padding=(0, 2)))
     else:
+        desc_text = Text(DESCRIPTION, style=Style(color="grey70"))
         console.print(
             Panel(
-                Text("DARGUS (Drug-Argus)", style=Style(color="white", bold=True)),
+                Text.assemble(
+                    Text("DARGUS (Drug-Argus)", style=Style(color="white", bold=True)),
+                    Text("\n"),
+                    desc_text,
+                ),
                 border_style="white",
                 padding=(0, 2),
             )
         )
 
     console.print()
-    console.print(Panel(_GREETING, border_style="white", padding=(1, 2)))
 
-    console.print()
-    console.print(
-        Text(
-            f"v{__version__}  ·  /help  /quit  /config /test /clear-dbase",
-            style=Style(color="grey50"),
-        )
-    )
-
-    # API key status
+    # ── greeting ──────────────────────────────────────────────────────────────
     if api.has_api_key():
-        console.print(Text("How can I help with your research?", style=Style(color="green")))
+        console.print(
+            Text(
+                "Hi, I'm Iris, the coordinator agent of Project Dargus. "
+                "How can I help with your research?",
+                style=Style(color="green"),
+            )
+        )
     else:
         console.print(
             Text(

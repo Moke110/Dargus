@@ -99,7 +99,7 @@ class Iris(BaseAgent):
         With an injected LifecycleManager this delegates to
         ``run_predict(task_spec)``; without one it runs the direct
         expert-loop implementation. Experts are created through the
-        AgentFactory when one is wired (design/3_runtime.md: the factory
+        AgentFactory when one is wired (design/2_runtime_structure.md: the factory
         is the single creation point for every Agent).
         """
         if self._lifecycle_manager is not None:

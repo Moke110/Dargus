@@ -252,7 +252,7 @@ class _StubD4Expert:
         supporting_records, reasoning_mode, confidence_level}}}}``
 
         When no supporting evidence is available, returns ``insufficient_data``
-        with scores unset, per design/9_quality_and_experience.md.
+        with scores unset, per CLAUDE.md.
         """
         # Collect supporting_records from expert findings or injected overrides
         records: list[str]

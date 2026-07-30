@@ -11,6 +11,8 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for the ``dargus`` CLI."""
     from dargus import api
 
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+
     api.init()
     logging.basicConfig(level=logging.INFO)
 

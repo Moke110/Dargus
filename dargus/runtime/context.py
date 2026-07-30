@@ -1,6 +1,6 @@
 """DargusRuntime — the single process-lifetime owner of runtime singletons.
 
-v1.0.0 (design/3_runtime.md): one runtime owns configuration, the single
+v1.0.0 (design/2_runtime_structure.md): one runtime owns configuration, the single
 reasoning LLM, tool/skill registries, D-Base tools, the
 HookRegistry, the AgentFactory, a session-scoped ToolCache, and the health
 flag. All Agents receive their dependencies from the runtime, either

@@ -1,7 +1,7 @@
 """D-Base record text serialization — the semantic surface for embedding.
 
 ``record_to_text`` flattens a v1.0.0 three-axis evidence dict into a single
-text string. The ``embedding`` Tool (design/6_skills_tools_knowledge.md)
+text string. The ``embedding`` Tool (design/4_harness.md)
 embeds this text; D-Base stores the resulting vectors in the fingerprinted
 embeddings sidecar.
 """

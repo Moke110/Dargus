@@ -261,7 +261,7 @@ class Expert(BaseAgent):
 
         Returns:
             A list of evidence instance dicts, each with the 50-field
-            schema shape defined in ``design/2.1.1_D-Base_field.md``.
+            schema shape defined in ``design/3.2_D-Base_field_reference.md``.
         """
         if isinstance(source, str):
             sources: list[str] = [source]

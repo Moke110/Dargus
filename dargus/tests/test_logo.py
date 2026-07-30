@@ -2,7 +2,7 @@
 
 from rich.text import Text
 
-from dargus.cli.ui.logo import TAGLINE, A, D, G, R, S, U, build_logo
+from dargus.cli.ui.logo import DESCRIPTION, A, D, G, R, S, U, build_logo
 
 
 def test_d_letter_is_8_lines():
@@ -27,9 +27,9 @@ def test_build_logo_returns_8_text_lines():
         assert isinstance(line, Text)
 
 
-def test_tagline_is_non_empty():
-    assert "Data-driven Analysis" in TAGLINE
-    assert "Grounded in Unified Science" in TAGLINE
+def test_description_is_non_empty():
+    assert "Clinical drug efficacy prediction" in DESCRIPTION
+    assert "domain-specific agents" in DESCRIPTION
 
 
 def test_argus_letters_consistent_width():

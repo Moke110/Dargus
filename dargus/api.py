@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def _create_iris_with_lm() -> Iris:
     """Create Iris through the runtime's AgentFactory.
 
-    Bootstraps a DargusRuntime from the config file. Per design/3_runtime.md
+    Bootstraps a DargusRuntime from the config file. Per design/2_runtime_structure.md
     the runtime starts healthy and entry points refuse new sessions while
     unhealthy — there is no silent fallback to a runtime-less path. On an
     unrecoverable bootstrap failure the runtime is marked unhealthy and the
@@ -191,9 +191,9 @@ def get_llm_config() -> dict[str, Any]:
     config_path = get_config_path()
     if not config_path.exists():
         return {
-            "provider": "openai_compatible",
+            "provider": "openai",
             "model": "",
-            "base_url": "",
+            "base_url": "https://api.deepseek.com/v1",
             "temperature": 0.0,
             "max_tokens": 2048,
             "has_api_key": has_api_key(),
@@ -206,9 +206,9 @@ def get_llm_config() -> dict[str, Any]:
 
     llm_cfg = cfg.get("llm", {})
     return {
-        "provider": llm_cfg.get("provider", "openai_compatible"),
+        "provider": llm_cfg.get("provider", "deepseek"),
         "model": llm_cfg.get("model", ""),
-        "base_url": llm_cfg.get("base_url", ""),
+        "base_url": llm_cfg.get("base_url", "https://api.deepseek.com"),
         "temperature": llm_cfg.get("temperature", 0.0),
         "max_tokens": llm_cfg.get("max_tokens", 2048),
         "has_api_key": has_api_key(),

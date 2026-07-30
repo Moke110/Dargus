@@ -18,7 +18,3 @@ logging:
 safety:
   disclaimer: Dargus outputs are for research purposes only and do not constitute
     clinical advice.
-llm:
-  model: deepseek-v4-pro
-  base_url: https://api.deepseek.com/v1
-  provider: openai

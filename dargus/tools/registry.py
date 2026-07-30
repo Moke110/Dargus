@@ -35,6 +35,7 @@ class ToolRegistry:
                         enum=pdef.get("enum"),
                     )
                 )
+            side_effect = entry.get("side_effect", "none")
             tool = Tool(
                 name=name,
                 description=entry.get("description", ""),
@@ -42,10 +43,32 @@ class ToolRegistry:
                 output=entry.get("output", {}),
                 timeout_ms=entry.get("timeout_ms", 10_000),
                 fallback=entry.get("fallback", "empty_list"),
+                side_effect=side_effect,
             )
             tool._domain = entry.get("domain", "")
             tool._biological_levels = entry.get("biological_levels", [])
             self._tools[name] = tool
+
+    def register(self, tool: Tool) -> None:
+        """Register a Tool instance directly (programmatic path).
+
+        Validates that any Tool declaring ``side_effect="write"`` holds a
+        WorkspaceGuard and declares at least one ``"path"``-typed parameter.
+        The failure is loud at registration time, not silent at call time.
+        """
+        if tool.side_effect == "write":
+            if tool._guard is None:
+                raise ValueError(
+                    f"Tool '{tool.name}' declares side_effect='write' "
+                    f"but has no WorkspaceGuard injected"
+                )
+            path_params = [p for p in tool.parameters if p.type == "path"]
+            if not path_params:
+                raise ValueError(
+                    f"Tool '{tool.name}' declares side_effect='write' "
+                    f"but has no 'path'-typed parameters"
+                )
+        self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool:
         if name not in self._tools:

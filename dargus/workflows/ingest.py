@@ -81,7 +81,7 @@ class IngestionReport:
     errors: list[str] = field(default_factory=list)
 
 
-TrainingReport = IngestionReport  # backward compat alias
+TrainingReport = IngestionReport  # backward compat alias (S2_T2: remove in v1.1)
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,6 @@ class Iris(BaseAgent):
         "dbase_query",
         "pubmed_search",
     ]
-    PERMITTED_KNOWLEDGE = ["dbase", "disease_rag"]
     SUPPORTED_SKILLS = []  # Iris orchestrates; doesn't execute skills directly
 
     def __init__(

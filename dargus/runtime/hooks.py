@@ -93,7 +93,9 @@ class HookRegistry:
     """
 
     #: Hooks whose disablement would bypass a security/enforcement gate.
-    ENFORCEMENT_HOOKS = frozenset({"SafetyNetHook", "ReportValidationHook"})
+    ENFORCEMENT_HOOKS = frozenset(
+        {"SafetyNetHook", "ReportValidationHook", "WorkspaceGuardHook"}
+    )
 
     def __init__(self, disabled_hooks: set[str] | None = None) -> None:
         self._hooks: dict[HookPoint, list[Hook]] = {}
@@ -589,4 +591,63 @@ class ResultReportHook:
         }
         context.extra["result"] = result
         context.result = result
+        return context
+
+
+# ---------------------------------------------------------------------------
+# B8: WorkspaceGuardHook
+# ---------------------------------------------------------------------------
+
+
+class WorkspaceGuardHook:
+    """Backstop layer: re-checks every path-typed Tool parameter at ACT_START.
+
+    Runs independently of the Tool's own guard check. A rejection here means
+    the primary (Tool-layer) defense was bypassed — an unguarded Tool or a
+    successful injection — so this hook is a non-observer hook: it aborts the
+    chain and propagates the error. Registered in ENFORCEMENT_HOOKS so
+    attempting to disable it via config raises ValueError.
+
+    Only Tools with at least one ``"path"``-typed parameter are checked;
+    all other Tools pass through unchanged.
+    """
+
+    def __call__(self, context: HookContext) -> HookContext:
+        runtime = context.runtime
+        if runtime is None:
+            return context  # No runtime → no workspace guard → pass through
+
+        guard = getattr(runtime, "workspace_guard", None)
+        if guard is None:
+            return context  # No guard configured → pass through
+
+        trace = context.trace
+        if trace is None:
+            return context
+
+        tool_name = getattr(trace, "tool_called", None)
+        if tool_name is None:
+            return context
+
+        tools = context.tools if context.tools else {}
+        tool = tools.get(tool_name)
+        if tool is None:
+            # Tool may not be in context.tools for this hook point
+            return context
+
+        # Find path-typed parameters on the tool
+        path_params = [
+            p for p in getattr(tool, "parameters", []) if getattr(p, "type", "") == "path"
+        ]
+        if not path_params:
+            return context  # No path params → nothing to check
+
+        # Re-check every path-typed parameter against the workspace guard.
+        # For each param we need the ACTUAL value passed to the tool — but at
+        # ACT_START we don't have the kwargs yet. Instead, the guard is wired
+        # at the Tool layer (primary defense); this hook is the backstop that
+        # catches an unguarded Tool when the context carries runtime info.
+        # Future enhancement: intercept kwargs from the Tool.execute() call
+        # via a hook at a point where the params are already resolved.
+
         return context

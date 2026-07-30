@@ -465,6 +465,10 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
             f"clinical_design present but biological_level={level} (only for clinical)"
         )
 
+    # S6_T1 — evidence_design is required on every record
+    if not evidence.get("evidence_design"):
+        result.hard_errors.append("evidence_design is required")
+
     if level in clinical:
         bg = evidence.get("bg") or {}
         if bg.get("model"):
@@ -475,9 +479,38 @@ def _rule_level_field_groups(evidence: dict, result: ValidationResult) -> None:
             result.hard_errors.append(
                 f"cell_line_id present but biological_level={level} (only for non-clinical)"
             )
+    else:
+        # S6_T1 — non-clinical cellular-and-higher requires cell_line_id
+        # rct-sim is non-clinical but does NOT need cell_line_id (it has bg.model)
+        # molecular and molecular-sim are exempt (sub-cellular)
+        _molecular = {"molecular", "molecular-sim"}
+        _sim = _sim_levels()
+        if level not in _molecular | _sim and not evidence.get("cell_line_id"):
+            result.hard_errors.append(
+                f"cell_line_id required for non-clinical biological_level={level}"
+            )
 
-    if level and level not in clinical and not y.get("assay"):
-        result.soft_warnings.append(f"y.assay recommended for non-clinical level {level}")
+    # S6_T1 — y.assay is a hard requirement for non-clinical records
+    # (only enforced for levels that aren't sim or molecular)
+    if level and level not in clinical:
+        _molecular = {"molecular", "molecular-sim"}
+        _sim = _sim_levels()
+        if level not in _molecular | _sim and not y.get("assay"):
+            result.hard_errors.append(
+                f"y.assay required for non-clinical biological_level={level}"
+            )
+
+    # S6_T1 — comparator_type required for comparative clinical designs
+    if level in clinical:
+        design = evidence.get("evidence_design", "")
+        _comparative = {"two_arm_comparison", "observational_association"}
+        if design in _comparative:
+            cd = evidence.get("clinical_design") or {}
+            if not cd.get("comparator_type"):
+                result.hard_errors.append(
+                    f"clinical_design.comparator_type required for "
+                    f"evidence_design={design} at biological_level={level}"
+                )
 
     exvivo_levels = {"exvivo", "exvivo-sim"}
     if level in exvivo_levels and not evidence.get("exvivo_platform"):

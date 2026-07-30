@@ -37,6 +37,7 @@ class DargusRuntime:
     hook_registry: Any | None = None
     agent_factory: Any | None = None
     tool_cache: Any | None = None
+    workspace_guard: Any | None = None  # WorkspaceGuard
     healthy: bool = True
     unhealthy_reason: str | None = None
 
@@ -53,12 +54,15 @@ class DargusRuntime:
 
     def __post_init__(self) -> None:
         from dargus.runtime.factory import AgentFactory
+        from dargus.runtime.workspace import WorkspaceGuard
         from dargus.tools.cache import ToolCache
 
         if self.agent_factory is None:
             self.agent_factory = AgentFactory(self)
         if self.tool_cache is None:
             self.tool_cache = ToolCache()
+        if self.workspace_guard is None:
+            self.workspace_guard = WorkspaceGuard(root=self.config.get("workspace_root"))
 
     def ensure_healthy(self) -> None:
         """Raise if the runtime is unhealthy — called by API entry points."""

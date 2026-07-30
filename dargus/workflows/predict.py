@@ -85,14 +85,10 @@ def run_predict(
 
     # ---- Bootstrap runtime when not provided ---------------------------------
     if runtime is None:
-        try:
-            from dargus.runtime.bootstrap import bootstrap
+        from dargus.runtime.bootstrap import bootstrap
 
-            runtime = bootstrap()
-            logger.info("Predict: bootstrapped DargusRuntime from config")
-        except Exception:
-            logger.warning("Predict: bootstrap failed — using stub expert path", exc_info=True)
-            runtime = None
+        runtime = bootstrap()
+        logger.info("Predict: bootstrapped DargusRuntime from config")
 
     # ---- Build hook registry --------------------------------------------------
     hooks = HookRegistry(disabled_hooks=_disabled_hooks(task_spec))
@@ -114,8 +110,8 @@ def run_predict(
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)
 
-    # ---- Build D4Expert via AgentFactory (or stub when no runtime) -------------
-    d4 = _build_d4_expert(ctx, hooks)
+    # ---- Build D4Expert via AgentFactory ---------------------------------------
+    d4 = runtime.agent_factory.d4_expert()
 
     # ---- Main round loop ------------------------------------------------------
     report: dict[str, Any] = {}
@@ -150,72 +146,53 @@ def run_predict(
     disease_id = task_spec.get("disease_id", "unknown")
     endpoints = task_spec.get("endpoints", [])
     drug_id = drug_ids[0] if drug_ids else "unknown"
+    endpoint = endpoints[0] if endpoints else "efficacy"
 
-    if hasattr(d4, "conclude"):
-        # Collect per-round ExpertReports from the round loop, then pass them
-        # to D4Expert.conclude(drug_id, disease_id, endpoint, all_reports).
-        collected_reports: dict[str, list[Any]] = {}
-        session_rounds = []
-        if isinstance(ctx.session, dict):
-            session_rounds = ctx.session.get("rounds", [])
-        for rd in session_rounds:
-            for r in rd.get("expert_reports", []) or []:
-                domain = r.get("domain", "unknown")
-                collected_reports.setdefault(domain, []).append(r)
+    # Collect per-round ExpertReports from the round loop, then pass them
+    # to D4Expert.conclude(drug_id, disease_id, endpoint, all_reports).
+    collected_reports: dict[str, list[Any]] = {}
+    session_rounds = []
+    if isinstance(ctx.session, dict):
+        session_rounds = ctx.session.get("rounds", [])
+    for rd in session_rounds:
+        for r in rd.get("expert_reports", []) or []:
+            domain = r.get("domain", "unknown")
+            collected_reports.setdefault(domain, []).append(r)
 
-        if not collected_reports and hasattr(d4, "_expert_findings"):
-            # Stub expert: use its internal findings array if present
-            collected_reports = {"Stub": [{"findings": d4._expert_findings}]}
-
-        # Build ExpertReports from collected round data; if empty, pass empty dict
-        conclusion = d4.conclude(
-            drug_id=drug_id,
-            disease_id=disease_id,
-            endpoint=(endpoints[0] if endpoints else "efficacy"),
-            all_reports=collected_reports or {},
-        )
-        # Normalize to the nested dict contract:
-        #   {drug_id: {disease_id: {endpoint: {...}}}}
-        # Real D4Expert returns FinalReport dataclass; stub returns dict.
-        if hasattr(conclusion, "__dataclass_fields__"):
-            # FinalReport dataclass — convert to nested contract dict
-            final_report = {
-                drug_id: {
-                    disease_id: {
-                        (endpoints[0] if endpoints else "efficacy"): {
-                            "efficacy_score": conclusion.efficacy_score,
-                            "confidence_score": conclusion.confidence_score,
-                            "confidence_level": conclusion.confidence_level,
-                            "reasoning_mode": conclusion.reasoning_mode,
-                            "supporting_records": conclusion.supporting_records,
-                            "expert_consensus": conclusion.expert_consensus,
-                            "contradictions": conclusion.contradictions,
-                            "data_gaps": conclusion.data_gaps,
-                        }
-                    }
+    # Build FinalReport from collected round data via D4Expert
+    conclusion = d4.conclude(
+        drug_id=drug_id,
+        disease_id=disease_id,
+        endpoint=endpoint,
+        all_reports=collected_reports or {},
+    )
+    # FinalReport dataclass — convert to nested contract dict
+    final_report = {
+        drug_id: {
+            disease_id: {
+                endpoint: {
+                    "efficacy_score": conclusion.efficacy_score,
+                    "confidence_score": conclusion.confidence_score,
+                    "confidence_level": conclusion.confidence_level,
+                    "reasoning_mode": conclusion.reasoning_mode,
+                    "supporting_records": conclusion.supporting_records,
+                    "expert_consensus": conclusion.expert_consensus,
+                    "contradictions": conclusion.contradictions,
+                    "data_gaps": conclusion.data_gaps,
                 }
             }
-        elif isinstance(conclusion, dict) and drug_id in conclusion:
-            # Already in nested contract form (stub)
-            final_report = dict(conclusion)
-        else:
-            # Flat dict — wrap into nested contract
-            final_report = {
-                drug_id: {disease_id: {endpoints[0] if endpoints else "efficacy": conclusion}}
-            }
-        for d_id, diseases in final_report.items():
-            for d_name, eps in diseases.items():
-                for ep_name, entry in eps.items():
-                    if entry.get("confidence_level") == "insufficient_data":
-                        logger.warning(
-                            "Empty D-Base — returning insufficient_data for %s / %s / %s",
-                            d_id,
-                            d_name,
-                            ep_name,
-                        )
-    else:
-        # Stub fallback: used when bootstrap failed and no runtime is available
-        final_report = _build_final_report(report, task_spec)
+        }
+    }
+    for d_id, diseases in final_report.items():
+        for d_name, eps in diseases.items():
+            for ep_name, entry in eps.items():
+                if entry.get("confidence_level") == "insufficient_data":
+                    logger.warning(
+                        "Empty D-Base — returning insufficient_data for %s / %s / %s",
+                        d_id,
+                        d_name,
+                        ep_name,
+                    )
 
     ctx.extra["FinalReport"] = final_report
     if isinstance(ctx.session, dict):
@@ -240,134 +217,6 @@ def run_predict(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_d4_expert(ctx: HookContext, hooks: HookRegistry) -> Any:
-    """Create D4Expert from DargusRuntime when available, else return a stub."""
-    try:
-        from dargus.runtime.context import DargusRuntime
-
-        env = ctx.runtime
-        if env is not None and isinstance(env, DargusRuntime):
-            from dargus.runtime.factory import AgentFactory
-
-            factory = AgentFactory(env)
-            return factory.d4_expert()
-    except (ImportError, NotImplementedError):
-        logger.debug("AgentFactory.d4_expert() not available — using stub")
-
-    # Stub D4Expert for test / no-bootstrap environments
-    dbase = _hook_dbase()
-    return _StubD4Expert(hooks, dbase=dbase)
-
-
-class _StubD4Expert:
-    """Minimal D4Expert stub that provides delegate_to_expert + synthesize + conclude."""
-
-    def __init__(self, hooks: HookRegistry, dbase: Any = None) -> None:
-        self._hooks = hooks
-        self._dbase = dbase
-        # Overridable in tests to inject findings / record_ids
-        self._expert_findings: list[Any] = []
-        self._expert_confidences: list[float] = []
-        self._supporting_records: list[str] | None = None
-
-    def delegate_to_expert(self, domain: str, records: list[dict], question: str) -> dict[str, Any]:
-        return {
-            "domain": domain,
-            "conclusion": f"Stub assessment for {domain}: {question[:80]}",
-            "confidence": {"low": 0.5, "high": 0.8},
-            "supporting_evidence": [],
-        }
-
-    def synthesize(self, expert_reports: list[dict[str, Any]]) -> dict[str, Any]:
-        confidences: list[float] = []
-        for r in expert_reports:
-            c = r.get("confidence", {})
-            if isinstance(c, dict):
-                confidences.append(c.get("low", 0.0))
-                confidences.append(c.get("high", 1.0))
-        avg = sum(confidences) / len(confidences) if confidences else 0.5
-        return {
-            "overall_conclusion": f"Synthesized {len(expert_reports)} expert reports",
-            "confidence": "moderate" if avg > 0.3 else "low",
-            "expert_reports": expert_reports,
-            "conflicts": [],
-        }
-
-    def conclude(
-        self,
-        drug_id: str,
-        disease_id: str,
-        endpoint: str,
-    ) -> dict[str, Any]:
-        """Synthesize a nested prediction contract from expert findings.
-
-        Returns the universal nested contract:
-        ``{drug_id: {disease_id: {endpoint: {efficacy_score, confidence_score,
-        supporting_records, reasoning_mode, confidence_level}}}}``
-
-        When no supporting evidence is available, returns ``insufficient_data``
-        with scores unset, per CLAUDE.md.
-        """
-        # Collect supporting_records from expert findings or injected overrides
-        records: list[str]
-        if self._supporting_records is not None:
-            records = list(self._supporting_records)
-        elif self._expert_findings:
-            records = []
-            for f in self._expert_findings:
-                records.extend(getattr(f, "record_ids", []) or [])
-        else:
-            records = []
-
-        # Check emptiness against the real D-Base when available.
-        # Pull real evidence IDs when we have a D-Base; fall back to stub
-        # defaults only when we have no D-Base at all.
-        dbase_empty = False
-        if self._dbase is not None:
-            try:
-                if hasattr(self._dbase, "read_shards"):
-                    all_recs = self._dbase.read_shards()
-                    dbase_empty = len(all_recs) == 0
-                    if not dbase_empty and not records:
-                        # Use the first few real evidence IDs from the D-Base
-                        for r in all_recs[:3]:
-                            eid = r.get("evidence_id", "")
-                            if eid and eid not in records:
-                                records.append(eid)
-            except Exception:
-                pass
-
-        if not records or dbase_empty:
-            efficacy_score: float | None = None
-            confidence_score: float | None = None
-            confidence_level = "insufficient_data"
-            reasoning_mode = "Iris-expert"
-            records = []
-        else:
-            confidences = self._expert_confidences if self._expert_confidences else [0.3, 0.7]
-            efficacy_low = min(confidences)
-            efficacy_up = max(confidences)
-            efficacy_score = (efficacy_low + efficacy_up) / 2.0
-            confidence_score = (efficacy_up - efficacy_low) / 2.0
-            avg_conf = 1.0 - confidence_score
-            if avg_conf > 0.6:
-                confidence_level = "high"
-            elif avg_conf > 0.3:
-                confidence_level = "moderate"
-            else:
-                confidence_level = "low"
-            reasoning_mode = "Iris-expert"
-
-        inner = {
-            "efficacy_score": efficacy_score,
-            "confidence_score": confidence_score,
-            "supporting_records": records,
-            "reasoning_mode": reasoning_mode,
-            "confidence_level": confidence_level,
-        }
-        return {drug_id: {disease_id: {endpoint: inner}}}
 
 
 def _execute_predict_round(

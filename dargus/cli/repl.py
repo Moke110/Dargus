@@ -23,17 +23,67 @@ Available commands:
 
 Type any natural language query to get started."""
 
+# ── Rich colour palette ───────────────────────────────────────────────────
+IRIS_COLOR = "#01F3A2"
+ERROR_COLOR = "red"
+LITELLM_COLOR = "yellow"
+RULE_COLOR = "grey50"
+
+# ── LiteLLM log interceptor ───────────────────────────────────────────────
+
+
+class _LiteLLMHandler(logging.Handler):
+    """Route LiteLLM log messages through Rich with a ``[LiteLLM]`` prefix."""
+
+    def __init__(self, console: Console) -> None:
+        super().__init__()
+        self._console = console
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = self.format(record)
+        self._console.print(Text(f"[LiteLLM] {msg}", style=Style(color=LITELLM_COLOR)))
+
+
+def _install_litellm_handler(console: Console) -> None:
+    """Replace any plain-text LiteLLM handler with a Rich-coloured one."""
+    litellm_logger = logging.getLogger("LiteLLM")
+    litellm_logger.setLevel(logging.WARNING)
+    for h in list(litellm_logger.handlers):
+        litellm_logger.removeHandler(h)
+    handler = _LiteLLMHandler(console)
+    handler.setLevel(logging.WARNING)
+    litellm_logger.addHandler(handler)
+
+
+def _format_iris_response(text: str) -> Text:
+    """Wrap an Iris response with a green ``[Iris]`` label."""
+    return Text.assemble(
+        Text("[Iris] ", style=Style(color=IRIS_COLOR, bold=True)),
+        Text(text, style=Style(color=IRIS_COLOR)),
+    )
+
+
+def _format_error(text: str) -> Text:
+    """Wrap a system error with a red ``[DargusRuntime Error]`` label."""
+    return Text.assemble(
+        Text("[DargusRuntime Error] ", style=Style(color=ERROR_COLOR, bold=True)),
+        Text(text, style=Style(color=ERROR_COLOR)),
+    )
+
+
+# ── REPL ──────────────────────────────────────────────────────────────────
+
 
 def run_repl() -> None:
     """Launch the Dargus REPL."""
     from dargus import api
+    from dargus.iris.commander import LLMCallError, NoLLMConfiguredError
 
     console = Console()
 
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    _install_litellm_handler(console)
 
-    # ── intro block ───────────────────────────────────────────────────────────────
+    # ── intro block ───────────────────────────────────────────────────────────
     # Logo (boxed) with vertical separator + description — only when terminal is
     # wide enough; text fallback otherwise.
     _LOGO_MIN_WIDTH = 56
@@ -81,12 +131,16 @@ def run_repl() -> None:
 
     console.print()
 
-    # ── REPL loop ───────────────────────────────────────────────────────────────
+    # ── REPL loop ─────────────────────────────────────────────────────────────
     while True:
         try:
             llm_config = api.get_llm_config()
             model_name = llm_config.get("model", "?")
-            console.rule(f"[grey50]{model_name}[/]", align="right", style=Style(color="grey50"))
+            console.rule(
+                f"[{RULE_COLOR}]{model_name}[/]",
+                align="right",
+                style=Style(color=RULE_COLOR),
+            )
             cmd = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
@@ -122,6 +176,17 @@ def run_repl() -> None:
             continue
         # Route to Iris agent via API
         console.print()  # blank line before response
-        result = api.ask(cmd)
-        console.print(result)
+        try:
+            result = api.ask(cmd)
+        except NoLLMConfiguredError as exc:
+            console.print(_format_error(str(exc)))
+        except LLMCallError as exc:
+            console.print(_format_error(str(exc)))
+        except Exception as exc:
+            # Unexpected error — show traceback context
+            console.print(
+                _format_error(f"Unexpected error: {exc}\n\n" "This may be a bug. Please report it.")
+            )
+        else:
+            console.print(_format_iris_response(result))
         console.print()

@@ -80,11 +80,11 @@ class TestLoadModelConfig:
         assert mc.reasoning_temperature == 0.0
         assert mc.reasoning_max_tokens == 4096
 
-    def test_missing_reasoning_provider_raises(self):
-        """Missing models.reasoning.provider raises KeyError."""
+    def test_missing_reasoning_provider_defaults_to_openai(self):
+        """Missing models.reasoning.provider defaults to openai."""
         config_dict = {"models": {"reasoning": {"model": "claude-sonnet-4"}}}
-        with pytest.raises(KeyError, match="reasoning.provider"):
-            load_model_config(config_dict, EnvSecretsManager())
+        mc = load_model_config(config_dict, EnvSecretsManager())
+        assert mc.reasoning_provider == "openai"
 
     def test_missing_reasoning_model_raises(self):
         """Missing models.reasoning.model raises KeyError."""
@@ -154,7 +154,7 @@ class TestLoadModelConfig:
         config_dict = {
             "models": {
                 "reasoning": {
-                    "provider": "openai_compatible",
+                    "provider": "openai",
                     "model": "deepseek-v4-pro",
                     "base_url": "https://api.deepseek.com",
                 },

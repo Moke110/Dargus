@@ -10,10 +10,19 @@ def run_iris_query(question: str) -> int:
         question: The natural language query to send to Iris.
 
     Returns:
-        Exit code (0 for success).
+        Exit code (0 for success, 1 for error).
     """
     from dargus import api
+    from dargus.iris.commander import LLMCallError, NoLLMConfiguredError
 
-    result = api.ask(question)
-    print(result)
+    try:
+        result = api.ask(question)
+    except NoLLMConfiguredError as exc:
+        print(f"[DargusRuntime Error] {exc}")
+        return 1
+    except LLMCallError as exc:
+        print(f"[DargusRuntime Error] {exc}")
+        return 1
+
+    print(f"[Iris] {result}")
     return 0

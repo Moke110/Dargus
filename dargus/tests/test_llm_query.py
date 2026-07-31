@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from dargus.iris.commander import Iris
+from dargus.iris.commander import Iris, LLMCallError, NoLLMConfiguredError
 from dargus.models.reasoning import LLMResponse, LLMUsage, Message
 
 
@@ -38,12 +38,13 @@ def _iris_with_llm(response: str) -> Iris:
     return Iris(reasoning_llm=ReasoningLLM(backend=FakeReasoningBackend(response)))
 
 
-def test_process_query_missing_llm_backend_fallback():
-    """Without an injected ReasoningLLM, returns config guidance."""
+def test_process_query_missing_llm_backend_raises():
+    """Without an injected ReasoningLLM, raises NoLLMConfiguredError."""
     iris = Iris()
-    result = iris.process_query("predict aspirin for headache")
-    assert "No LLM backend configured" in result
-    assert "dargus config set-api-key" in result
+    with pytest.raises(NoLLMConfiguredError) as exc:
+        iris.process_query("predict aspirin for headache")
+    assert "No LLM backend configured" in str(exc.value)
+    assert "dargus config set-api-key" in str(exc.value)
 
 
 def test_process_query_predict_intent():
@@ -60,9 +61,8 @@ def test_process_query_predict_intent():
     )
 
     result = _iris_with_llm(response).process_query("predict aspirin for headache")
-    assert "Iris:" in result
-    # Should route to predict — may succeed or fail depending on D-Base state
-    # Either way it should not be the "no backend" fallback
+    # Should route to predict — result is plain text (no Iris: prefix)
+    assert "Iris:" not in result
     assert "No LLM backend configured" not in result
 
 
@@ -75,6 +75,7 @@ def test_process_query_status_intent():
     result = _iris_with_llm(response).process_query("what's the current status?")
     assert "D-Base status" in result
     assert "Records:" in result
+    assert "Iris:" not in result
 
 
 def test_process_query_clarify_intent():
@@ -90,6 +91,7 @@ def test_process_query_clarify_intent():
 
     result = _iris_with_llm(response).process_query("predict aspirin")
     assert "Which disease are you interested in?" in result
+    assert "Iris:" not in result
 
 
 def test_process_query_chat_intent():
@@ -105,9 +107,10 @@ def test_process_query_chat_intent():
 
     result = _iris_with_llm(response).process_query("hello")
     assert "I can help you predict" in result
+    assert "Iris:" not in result
 
 
-def test_process_query_invalid_json_fallback():
-    """Malformed LLM response returns a friendly error."""
-    result = _iris_with_llm("not valid json {{{").process_query("blah")
-    assert "I had trouble understanding" in result
+def test_process_query_invalid_json_raises():
+    """Malformed LLM response raises LLMCallError (not a friendly fallback)."""
+    with pytest.raises(LLMCallError):
+        _iris_with_llm("not valid json {{{").process_query("blah")

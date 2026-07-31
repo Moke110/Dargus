@@ -145,9 +145,22 @@ def query_expert(expert_name: str) -> dict:
 
 def init() -> None:
     """Initialize Dargus session — load .env and configure logging."""
+    import logging
+
     from dargus._env import load_dotenv
 
     load_dotenv()
+
+    # Route LiteLLM logs with a ``[LiteLLM]`` prefix so they are
+    # visually distinct from Iris output.  The REPL overrides this
+    # with a Rich handler for coloured output.
+    litellm_logger = logging.getLogger("LiteLLM")
+    litellm_logger.setLevel(logging.WARNING)
+    if not litellm_logger.handlers:
+        h = logging.StreamHandler()
+        h.setLevel(logging.WARNING)
+        h.setFormatter(logging.Formatter("[LiteLLM] %(message)s"))
+        litellm_logger.addHandler(h)
 
 
 def has_api_key() -> bool:
@@ -207,7 +220,7 @@ def get_llm_config() -> dict[str, Any]:
     # v1.0.0: read from models.reasoning block (single source of truth)
     reasoning_cfg = (cfg.get("models") or {}).get("reasoning", {})
     return {
-        "provider": reasoning_cfg.get("provider", "deepseek"),
+        "provider": reasoning_cfg.get("provider", "openai"),
         "model": reasoning_cfg.get("model", ""),
         "base_url": reasoning_cfg.get("base_url", "https://api.deepseek.com"),
         "temperature": reasoning_cfg.get("temperature", 0.0),
@@ -216,13 +229,13 @@ def get_llm_config() -> dict[str, Any]:
     }
 
 
-def save_llm_config(model: str, base_url: str, provider: str = "openai_compatible") -> None:
+def save_llm_config(model: str, base_url: str, provider: str = "openai") -> None:
     """Save LLM configuration to config file.
 
     Args:
         model: Model name.
         base_url: API base URL.
-        provider: Provider name (default: openai_compatible).
+        provider: Provider name (default: openai).
     """
     from dargus.config.paths import get_config_path
 
@@ -269,10 +282,16 @@ def set_api_key(provider: str, key: str) -> str:
     return str(env_path)
 
 
-def test_llm_connection(model: str, base_url: str, api_key: str | None = None) -> dict[str, Any]:
-    """Test LLM connection against an OpenAI-compatible endpoint.
+def test_llm_connection(
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str | None = None,
+) -> dict[str, Any]:
+    """Test LLM connection using the same LiteLLM call path that Iris uses.
 
     Args:
+        provider: LiteLLM provider name (e.g. ``deepseek``, ``openai``).
         model: Model name.
         base_url: API base URL.
         api_key: Optional API key (uses env var if not provided).
@@ -283,25 +302,26 @@ def test_llm_connection(model: str, base_url: str, api_key: str | None = None) -
     import os
     import time
 
-    import httpx
+    import litellm
 
     key = api_key or os.environ.get("DARGUS_LLM_API_KEY")
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": "Reply with just: OK"}],
-        "temperature": 0.0,
-        "max_tokens": 8,
-    }
 
     t0 = time.monotonic()
     try:
-        response = httpx.post(url, headers=headers, json=body, timeout=30.0)
-        response.raise_for_status()
-        response.json()["choices"][0]["message"]["content"]
+        model_id = f"{provider}/{model}"
+        kwargs: dict = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "Reply with just: OK"}],
+            "temperature": 0.0,
+            "max_tokens": 8,
+        }
+        if key:
+            kwargs["api_key"] = key
+        if base_url:
+            kwargs["api_base"] = base_url
+
+        response = litellm.completion(**kwargs)
+        response.choices[0].message.content  # verify response is valid
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": True, "model": model, "latency_ms": latency_ms}
     except Exception as exc:

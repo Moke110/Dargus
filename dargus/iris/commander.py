@@ -17,6 +17,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Iris-specific exception classes
+# ---------------------------------------------------------------------------
+
+
+class NoLLMConfiguredError(Exception):
+    """Raised when Iris receives a query but no LLM backend is wired."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No LLM backend configured.\n\n"
+            "Set your API key with:\n"
+            "  dargus config set-api-key <provider> <key>\n\n"
+            "Or use CLI subcommands directly:\n"
+            "  dargus predict --drugs aspirin --disease headache\n"
+            "  dargus status\n"
+            "  dargus --help"
+        )
+
+
+class LLMCallError(Exception):
+    """Raised when the LLM call fails (network, API, or malformed response)."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(
+            f"LLM call failed: {detail}\n\n"
+            "Check your API key and network. Use /config to reconfigure."
+        )
+
+
 class Iris(BaseAgent):
     """Coordinates D-Base, Expert system, and Iris prediction agents via Harness."""
 
@@ -184,7 +214,15 @@ class Iris(BaseAgent):
         }
 
     def process_query(self, query: str) -> str:
-        """Parse NL query via LLM and route to predict/status."""
+        """Parse NL query via LLM and route to predict/status.
+
+        Returns plain text (no ``Iris:`` prefix).  The presentation layer owns
+        all formatting: colours, prefixes, markup.
+
+        Raises:
+            NoLLMConfiguredError: No LLM backend is wired.
+            LLMCallError: The LLM call failed (network, API, or JSON parse).
+        """
         import json
 
         from dargus.models.reasoning import Message
@@ -199,29 +237,17 @@ Return ONLY valid JSON:
 
         llm = self._reasoning_llm
         if llm is None:
-            return (
-                "Iris: No LLM backend configured.\n\n"
-                "Set your API key with:\n"
-                "  dargus config set-api-key <provider> <key>\n\n"
-                "Or use CLI subcommands directly:\n"
-                "  dargus predict --drugs aspirin --disease headache\n"
-                "  dargus status\n"
-                "  dargus --help"
-            )
+            raise NoLLMConfiguredError()
 
         try:
             response = llm.chat(
                 [Message(role="user", content=SYSTEM_PROMPT + "\n\nUser query: " + query)]
             )
             parsed = json.loads(response.content.strip())
-        except Exception:
-            return (
-                "Iris: I had trouble understanding that. Could you rephrase?\n\n"
-                "Examples:\n"
-                "  predict aspirin for migraine\n"
-                "  what's the evidence for metformin in type 2 diabetes?\n"
-                "  status"
-            )
+        except (NoLLMConfiguredError, LLMCallError):
+            raise
+        except Exception as exc:
+            raise LLMCallError(str(exc)) from exc
 
         intent = parsed.get("intent", "chat")
 
@@ -231,14 +257,14 @@ Return ONLY valid JSON:
             endpoints = parsed.get("endpoints", [])
             if not drugs or not disease:
                 question = parsed.get("question", "Which drug and disease are you interested in?")
-                return f"Iris: {question}"
+                return question
 
             try:
                 result = self.predict(drug_ids=drugs, disease_id=disease, endpoints=endpoints or [])
             except Exception as exc:
-                return f"Iris: Prediction failed: {exc}"
+                raise LLMCallError(f"Prediction failed: {exc}") from exc
 
-            lines = [f"Iris: Prediction for {', '.join(drugs)} on {disease}:"]
+            lines = [f"Prediction for {', '.join(drugs)} on {disease}:"]
             for drug, diseases in result.items():
                 for disease_name, eps in diseases.items():
                     for ep, pred in eps.items():
@@ -256,13 +282,13 @@ Return ONLY valid JSON:
         if intent == "status":
             status = self.status()
             return (
-                f"Iris: D-Base status:\n"
+                f"D-Base status:\n"
                 f"  Records:   {status['n_records']}\n"
                 f"  Working:   {status['working_dbase']}\n"
                 f"  Location:  {status['dbase_dir']}"
             )
 
         if intent == "clarify":
-            return f"Iris: {parsed.get('question', 'Can you provide more details?')}"
+            return parsed.get("question", "Can you provide more details?")
 
-        return f"Iris: {parsed.get('message', 'I help with drug efficacy prediction.')}"
+        return parsed.get("message", "I help with drug efficacy prediction.")

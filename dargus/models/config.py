@@ -80,10 +80,8 @@ def load_model_config(config_dict: dict | None, secrets: SecretsManager) -> Mode
     reasoning_cfg = models_cfg.get("reasoning", {}) if models_cfg else {}
     embedding_cfg = models_cfg.get("embedding", {}) if models_cfg else {}
 
-    reasoning_provider = reasoning_cfg.get("provider", "")
+    reasoning_provider = reasoning_cfg.get("provider", "openai")
     reasoning_model = reasoning_cfg.get("model", "")
-    if not reasoning_provider:
-        raise KeyError("models.reasoning.provider is required")
     if not reasoning_model:
         raise KeyError("models.reasoning.model is required")
 

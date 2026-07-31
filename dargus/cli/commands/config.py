@@ -46,7 +46,7 @@ def _show_config() -> None:
 
     print()
     print("  LLM Configuration:")
-    print(f"    provider:    {cfg.get('provider', 'openai_compatible')}")
+    print(f"    provider:    {cfg.get('provider', 'openai')}")
     print(f"    model:       {cfg.get('model', 'not set')}")
     base_url = cfg.get("base_url", "")
     if base_url:
@@ -86,6 +86,18 @@ def _run_model_wizard() -> None:
     """Run the interactive LLM configuration wizard."""
     from dargus import api
 
+    # LiteLLM-verified provider list
+    _PROVIDERS = [
+        ("1", "deepseek", "DeepSeek"),
+        ("2", "openai", "OpenAI / any OpenAI-compatible API"),
+        ("3", "anthropic", "Anthropic (Claude)"),
+        ("4", "openrouter", "OpenRouter proxy"),
+        ("5", "groq", "Groq"),
+        ("6", "together_ai", "Together AI"),
+        ("7", "ollama_chat", "Local Ollama"),
+        ("8", "vllm", "Self-hosted vLLM"),
+    ]
+
     print()
     print("  Configure LLM connection")
     print("  ────────────────────────────────")
@@ -93,40 +105,55 @@ def _run_model_wizard() -> None:
 
     # Load current config
     cfg = api.get_llm_config()
+    cur_provider = cfg.get("provider", "deepseek")
     cur_base_url = cfg.get("base_url", "")
     cur_model = cfg.get("model", "")
     has_key = cfg.get("has_api_key", False)
     key_display = "********" if has_key else "(not set)"
 
-    # Step 1: Base URL
+    # Step 1: Provider selection
+    print("  Select LLM provider:")
+    for num, prov, display in _PROVIDERS:
+        marker = " ←" if prov == cur_provider else ""
+        print(f"    {num}. {display} ({prov}){marker}")
+    print()
+    prompt = "  Provider number [1-8]: "
+    provider_choice = input(prompt).strip()
+    if provider_choice:
+        provider_map = {num: prov for num, prov, _ in _PROVIDERS}
+        new_provider = provider_map.get(provider_choice, cur_provider)
+    else:
+        new_provider = cur_provider
+
+    # Step 2: Base URL
     prompt = f"  Base URL [{cur_base_url}]: "
     new_base_url = input(prompt).strip()
     if not new_base_url:
         new_base_url = cur_base_url
 
-    # Step 2: Model
+    # Step 3: Model
     prompt = f"  Model [{cur_model}]: "
     new_model = input(prompt).strip()
     if not new_model:
         new_model = cur_model
 
-    # Step 3: API Key
+    # Step 4: API Key
     prompt = f"  API Key [{key_display}]: "
     new_key = input(prompt).strip()
 
-    # Step 4: Test connection
+    # Step 5: Test connection
     print()
     print("  Testing connection...")
-    print(f"  POST {new_base_url}/chat/completions")
+    print(f"  litellm.completion({new_provider}/{new_model} @ {new_base_url})")
 
-    result = api.test_llm_connection(new_model, new_base_url, new_key or None)
+    result = api.test_llm_connection(new_provider, new_model, new_base_url, new_key or None)
     if result["ok"]:
         print(f"  Model: {result['model']} │ Connected OK ({result['latency_ms']}ms)")
     else:
         print(f"  Error: Connection failed — {result['error']}")
         _print_troubleshooting(result, new_base_url)
 
-    # Step 5: Confirm save
+    # Step 6: Confirm save
     print()
     choice = input("  Save configuration? [y/N]: ").strip().lower()
     if choice not in {"y", "yes"}:
@@ -134,7 +161,7 @@ def _run_model_wizard() -> None:
         return
 
     # Save configuration
-    api.save_llm_config(new_model, new_base_url)
+    api.save_llm_config(new_model, new_base_url, new_provider)
     if new_key:
         api.set_api_key("default", new_key)
 
@@ -148,11 +175,11 @@ def _print_troubleshooting(result: dict, base_url: str) -> None:
     if "404" in error:
         print()
         print("  Troubleshooting: HTTP 404 — endpoint not found.")
-        print("  The client POSTs to:  <base_url>/chat/completions")
-        print(f"  Full URL attempted:   {base_url}/chat/completions")
-        print("  Make sure base_url points to an OpenAI-compatible API root.")
+        print("  The connection uses the same LiteLLM call path as Iris.")
+        print(f"  base_url: {base_url}")
+        print("  Verify the base_url points to a valid API root for your provider.")
         print("  Examples:")
-        print("    DeepSeek:     https://api.deepseek.com/v1")
+        print("    DeepSeek:     https://api.deepseek.com")
         print("    OpenAI:       https://api.openai.com/v1")
         print("    Ollama (loc): http://localhost:11434/v1")
         print("    vLLM  (loc):  http://localhost:8000/v1")

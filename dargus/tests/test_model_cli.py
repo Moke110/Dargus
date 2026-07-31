@@ -16,7 +16,7 @@ def test_run_config_menu_help_exists(capsys):
 
 def test_run_model_wizard_skip(monkeypatch, capsys):
     """Model wizard with empty inputs should keep current config."""
-    inputs = iter(["", "", "", "n"])  # base_url, model, api_key, save_confirm
+    inputs = iter(["", "", "", "", "n"])  # provider, base_url, model, api_key, save_confirm
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
     with patch("dargus.api.test_llm_connection") as mock_test:
@@ -25,11 +25,12 @@ def test_run_model_wizard_skip(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "Configure LLM connection" in captured.out
+    assert "Select LLM provider" in captured.out
 
 
 def test_run_model_wizard_enter_config(monkeypatch, capsys):
     """Model wizard with new config should save."""
-    inputs = iter(["http://test.com/v1", "test-model", "test-key", "y"])
+    inputs = iter(["2", "http://test.com/v1", "test-model", "test-key", "y"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
 
     with patch("dargus.api.test_llm_connection") as mock_test:
@@ -42,7 +43,7 @@ def test_run_model_wizard_enter_config(monkeypatch, capsys):
         with patch("dargus.api.save_llm_config") as mock_save:
             with patch("dargus.api.set_api_key") as mock_set_key:
                 _run_model_wizard()
-                mock_save.assert_called_once_with("test-model", "http://test.com/v1")
+                mock_save.assert_called_once_with("test-model", "http://test.com/v1", "openai")
                 mock_set_key.assert_called_once_with("default", "test-key")
 
     captured = capsys.readouterr()

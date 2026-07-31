@@ -1,7 +1,5 @@
 """Test Expert base class."""
 
-import pytest
-
 from dargus.experts.base import Expert
 from dargus.experts.protocol import ExpertContext, ExpertReport
 
@@ -20,12 +18,12 @@ class _TestExpert(Expert):
 
 
 def test_expert_cannot_instantiate_abstract():
-    # Phase D: assess() is now a template method; _do_assess() raises
-    # NotImplementedError for bare Expert (not a TypeError — Expert is
-    # no longer abstract, subclasses must override _do_assess or assess).
+    # Expert is no longer abstract — it inherits BaseAgent's unified PRA loop.
+    # Subclasses override _build_reason_prompt() for domain-specific behavior.
+    # Bare Expert can be instantiated and runs the default PRA loop.
     expert = Expert()
-    with pytest.raises(NotImplementedError):
-        expert._do_assess([], ExpertContext(drug_ids=[], disease_id="", endpoints=[]))
+    assert expert.SUPPORTED_LEVELS == ()
+    assert expert.DELEGATION_RULES == {}
 
 
 def test_concrete_expert_has_levels():

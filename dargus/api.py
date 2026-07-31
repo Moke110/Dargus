@@ -185,7 +185,24 @@ def ask(query: str) -> str:
         Iris response as a human-readable string.
     """
     iris = _create_iris_with_lm()
-    return iris.process_query(query)
+    if iris._reasoning_llm is None:
+        from dargus.runtime.errors import NoLLMConfiguredError
+
+        raise NoLLMConfiguredError()
+
+    # Run Iris through the unified PRA loop (ADR-0002)
+    report = iris.run({"query": query})
+
+    # Extract text response from the AgentReport
+    if report.findings and isinstance(report.findings[-1], str):
+        return report.findings[-1]
+
+    # Fallback: extract from the last reason-phase trace
+    for trace in reversed(report.call_trace):
+        if trace.phase == "reason" and trace.output_summary:
+            return trace.output_summary
+
+    return "Iris processed your request."
 
 
 # ---------------------------------------------------------------------------

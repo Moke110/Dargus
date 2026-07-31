@@ -13,7 +13,7 @@ def run_iris_query(question: str) -> int:
         Exit code (0 for success, 1 for error).
     """
     from dargus import api
-    from dargus.iris.commander import LLMCallError, NoLLMConfiguredError
+    from dargus.runtime.errors import LLMCallError, NoLLMConfiguredError
 
     try:
         result = api.ask(question)

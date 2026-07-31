@@ -32,3 +32,5 @@ projects/
 logs/
 outputs/
 literature/
+prompts/
+ingest_source/

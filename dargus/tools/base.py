@@ -29,6 +29,11 @@ class Tool:
     _guard: Any | None = field(default=None, repr=False)  # WorkspaceGuard (forward ref)
     _domain: str = field(default="", repr=False)
     _biological_levels: list[str] = field(default_factory=list, repr=False)
+    _modes: list[str] = field(default_factory=list, repr=False)
+    # _modes semantics:
+    #   [] (empty)   → no mode restriction — tool is available in any mode
+    #   ["*"]        → always available, must not be filtered by mode gating
+    #   ["auto", ...] → only available in the listed modes
 
     def execute(self, **kwargs: Any) -> Any:
         if self._impl is None:

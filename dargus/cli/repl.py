@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
+import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -29,6 +31,46 @@ ERROR_COLOR = "red"
 LITELLM_COLOR = "yellow"
 RULE_COLOR = "grey50"
 
+# ── Processing indicator ─────────────────────────────────────────────────
+
+
+class _ProcessingIndicator:
+    """Thread-safe cycling ``[Processing .]`` → ``[Processing ..]`` → ``[Processing ...]``."""
+
+    def __init__(self, console: Console) -> None:
+        self._console = console
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._running:
+                return
+            self._running = True
+            self._thread = threading.Thread(target=self._animate, daemon=True)
+            self._thread.start()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def _animate(self) -> None:
+        dots = 1
+        while self._running:
+            prefix = Text("[Processing ", style=Style(color="grey70"))
+            suffix = Text("]", style=Style(color="grey70"))
+            dot_text = "." * dots + " " * (3 - dots)
+            indicator = Text(dot_text, style=Style(color=IRIS_COLOR))
+            self._console.print(Text.assemble(prefix, indicator, suffix), end="\r")
+            dots = (dots % 3) + 1
+            time.sleep(0.4)
+        # Clear the line after stopping
+        self._console.print(" " * 30, end="\r")
+
+
 # ── LiteLLM log interceptor ───────────────────────────────────────────────
 
 
@@ -41,7 +83,12 @@ class _LiteLLMHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        self._console.print(Text(f"[LiteLLM] {msg}", style=Style(color=LITELLM_COLOR)))
+        self._console.print(
+            Text.assemble(
+                Text("[LiteLLM] ", style=Style(color=LITELLM_COLOR, bold=True)),
+                Text(msg),
+            )
+        )
 
 
 def _install_litellm_handler(console: Console) -> None:
@@ -59,7 +106,7 @@ def _format_iris_response(text: str) -> Text:
     """Wrap an Iris response with a green ``[Iris]`` label."""
     return Text.assemble(
         Text("[Iris] ", style=Style(color=IRIS_COLOR, bold=True)),
-        Text(text, style=Style(color=IRIS_COLOR)),
+        Text(text),
     )
 
 
@@ -67,7 +114,7 @@ def _format_error(text: str) -> Text:
     """Wrap a system error with a red ``[DargusRuntime Error]`` label."""
     return Text.assemble(
         Text("[DargusRuntime Error] ", style=Style(color=ERROR_COLOR, bold=True)),
-        Text(text, style=Style(color=ERROR_COLOR)),
+        Text(text),
     )
 
 
@@ -77,7 +124,7 @@ def _format_error(text: str) -> Text:
 def run_repl() -> None:
     """Launch the Dargus REPL."""
     from dargus import api
-    from dargus.iris.commander import LLMCallError, NoLLMConfiguredError
+    from dargus.runtime.errors import LLMCallError, NoLLMConfiguredError
 
     console = Console()
 
@@ -117,7 +164,7 @@ def run_repl() -> None:
             Text(
                 "Hi, I'm Iris, the coordinator agent of Project Dargus. "
                 "How can I help with your research?",
-                style=Style(color="green"),
+                style=Style(color=IRIS_COLOR),
             )
         )
     else:
@@ -130,6 +177,9 @@ def run_repl() -> None:
         )
 
     console.print()
+
+    # ── Initialize processing indicator ────────────────────────────────────────
+    indicator = _ProcessingIndicator(console)
 
     # ── REPL loop ─────────────────────────────────────────────────────────────
     while True:
@@ -177,16 +227,21 @@ def run_repl() -> None:
         # Route to Iris agent via API
         console.print()  # blank line before response
         try:
+            indicator.start()
             result = api.ask(cmd)
         except NoLLMConfiguredError as exc:
+            indicator.stop()
             console.print(_format_error(str(exc)))
         except LLMCallError as exc:
+            indicator.stop()
             console.print(_format_error(str(exc)))
         except Exception as exc:
+            indicator.stop()
             # Unexpected error — show traceback context
             console.print(
                 _format_error(f"Unexpected error: {exc}\n\n" "This may be a bug. Please report it.")
             )
         else:
+            indicator.stop()
             console.print(_format_iris_response(result))
         console.print()

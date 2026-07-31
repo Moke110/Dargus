@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dargus.agents.base import BaseAgent
-from dargus.agents.report import AgentReport
 from dargus.agents.skill_registry import SkillRegistry
-from dargus.experts.protocol import ExpertContext, ExpertReport
 from dargus.models.reasoning import ReasoningLLM
 from dargus.runtime.hooks import HookRegistry
 from dargus.tools.registry import ToolRegistry
@@ -158,6 +156,8 @@ class Expert(BaseAgent):
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
         hook_registry: HookRegistry | None = None,
+        mode: str = "auto",
+        mode_config: dict[str, Any] | None = None,
     ):
         super().__init__(
             config=config,
@@ -165,36 +165,13 @@ class Expert(BaseAgent):
             tool_registry=tool_registry,
             skill_registry=skill_registry,
             hook_registry=hook_registry,
+            mode=mode,
+            mode_config=mode_config,
         )
         self.dbase = dbase
 
     # ------------------------------------------------------------------
-    # Core assess — template method, called by run() for each round
-    # ------------------------------------------------------------------
-
-    def assess(self, records: list[dict], context: ExpertContext) -> ExpertReport:
-        """Assess evidence records and produce a structured report.
-
-        Template method: delegates to :meth:`_do_assess` which subclasses
-        must implement.  Existing subclasses that override ``assess()``
-        directly continue to work — the template is only invoked when
-        no direct override is present.
-        """
-        return self._do_assess(records, context)
-
-    def _do_assess(self, records: list[dict], context: ExpertContext) -> ExpertReport:
-        """Subclass hook for assessment logic (template method pattern).
-
-        Override this method instead of :meth:`assess` if you want the
-        base-class template to handle lifecycle concerns.  The default
-        raises :class:`NotImplementedError`.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must override assess() or _do_assess()"
-        )
-
-    # ------------------------------------------------------------------
-    # Record routing
+    # Extract — convert domain files into structured evidence instances
     # ------------------------------------------------------------------
 
     def can_handle(self, record: dict) -> bool:
@@ -221,22 +198,13 @@ class Expert(BaseAgent):
         return (
             f"You are {self.name}, a biomedical domain expert specializing in "
             f"evidence at biological levels: {', '.join(self.SUPPORTED_LEVELS)}.\n"
-            "Given a task specification and available skills/tools, "
-            "produce a structured execution plan as JSON.\n\n"
+            "Given a task specification and available tools, "
+            "return a JSON response.\n\n"
             "Output format:\n"
-            '{"goal": "<string>", "steps": [{"skill": "<optional skill name>", '
-            '"tool": "<optional tool name>", "params": {}, "rationale": "<string>"}], '
-            '"expected_output": {}}'
-        )
-
-    def _build_perceive_prompt(self) -> str:
-        return (
-            f"You are {self.name}, critically reviewing execution results. "
-            "Determine if findings are sufficient. Identify remaining gaps. "
-            "Judge whether another analysis round would change conclusions.\n\n"
-            "Output format:\n"
-            '{"converged": <bool>, "confidence": <0.0-1.0>, '
-            '"gaps": ["<string>"], "next_round_guidance": "<string or null>"}'
+            '{"mode": "<current_mode>", "action": "<text|tool_call>", '
+            '"text": "<response if action is text>", '
+            '"tool": "<tool name if action is tool_call>", '
+            '"params": {}}'
         )
 
     # ------------------------------------------------------------------
@@ -348,22 +316,3 @@ class Expert(BaseAgent):
             "Use vocabularies from dargus/dbase/vocabularies.json.\n"
             "Return ONLY the JSON object, no commentary."
         )
-
-    # ------------------------------------------------------------------
-    # run() override — adapts Expert lifecycle into BaseAgent Harness
-    # ------------------------------------------------------------------
-
-    def run(self, task_spec: dict[str, Any]) -> AgentReport:
-        """Run Expert assessment via Harness, then call assess() on gathered evidence."""
-        report = super().run(task_spec)
-        records = task_spec.get("_records", [])
-        if records:
-            ctx = ExpertContext(
-                drug_ids=task_spec.get("drug_ids", []),
-                disease_id=task_spec.get("disease_id", ""),
-                endpoints=task_spec.get("endpoints", []),
-                round=report.rounds,
-            )
-            expert_report = self.assess(records, ctx)
-            report.findings = [expert_report]
-        return report

@@ -68,6 +68,8 @@ class D4Expert(Expert):
         skill_registry: SkillRegistry | None = None,
         hook_registry: HookRegistry | None = None,
         agent_factory: Any | None = None,
+        mode: str = "auto",
+        mode_config: dict[str, Any] | None = None,
     ):
         super().__init__(
             dbase=dbase,
@@ -76,6 +78,8 @@ class D4Expert(Expert):
             tool_registry=tool_registry,
             skill_registry=skill_registry,
             hook_registry=hook_registry,
+            mode=mode,
+            mode_config=mode_config,
         )
         self._agent_factory = agent_factory
 

@@ -1,8 +1,13 @@
-"""Tests for DargusRuntime dataclass, health flag, and health_check."""
+"""Tests for DargusRuntime dataclass, health flag, health_check, and mode system."""
 
 import pytest
 
-from dargus.runtime.context import DargusRuntime, health_check
+from dargus.runtime.context import (
+    DargusRuntime,
+    _mode_config_from_config,
+    health_check,
+)
+from dargus.runtime.modespec import ModeSpec, default_mode_config
 from dargus.tools.cache import ToolCache
 
 
@@ -14,10 +19,16 @@ class TestDargusRuntime:
         assert rt.config == {}
         assert rt.reasoning_llm is None
         assert rt.embedding_model is None
-        assert rt.tool_registry is None
+        # tool_registry is auto-created in __post_init__ (like agent_factory, tool_cache)
+        assert rt.tool_registry is not None
         assert rt.skill_registry is None
         assert rt.dbase_store is None
         assert rt.hook_registry is None
+        # Mode system defaults
+        assert rt.mode == "auto"
+        assert "auto" in rt.mode_config
+        assert "ingest" in rt.mode_config
+        assert "predict" in rt.mode_config
 
     def test_starts_healthy(self):
         """The runtime starts healthy (design/2_runtime_structure.md health flag)."""
@@ -104,3 +115,135 @@ class TestHealthCheck:
 
     def test_unhealthy_when_both_missing(self):
         assert health_check(DargusRuntime()) is False
+
+
+# ------------------------------------------------------------------
+# ModeSpec tests
+# ------------------------------------------------------------------
+
+
+class TestModeSpec:
+    """Tests for ModeSpec dataclass construction."""
+
+    def test_default_construction(self):
+        ms = ModeSpec()
+        assert ms.tools == []
+        assert ms.skills == []
+        assert ms.hooks == []
+        assert ms.system_prompt == ""
+        assert ms.on_enter is None
+        assert ms.on_exit is None
+
+    def test_full_construction(self):
+        ms = ModeSpec(
+            tools=["read_file", "dbase_query"],
+            skills=["evidence_analysis"],
+            hooks=["mode_tag_validation"],
+            system_prompt="You are in auto mode.",
+            on_enter="on_enter_hook",
+            on_exit="on_exit_hook",
+        )
+        assert ms.tools == ["read_file", "dbase_query"]
+        assert ms.skills == ["evidence_analysis"]
+        assert ms.hooks == ["mode_tag_validation"]
+        assert ms.system_prompt == "You are in auto mode."
+        assert ms.on_enter == "on_enter_hook"
+        assert ms.on_exit == "on_exit_hook"
+
+    def test_default_mode_config_has_three_modes(self):
+        config = default_mode_config()
+        assert set(config.keys()) == {"auto", "ingest", "predict"}
+        assert all(isinstance(v, ModeSpec) for v in config.values())
+
+    def test_default_mode_config_has_system_prompts(self):
+        config = default_mode_config()
+        for mode_name in ("auto", "ingest", "predict"):
+            assert config[mode_name].system_prompt, f"{mode_name} should have a system prompt"
+
+    def test_default_mode_config_has_tools(self):
+        config = default_mode_config()
+        assert "switch_mode" in config["auto"].tools
+        assert "read_file" in config["auto"].tools
+
+
+# ------------------------------------------------------------------
+# Mode switching tests
+# ------------------------------------------------------------------
+
+
+class TestModeSwitching:
+    """Tests for DargusRuntime.switch_mode()."""
+
+    def test_switch_to_valid_mode(self):
+        rt = DargusRuntime()
+        assert rt.mode == "auto"
+        ok = rt.switch_mode("ingest")
+        assert ok is True
+        assert rt.mode == "ingest"
+
+    def test_switch_to_unknown_mode_is_noop(self):
+        rt = DargusRuntime()
+        ok = rt.switch_mode("nonexistent")
+        assert ok is False
+        assert rt.mode == "auto"
+
+    def test_switch_mode_fires_on_exit_hook(self):
+        """on_exit hook name is in spec but no matching registered hook → no error."""
+        rt = DargusRuntime()
+        rt.mode_config["auto"].on_exit = "some_exit_hook"
+        # Should not raise — hook not found is logged and skipped
+        ok = rt.switch_mode("ingest")
+        assert ok is True
+
+    def test_switch_mode_fires_on_enter_hook(self):
+        """on_enter hook name is in spec but no matching registered hook → no error."""
+        rt = DargusRuntime()
+        rt.mode_config["ingest"].on_enter = "some_enter_hook"
+        ok = rt.switch_mode("ingest")
+        assert ok is True
+        assert rt.mode == "ingest"
+
+    def test_mode_defaults_to_auto(self):
+        rt = DargusRuntime()
+        assert rt.mode == "auto"
+
+
+# ------------------------------------------------------------------
+# Mode config from YAML
+# ------------------------------------------------------------------
+
+
+class TestModeConfigFromConfig:
+    """Tests for _mode_config_from_config()."""
+
+    def test_empty_config_returns_defaults(self):
+        result = _mode_config_from_config({})
+        assert "auto" in result
+        assert "ingest" in result
+        assert "predict" in result
+
+    def test_yaml_modes_override_defaults(self):
+        config = {
+            "modes": {
+                "auto": {
+                    "tools": ["custom_tool"],
+                    "skills": [],
+                    "hooks": [],
+                }
+            }
+        }
+        result = _mode_config_from_config(config)
+        assert result["auto"].tools == ["custom_tool"]
+
+    def test_partial_yaml_merges_with_defaults(self):
+        config = {
+            "modes": {
+                "auto": {
+                    "tools": ["override_tool"],
+                }
+            }
+        }
+        result = _mode_config_from_config(config)
+        # Only tools overridden; system_prompt should come from defaults
+        assert result["auto"].tools == ["override_tool"]
+        assert result["auto"].system_prompt  # still has a prompt

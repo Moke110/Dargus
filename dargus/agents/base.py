@@ -47,6 +47,8 @@ class BaseAgent(ABC):
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
         hook_registry: HookRegistry | None = None,
+        mode: str = "auto",
+        mode_config: dict[str, Any] | None = None,
     ):
         # Backward compat: if first positional arg is a dict, treat as config not name
         if isinstance(name, dict):
@@ -66,6 +68,10 @@ class BaseAgent(ABC):
         # Reasoning LLM comes only from DI (the runtime's single model);
         # without it the agent runs in deterministic stub mode.
         self._reasoning_llm: ReasoningLLM | None = reasoning_llm
+
+        # Mode system (ADR-0002)
+        self._mode: str = mode
+        self._mode_config: dict[str, Any] = mode_config or {}
 
         self._validate_permissions()
 
@@ -93,11 +99,16 @@ class BaseAgent(ABC):
         return {}
 
     # ------------------------------------------------------------------
-    # Public entry point — Harness loop
+    # Public entry point — unified PRA loop (ADR-0002)
     # ------------------------------------------------------------------
 
     def run(self, task_spec: dict[str, Any]) -> AgentReport:
-        """Execute the full Perceive -> Reason -> Act loop until convergence."""
+        """Execute Perceive → Reason → Act loop until convergence.
+
+        Every agent (Iris, D4Expert, Domain Expert) uses this single loop.
+        Mode-gating controls which tools, skills, hooks, and system prompt
+        are active for each round.
+        """
         traces: list[CallTrace] = []
         history: list[dict] = []
         round_num = 0
@@ -105,44 +116,20 @@ class BaseAgent(ABC):
         data_gaps: list[str] = []
         bias_notes: list[str] = []
         findings: list = []
+        act_cache: dict[str, Any] = {}
 
         while not converged and round_num < self.MAX_ROUNDS:
-            # --- Reason (plan) ---
-            plan, plan_trace = self._reason(task_spec, history, round_num)
-            traces.append(plan_trace)
+            # ── PERCEIVE: context assembly (no LLM call) ────────────
+            perceive_t0 = time.monotonic()
+            perceive_cache = self._perceive(task_spec, history, round_num, act_cache)
+            perceive_elapsed = int((time.monotonic() - perceive_t0) * 1000)
 
-            # Hook: REASON_END
-            if self._hook_registry is not None:
-                _ctx = HookContext(
-                    runtime=None,
-                    task_spec=task_spec,
-                    session=None,
-                    agent=self,
-                    round=round_num,
-                    trace=plan_trace,
-                    extra={},
-                )
-                self._hook_registry.run(HookPoint.REASON_END, _ctx)
-
-            # --- Act (execute plan steps) ---
-            act_output, act_traces = self._act(plan, round_num)
-            traces.extend(act_traces)
-
-            # Hook: ACT_END
-            if self._hook_registry is not None:
-                _ctx = HookContext(
-                    runtime=None,
-                    task_spec=task_spec,
-                    session=None,
-                    agent=self,
-                    round=round_num,
-                    trace=act_traces[-1] if act_traces else None,
-                    extra={},
-                )
-                self._hook_registry.run(HookPoint.ACT_END, _ctx)
-
-            # --- Perceive (review results, judge convergence) ---
-            verdict, perceive_trace = self._perceive(plan, act_output, history, round_num)
+            perceive_trace = CallTrace(
+                round=round_num,
+                phase="perceive",
+                output_summary=f"mode={self._mode}, tools={perceive_cache.get('tool_names', [])}",
+                elapsed_ms=perceive_elapsed,
+            )
             traces.append(perceive_trace)
 
             # Hook: PERCEIVE_END
@@ -154,25 +141,95 @@ class BaseAgent(ABC):
                     agent=self,
                     round=round_num,
                     trace=perceive_trace,
-                    extra={},
+                    extra={"perceive_cache": perceive_cache},
                 )
                 self._hook_registry.run(HookPoint.PERCEIVE_END, _ctx)
 
-            converged = verdict.get("converged", False)
-            data_gaps.extend(verdict.get("gaps", []))
-            bias_notes.append(verdict.get("next_round_guidance", ""))
+            # ── REASON: single LLM call ───────────────────────────
+            reason_response, reason_trace = self._reason(
+                task_spec, history, round_num, perceive_cache
+            )
+            traces.append(reason_trace)
+
+            # Hook: REASON_END
+            reason_ctx: HookContext | None = None
+            if self._hook_registry is not None:
+                reason_ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    trace=reason_trace,
+                    extra={"reason_response": reason_response},
+                )
+                reason_ctx = self._hook_registry.run(HookPoint.REASON_END, reason_ctx)
+
+            # ── ACT: execute or converge ──────────────────────────
+            skip_act = reason_ctx.extra.get("skip_act", False) if reason_ctx else False
+            if skip_act:
+                # Mode-tag mismatch or hook veto — inject warning into next round
+                warning = reason_ctx.extra.get("mode_tag_warning", "") if reason_ctx else ""
+                act_cache = {"skipped": True, "warning": warning}
+                act_output = {}
+                act_traces: list[CallTrace] = []
+            else:
+                act_output, act_traces = self._act(reason_response, round_num, perceive_cache)
+
+            traces.extend(act_traces)
+
+            # Hook: ACT_END
+            if self._hook_registry is not None and not skip_act:
+                _ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    trace=act_traces[-1] if act_traces else None,
+                    extra={"act_output": act_output},
+                )
+                self._hook_registry.run(HookPoint.ACT_END, _ctx)
+
+            # ── Convergence check ─────────────────────────────────
+            action = reason_response.get("action", "text")
+            if action == "text":
+                converged = True
+                findings.append(reason_response.get("text", ""))
+            elif action == "tool_call":
+                # Cache for next PERCEIVE
+                act_cache = {
+                    "llm_response": reason_response,
+                    "tool_name": reason_response.get("tool", ""),
+                    "tool_params": reason_response.get("params", {}),
+                    "tool_output": act_output,
+                }
+
+            # Track mode transitions
+            if action == "tool_call" and reason_response.get("tool") == "switch_mode":
+                new_mode = reason_response.get("params", {}).get("target", "")
+                if new_mode:
+                    logger.info("%s: mode transition %s → %s", self.name, self._mode, new_mode)
 
             history.append(
                 {
                     "round": round_num,
-                    "plan": plan,
+                    "reason_response": reason_response,
                     "act_output": act_output,
-                    "verdict": verdict,
                 }
             )
 
-            if not converged and verdict.get("next_round_guidance"):
-                task_spec = {**task_spec, "guidance": verdict["next_round_guidance"]}
+            # Hook: ROUND_END
+            if self._hook_registry is not None:
+                _ctx = HookContext(
+                    runtime=None,
+                    task_spec=task_spec,
+                    session=None,
+                    agent=self,
+                    round=round_num,
+                    extra={},
+                )
+                self._hook_registry.run(HookPoint.ROUND_END, _ctx)
 
             round_num += 1
 
@@ -224,162 +281,304 @@ class BaseAgent(ABC):
         return json.dumps({"error": "no_llm_configured"})
 
     # ------------------------------------------------------------------
-    # Phase methods — override in subclasses
+    # PERCEIVE — context assembly (no LLM call)
+    # ------------------------------------------------------------------
+
+    def _perceive(
+        self,
+        task_spec: dict,
+        history: list[dict],
+        round_num: int,
+        act_cache: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Assemble the context blob for the next REASON round.
+
+        Reads the current mode from ``self._mode``, looks up its ModeSpec,
+        collects the mode's system prompt, tool definitions (as JSON Schema),
+        and skill content. Merges session history with the last act cache.
+
+        No LLM call — pure data assembly.
+        """
+        # ── Mode spec lookup ───────────────────────────────────────
+        mode_spec = self._mode_config.get(self._mode)
+        system_prompt = ""
+        mode_tool_names: list[str] = []
+        mode_skill_names: list[str] = []
+
+        if mode_spec is not None:
+            system_prompt = mode_spec.system_prompt
+            mode_tool_names = list(mode_spec.tools)
+            mode_skill_names = list(mode_spec.skills)
+
+        # ── Tool definitions (JSON Schema format) ──────────────────
+        tool_defs: list[dict[str, Any]] = []
+        for tool_name in mode_tool_names:
+            try:
+                tool = self._tool_registry.get(tool_name)
+            except KeyError:
+                continue
+            # Skip tools that are mode-restricted and don't match current mode
+            tool_modes: list[str] = getattr(tool, "_modes", [])
+            if tool_modes and tool_modes != ["*"]:
+                # Tool is restricted to specific modes
+                pass  # mode_tool_names already filters
+
+            params_schema: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            for p in tool.parameters:
+                prop: dict[str, Any] = {"type": p.type, "description": p.description}
+                if p.enum:
+                    prop["enum"] = p.enum
+                if p.default is not None:
+                    prop["default"] = p.default
+                params_schema["properties"][p.name] = prop
+                if p.required:
+                    params_schema["required"].append(p.name)
+
+            tool_defs.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": params_schema,
+                }
+            )
+            # Also include always-available tools (switch_mode)
+            all_tools = self._tool_registry.list_all()
+            for tool in all_tools:
+                tool_modes: list[str] = getattr(tool, "_modes", [])
+                if tool_modes == ["*"] and tool.name not in [t["name"] for t in tool_defs]:
+                    params_schema_all: dict[str, Any] = {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    }
+                    for p in tool.parameters:
+                        prop_all: dict[str, Any] = {"type": p.type, "description": p.description}
+                        if p.enum:
+                            prop_all["enum"] = p.enum
+                        if p.default is not None:
+                            prop_all["default"] = p.default
+                        params_schema_all["properties"][p.name] = prop_all
+                        if p.required:
+                            params_schema_all["required"].append(p.name)
+                    tool_defs.append(
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": params_schema_all,
+                        }
+                    )
+
+        # ── Skill content ─────────────────────────────────────────
+        skill_content: list[str] = []
+        for skill_name in mode_skill_names:
+            try:
+                skill = self._skill_registry.get(skill_name)
+                skill_content.append(skill.prompt)
+            except KeyError:
+                pass
+
+        # ── Session history + act cache merge ──────────────────────
+        return {
+            "system_prompt": system_prompt,
+            "mode": self._mode,
+            "mode_tool_names": mode_tool_names + self._always_available_tool_names(),
+            "tool_definitions": tool_defs,
+            "skill_content": skill_content,
+            "task_spec": task_spec,
+            "history": history,
+            "act_cache": act_cache,
+            "round": round_num,
+        }
+
+    def _always_available_tool_names(self) -> list[str]:
+        """Return tool names registered with ``_modes = ["*"]``."""
+        names: list[str] = []
+        for tool in self._tool_registry.list_all():
+            if getattr(tool, "_modes", []) == ["*"]:
+                names.append(tool.name)
+        return names
+
+    # ------------------------------------------------------------------
+    # REASON — single LLM call
     # ------------------------------------------------------------------
 
     def _reason(
-        self, task_spec: dict, history: list[dict], round_num: int
+        self,
+        task_spec: dict,
+        history: list[dict],
+        round_num: int,
+        perceive_cache: dict[str, Any],
     ) -> tuple[dict, CallTrace]:
-        """Reason phase: LLM generates a structured execution plan."""
+        """Forward the perceive cache to the LLM and parse the response.
+
+        The LLM returns a mode-tagged JSON response:
+          {"mode": "auto", "action": "text", "text": "Hello!"}
+          {"mode": "auto", "action": "tool_call", "tool": "read_file",
+           "params": {"path": "..."}}
+        """
         t0 = time.monotonic()
-        system_prompt = self._build_reason_prompt()
+
+        system_prompt = perceive_cache.get("system_prompt", self._build_reason_prompt())
         user_prompt = json.dumps(
             {
-                "task_spec": task_spec,
-                "history": history,
-                "available_skills": self.SUPPORTED_SKILLS,
-                "available_tools": self.PERMITTED_TOOLS,
+                "task_spec": perceive_cache.get("task_spec", task_spec),
+                "mode": perceive_cache.get("mode", self._mode),
+                "available_tools": perceive_cache.get("tool_definitions", []),
+                "available_skills": perceive_cache.get("skill_content", []),
+                "history": perceive_cache.get("history", history),
+                "last_action": perceive_cache.get("act_cache", {}),
+                "round": round_num,
             },
             ensure_ascii=False,
         )
 
         response = self._llm_call(system_prompt, user_prompt)
         try:
-            plan = json.loads(response.strip())
+            reason_response = json.loads(response.strip())
         except json.JSONDecodeError:
-            plan = {"goal": "parse_error", "steps": [], "expected_output": {}}
+            reason_response = {
+                "mode": self._mode,
+                "action": "text",
+                "text": "I encountered an error processing your request.",
+            }
+
+        if "mode" not in reason_response:
+            reason_response["mode"] = self._mode
+        if "action" not in reason_response:
+            reason_response["action"] = "text"
+            reason_response["text"] = str(reason_response)
 
         elapsed = int((time.monotonic() - t0) * 1000)
+        summary = (
+            reason_response.get("text", "")[:200]
+            if reason_response.get("action") == "text"
+            else f"tool_call={reason_response.get('tool', '?')}"
+        )
         trace = CallTrace(
             round=round_num,
             phase="reason",
-            output_summary=str(plan.get("goal", ""))[:200],
+            output_summary=summary,
             elapsed_ms=elapsed,
         )
-        return plan, trace
+        return reason_response, trace
 
-    def _act(self, plan: dict, round_num: int) -> tuple[dict, list[CallTrace]]:
-        """Act phase: ReAct loop over plan steps, calling Tools."""
+    # ------------------------------------------------------------------
+    # ACT — execute tool calls
+    # ------------------------------------------------------------------
+
+    def _act(
+        self,
+        reason_response: dict,
+        round_num: int,
+        perceive_cache: dict[str, Any] | None = None,
+    ) -> tuple[dict, list[CallTrace]]:
+        """Execute the tool call from the REASON response, if any.
+
+        Mode-based tool enforcement: only tools listed in the perceive cache's
+        ``mode_tool_names`` (plus always-available ``_modes=["*"]`` tools) may
+        be called. Returns an error dict when the requested tool is not
+        permitted in the current mode.
+
+        Returns:
+            (output_dict, traces_list). Output is empty for text responses.
+        """
+        if reason_response.get("action") != "tool_call":
+            return {}, []
+
+        tool_name = reason_response.get("tool", "")
+        params = reason_response.get("params", {})
         traces: list[CallTrace] = []
         results: dict[str, Any] = {}
 
-        for i, step in enumerate(plan.get("steps", [])):
-            skill_name = step.get("skill")
-            tool_name = step.get("tool")
-            params = step.get("params", {})
-
-            if skill_name:
-                try:
-                    self._skill_registry.get(skill_name)
-                except KeyError:
+        # ── Mode-based tool authorization (ADR-0002) ───────────────
+        allowed_tools: set[str] = set()
+        if perceive_cache:
+            allowed_tools.update(perceive_cache.get("mode_tool_names", []))
+        if tool_name not in allowed_tools:
+            # Always-available tool check (switch_mode is the canonical example)
+            try:
+                tool = self._get_tool(tool_name)
+                tool_modes: list[str] = getattr(tool, "_modes", [])
+                if tool_modes != ["*"]:
+                    error_msg = f"Tool {tool_name!r} not permitted in mode {self._mode!r}"
+                    results["output"] = {"error": error_msg}
                     traces.append(
                         CallTrace(
                             round=round_num,
                             phase="act",
-                            skill_used=skill_name,
-                            error=f"Skill '{skill_name}' not found",
+                            tool_called=tool_name,
+                            output_summary=error_msg,
                             elapsed_ms=0,
+                            error=error_msg,
                         )
                     )
-                    continue
-
-            t0 = time.monotonic()
-            if tool_name and tool_name in self.PERMITTED_TOOLS:
-                try:
-                    tool = self._get_tool(tool_name)
-                    step_result = tool.execute(**params)
-                    results[f"step_{i}"] = step_result
-                    error = None
-                except Exception as exc:
-                    results[f"step_{i}"] = {"error": str(exc)}
-                    error = str(exc)
-            else:
-                error = f"Tool '{tool_name}' not permitted or not found"
-
-            elapsed = int((time.monotonic() - t0) * 1000)
-            traces.append(
-                CallTrace(
-                    round=round_num,
-                    phase="act",
-                    skill_used=skill_name,
-                    tool_called=tool_name,
-                    output_summary=str(results.get(f"step_{i}", ""))[:200],
-                    elapsed_ms=elapsed,
-                    error=error,
+                    return results, traces
+            except KeyError:
+                error_msg = f"Tool {tool_name!r} not found"
+                results["output"] = {"error": error_msg}
+                traces.append(
+                    CallTrace(
+                        round=round_num,
+                        phase="act",
+                        tool_called=tool_name,
+                        output_summary=error_msg,
+                        elapsed_ms=0,
+                        error=error_msg,
+                    )
                 )
+                return results, traces
+
+        t0 = time.monotonic()
+        try:
+            tool = self._get_tool(tool_name)
+            step_result = tool.execute(**params)
+            results["output"] = step_result
+            error = None
+        except KeyError:
+            step_result = {"error": f"Tool {tool_name!r} not found"}
+            results["output"] = step_result
+            error = f"Tool {tool_name!r} not found"
+        except Exception as exc:
+            results["output"] = {"error": str(exc)}
+            error = str(exc)
+
+        elapsed = int((time.monotonic() - t0) * 1000)
+        traces.append(
+            CallTrace(
+                round=round_num,
+                phase="act",
+                tool_called=tool_name,
+                output_summary=str(results.get("output", ""))[:200],
+                elapsed_ms=elapsed,
+                error=error,
             )
+        )
 
         return results, traces
 
-    def _perceive(
-        self, plan: dict, act_output: dict, history: list[dict], round_num: int
-    ) -> tuple[dict, CallTrace]:
-        """Perceive phase: LLM reviews results and judges convergence."""
-        t0 = time.monotonic()
-        system_prompt = self._build_perceive_prompt()
-        user_prompt = json.dumps(
-            {
-                "plan": plan,
-                "act_output": {k: str(v)[:300] for k, v in act_output.items()},
-                "history": [
-                    {"round": h["round"], "verdict": h.get("verdict", {})} for h in history
-                ],
-            },
-            ensure_ascii=False,
-        )
-
-        response = self._llm_call(system_prompt, user_prompt)
-        try:
-            verdict = json.loads(response.strip())
-        except json.JSONDecodeError:
-            verdict = {"converged": True, "confidence": 0.0, "gaps": ["perceive_parse_error"]}
-
-        elapsed = int((time.monotonic() - t0) * 1000)
-        trace = CallTrace(
-            round=round_num,
-            phase="perceive",
-            output_summary=(
-                f"converged={verdict.get('converged')}," f" confidence={verdict.get('confidence')}"
-            ),
-            elapsed_ms=elapsed,
-        )
-        return verdict, trace
-
     # ------------------------------------------------------------------
-    # Prompt builders — override in subclasses
+    # Prompt builders — override in subclasses (deprecated; use ModeSpec)
     # ------------------------------------------------------------------
 
     def _build_reason_prompt(self) -> str:
+        """Default reason prompt — fallback when no ModeSpec system_prompt."""
         return (
-            "You are a planning agent for biomedical evidence analysis. "
-            "Given a task specification, available skills, and tools, "
-            "produce a structured execution plan as JSON.\n\n"
+            "You are a biomedical evidence analysis agent. "
+            "Given a task specification and available tools, "
+            "return a JSON response.\n\n"
             "Output format:\n"
-            '{"goal": "<string>", "steps": [{"skill": "<optional skill name>", '
-            '"tool": "<optional tool name>", "params": {}, "rationale": "<string>"}], '
-            '"expected_output": {}}'
-        )
-
-    def _build_perceive_prompt(self) -> str:
-        return (
-            "You are a scientific critic. Review the execution output against the plan. "
-            "Determine if the plan's expected_output has been satisfied. "
-            "Identify remaining data gaps."
-            "Judge whether another round would change conclusions.\n\n"
-            "Output format:\n"
-            '{"converged": <bool>, "confidence": <0.0-1.0>, '
-            '"gaps": ["<string>"], "next_round_guidance": "<string or null>"}'
+            '{"mode": "<current_mode>", "action": "<text|tool_call>", '
+            '"text": "<response if action is text>", '
+            '"tool": "<tool name if action is tool_call>", '
+            '"params": {}}}'
         )
 
     def _compute_confidence(self, history: list[dict]) -> float:
+        """Heuristic confidence from round count and convergence."""
         if not history:
             return 0.0
-        confidences = []
-        for h in history:
-            v = h.get("verdict", {})
-            if isinstance(v, dict) and "confidence" in v:
-                confidences.append(float(v["confidence"]))
-        return sum(confidences) / len(confidences) if confidences else 0.0
+        # Each completed round contributes diminishing confidence
+        return min(0.9, len(history) * 0.2)
 
     # ------------------------------------------------------------------
     # Backward-compat legacy methods (deprecated)

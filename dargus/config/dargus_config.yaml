@@ -1,6 +1,6 @@
 models:
   reasoning:
-    provider: openai
+    provider: deepseek
     model: deepseek-v4-pro
     api_key_env: DARGUS_LLM_API_KEY
     base_url: https://api.deepseek.com
@@ -18,3 +18,16 @@ logging:
 safety:
   disclaimer: Dargus outputs are for research purposes only and do not constitute
     clinical advice.
+modes:
+  auto:
+    tools: [read_file, dbase_query, switch_mode]
+    skills: []
+    hooks: [mode_tag_validation]
+  ingest:
+    tools: [read_file, write_file, switch_mode]
+    skills: []
+    hooks: [mode_tag_validation]
+  predict:
+    tools: [read_file, dbase_query, switch_mode]
+    skills: []
+    hooks: [mode_tag_validation]

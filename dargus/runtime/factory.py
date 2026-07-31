@@ -60,6 +60,8 @@ class AgentFactory:
             "tool_registry": rt.tool_registry,
             "skill_registry": rt.skill_registry,
             "hook_registry": rt.hook_registry,
+            "mode": rt.mode,
+            "mode_config": rt.mode_config,
         }
 
     def _dbase(self) -> Any:

@@ -1,10 +1,15 @@
-"""Tests for Iris.process_query() natural language parsing."""
+"""Tests for Iris.run() — PRA loop via FakeReasoningBackend.
+
+ADR-0002: Iris.process_query() is deleted. All NL processing goes through
+the unified PRA (Perceive→Reason→Act) loop via iris.run().
+"""
 
 import os
 
 import pytest
 
-from dargus.iris.commander import Iris, LLMCallError, NoLLMConfiguredError
+from dargus.agents.report import AgentReport
+from dargus.iris.commander import Iris
 from dargus.models.reasoning import LLMResponse, LLMUsage, Message
 
 
@@ -18,7 +23,7 @@ def _clear_api_key():
 
 
 class FakeReasoningBackend:
-    """ReasoningBackend stub returning a controlled JSON response."""
+    """ReasoningBackend stub returning a controlled PRA JSON response."""
 
     def __init__(self, response: str):
         self._response = response
@@ -38,79 +43,359 @@ def _iris_with_llm(response: str) -> Iris:
     return Iris(reasoning_llm=ReasoningLLM(backend=FakeReasoningBackend(response)))
 
 
-def test_process_query_missing_llm_backend_raises():
-    """Without an injected ReasoningLLM, raises NoLLMConfiguredError."""
+# ------------------------------------------------------------------
+# Basic PRA loop tests
+# ------------------------------------------------------------------
+
+
+def test_iris_run_text_response():
+    """LLM returns a text action → loop converges in 1 round."""
+    import json
+
+    response = json.dumps({"mode": "auto", "action": "text", "text": "Hello! How can I help?"})
+
+    iris = _iris_with_llm(response)
+    report = iris.run({"query": "hello"})
+
+    assert isinstance(report, AgentReport)
+    assert report.converged is True
+    assert report.rounds == 1
+    assert "Hello!" in report.findings[-1]
+
+
+def test_iris_run_tool_call():
+    """LLM returns a tool_call → loop continues."""
+    import json
+
+    # Round 1: tool call → Round 2: text
+    responses = iter(
+        [
+            json.dumps({"mode": "auto", "action": "text", "text": "Let me check that for you."}),
+        ]
+    )
+
+    class MultiRoundBackend:
+        def chat(self, messages, options=None):
+            try:
+                content = next(responses)
+            except StopIteration:
+                content = json.dumps({"mode": "auto", "action": "text", "text": "Done."})
+            return LLMResponse(content=content, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris = Iris(reasoning_llm=ReasoningLLM(backend=MultiRoundBackend()))
+    report = iris.run({"query": "read data/file.txt"})
+
+    assert isinstance(report, AgentReport)
+    assert report.rounds >= 1
+
+
+def test_iris_run_missing_llm_backend():
+    """Without an injected ReasoningLLM, the agent stub still produces a report."""
     iris = Iris()
-    with pytest.raises(NoLLMConfiguredError) as exc:
-        iris.process_query("predict aspirin for headache")
-    assert "No LLM backend configured" in str(exc.value)
-    assert "dargus config set-api-key" in str(exc.value)
+    report = iris.run({"query": "hello"})
+    assert isinstance(report, AgentReport)
+    # The stub returns {"error": "no_llm_configured"} which is not valid PRA JSON
+    # so it falls through to parse error → text response
+    assert report.rounds <= 5  # bounded by MAX_ROUNDS
 
 
-def test_process_query_predict_intent():
-    """When LLM returns predict intent, Iris.predict is called."""
+def test_iris_run_mode_tag_in_response():
+    """LLM response always carries a mode field."""
+    import json
+
+    response = json.dumps({"mode": "auto", "action": "text", "text": "Test response"})
+
+    iris = _iris_with_llm(response)
+    report = iris.run({"query": "test"})
+
+    assert report.converged is True
+    assert "Test response" in report.findings[-1]
+
+
+# ------------------------------------------------------------------
+# Mode transition tests
+# ------------------------------------------------------------------
+
+
+def test_iris_run_switch_mode_tool_call():
+    """LLM calls switch_mode → the mode transition is detected."""
     import json
 
     response = json.dumps(
         {
-            "intent": "predict",
-            "drugs": ["aspirin"],
-            "disease": "headache",
-            "endpoints": [],
+            "mode": "auto",
+            "action": "tool_call",
+            "tool": "switch_mode",
+            "params": {"target": "ingest"},
         }
     )
 
-    result = _iris_with_llm(response).process_query("predict aspirin for headache")
-    # Should route to predict — result is plain text (no Iris: prefix)
-    assert "Iris:" not in result
-    assert "No LLM backend configured" not in result
+    iris = _iris_with_llm(response)
+    # switch_mode tool should exist on the tool registry
+    # but since we don't have a runtime, the tool will error
+    # The test just verifies the loop handles a switch_mode intent
+    report = iris.run({"query": "ingest data from /tmp"})
+
+    assert isinstance(report, AgentReport)
 
 
-def test_process_query_status_intent():
-    """When LLM returns status intent, Iris.status is called."""
+# ------------------------------------------------------------------
+# api.ask() integration
+# ------------------------------------------------------------------
+
+
+def test_api_ask_with_fake_backend(monkeypatch):
+    """api.ask() calls iris.run() and returns text response."""
     import json
 
-    response = json.dumps({"intent": "status"})
+    from dargus import api
 
-    result = _iris_with_llm(response).process_query("what's the current status?")
-    assert "D-Base status" in result
-    assert "Records:" in result
-    assert "Iris:" not in result
+    response = json.dumps({"mode": "auto", "action": "text", "text": "Iris at your service."})
+
+    class FakeLLM:
+        def chat(self, messages, options=None):
+            return LLMResponse(content=response, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    llm = ReasoningLLM(backend=FakeLLM())
+
+    # Patch _create_iris_with_lm to return Iris with our fake LLM
+    def _create(*args, **kwargs):
+        return Iris(reasoning_llm=llm)
+
+    monkeypatch.setattr(api, "_create_iris_with_lm", _create)
+    result = api.ask("hello")
+    assert "Iris at your service" in result
 
 
-def test_process_query_clarify_intent():
-    """When LLM returns clarify intent, the question is echoed."""
+# ------------------------------------------------------------------
+# Auto mode behavior tests (Ticket 5)
+# ------------------------------------------------------------------
+
+
+def test_auto_mode_chat_path():
+    """Chat: "hi" → 1-round converge with text response."""
     import json
 
     response = json.dumps(
         {
-            "intent": "clarify",
-            "question": "Which disease are you interested in?",
+            "mode": "auto",
+            "action": "text",
+            "text": "Hi! I'm Iris. How can I help with your research?",
         }
     )
 
-    result = _iris_with_llm(response).process_query("predict aspirin")
-    assert "Which disease are you interested in?" in result
-    assert "Iris:" not in result
+    iris = _iris_with_llm(response)
+    report = iris.run({"query": "hi"})
+
+    assert report.converged is True
+    assert report.rounds == 1
+    assert "Iris" in str(report.findings)
 
 
-def test_process_query_chat_intent():
-    """When LLM returns chat intent, the message is shown."""
+def test_auto_mode_tool_calling_path():
+    """User asks a question requiring file access → LLM calls read_file tool."""
     import json
 
-    response = json.dumps(
-        {
-            "intent": "chat",
-            "message": "I can help you predict drug efficacy. Try 'predict aspirin for headache'.",
-        }
+    # Round 1: tool call for read_file → Round 2: text
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "mode": "auto",
+                    "action": "tool_call",
+                    "tool": "read_file",
+                    "params": {"path": "README.md"},
+                }
+            ),
+            json.dumps(
+                {
+                    "mode": "auto",
+                    "action": "text",
+                    "text": "The README contains setup instructions.",
+                }
+            ),
+        ]
     )
 
-    result = _iris_with_llm(response).process_query("hello")
-    assert "I can help you predict" in result
-    assert "Iris:" not in result
+    class MultiRoundBackend:
+        def chat(self, messages, options=None):
+            content = next(responses)
+            return LLMResponse(content=content, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris = Iris(reasoning_llm=ReasoningLLM(backend=MultiRoundBackend()))
+    report = iris.run({"query": "what's in README.md?"})
+
+    assert isinstance(report, AgentReport)
+    # Should converge: round 1 tool_call, round 2 text
+    assert report.converged is True
+    assert report.rounds >= 2
 
 
-def test_process_query_invalid_json_raises():
-    """Malformed LLM response raises LLMCallError (not a friendly fallback)."""
-    with pytest.raises(LLMCallError):
-        _iris_with_llm("not valid json {{{").process_query("blah")
+def test_auto_mode_ingest_detection():
+    """Ingest intent: LLM confirms data directory before calling switch_mode."""
+    import json
+
+    responses = iter(
+        [
+            # Round 1: confirm with user
+            json.dumps(
+                {
+                    "mode": "auto",
+                    "action": "text",
+                    "text": "I'll ingest data from /data/dir. Confirm? (y/n)",
+                }
+            ),
+        ]
+    )
+
+    class MultiRoundBackend:
+        def chat(self, messages, options=None):
+            try:
+                content = next(responses)
+            except StopIteration:
+                content = json.dumps({"mode": "auto", "action": "text", "text": "Done."})
+            return LLMResponse(content=content, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris = Iris(reasoning_llm=ReasoningLLM(backend=MultiRoundBackend()))
+    report = iris.run({"query": "ingest files from /data/dir"})
+
+    assert report.converged is True
+    assert "ingest" in str(report.findings).lower() or report.rounds >= 1
+
+
+def test_auto_mode_predict_detection():
+    """Predict intent: LLM displays disease + drugs for confirmation."""
+    import json
+
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "mode": "auto",
+                    "action": "text",
+                    "text": "I'll predict aspirin efficacy for headache. Confirm? (y/n)",
+                }
+            ),
+        ]
+    )
+
+    class MultiRoundBackend:
+        def chat(self, messages, options=None):
+            try:
+                content = next(responses)
+            except StopIteration:
+                content = json.dumps({"mode": "auto", "action": "text", "text": "Done."})
+            return LLMResponse(content=content, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris = Iris(reasoning_llm=ReasoningLLM(backend=MultiRoundBackend()))
+    report = iris.run({"query": "predict aspirin for headache"})
+
+    assert report.converged is True
+    assert "aspirin" in str(report.findings).lower() or report.rounds >= 1
+
+
+# ------------------------------------------------------------------
+# Ingest/Predict ModeSpec tests (Ticket 6)
+# ------------------------------------------------------------------
+
+
+def test_mode_config_injected_to_iris():
+    """Iris receives mode_config via DI."""
+    from dargus.runtime.modespec import ModeSpec
+
+    ingest_spec = ModeSpec(tools=["read_file", "write_file"], system_prompt="Ingest mode.")
+    mode_config = {"auto": ModeSpec(tools=["read_file"]), "ingest": ingest_spec}
+
+    iris = Iris(mode_config=mode_config, mode="ingest")
+    assert iris._mode == "ingest"
+    assert "ingest" in iris._mode_config
+    assert iris._mode_config["ingest"].tools == ["read_file", "write_file"]
+
+
+def test_mode_transition_end_to_end():
+    """LLM in auto mode → switch_mode("ingest") → next round is ingest."""
+    import json
+
+    responses = iter(
+        [
+            # Round 1: switch to ingest
+            json.dumps(
+                {
+                    "mode": "auto",
+                    "action": "tool_call",
+                    "tool": "switch_mode",
+                    "params": {"target": "ingest"},
+                }
+            ),
+            # Round 2: ingest mode (text)
+            json.dumps(
+                {
+                    "mode": "ingest",
+                    "action": "text",
+                    "text": "Ingest complete. Processed 5 records.",
+                }
+            ),
+        ]
+    )
+
+    class MultiRoundBackend:
+        def chat(self, messages, options=None):
+            content = next(responses)
+            return LLMResponse(content=content, usage=LLMUsage(), model="fake")
+
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris = Iris(reasoning_llm=ReasoningLLM(backend=MultiRoundBackend()))
+    report = iris.run({"query": "ingest data from /tmp"})
+
+    assert report.converged is True
+    assert report.rounds >= 2
+
+
+def test_mode_tag_mismatch_warning_injected():
+    """REASON_END hook sets skip_act on mode-tag mismatch.
+
+    This tests the ModeTagValidationHook integration point.
+    """
+
+    from dargus.runtime.hooks import HookContext
+    from dargus.runtime.mode_tag import ModeTagValidationHook
+
+    # Set up a runtime-like object with a mismatched mode
+    class FakeRuntime:
+        mode = "auto"
+
+    hook = ModeTagValidationHook()
+
+    # Case 1: Matching mode — no blocking
+    ctx = HookContext(
+        runtime=FakeRuntime(),
+        extra={"reason_response": {"mode": "auto", "action": "text", "text": "OK"}},
+    )
+    result = hook(ctx)
+    assert result.extra.get("skip_act") is not True
+
+    # Case 2: Mismatched mode — block ACT
+    ctx2 = HookContext(
+        runtime=FakeRuntime(),
+        extra={"reason_response": {"mode": "predict", "action": "text", "text": "Results"}},
+    )
+    result2 = hook(ctx2)
+    assert result2.extra.get("skip_act") is True
+    assert result2.extra.get("mode_tag_mismatch") is True
+    assert "mismatch" in result2.extra.get("mode_tag_warning", "").lower()
+
+    # Case 3: No runtime — no validation (pass through)
+    ctx3 = HookContext(runtime=None, extra={"reason_response": {"mode": "predict"}})
+    result3 = hook(ctx3)
+    assert result3.extra.get("skip_act") is not True

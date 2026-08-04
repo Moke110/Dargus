@@ -9,8 +9,15 @@ from typing import Any
 
 from dargus.dbase import DBase
 from dargus.dbase.store import DBaseStore
+from dargus.ingestion.converters.clinicaltrials import ClinicalTrialsConverter
+from dargus.ingestion.converters.clinvar import ClinVarConverter
+from dargus.ingestion.converters.openfda import OpenFDAConverter
 
-CONVERTERS: dict[str, callable] = {}
+CONVERTERS: dict[str, callable] = {
+    "clinicaltrials": ClinicalTrialsConverter,
+    "openfda": OpenFDAConverter,
+    "clinvar": ClinVarConverter,
+}
 
 
 def ingest_dataset(

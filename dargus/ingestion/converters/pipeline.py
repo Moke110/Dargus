@@ -25,20 +25,9 @@ from typing import Any
 
 from dargus.dbase import DBase
 from dargus.dbase.store import DBaseStore
-from dargus.ingestion.converters.base import BaseConverter
+from dargus.ingestion.converters.base import BaseConverter, SkipRecord
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SkipRecord:
-    """A structured, auditable skip decision."""
-
-    source_entry: str
-    source: str
-    reason: str
-    detail: str = ""
-    raw: dict[str, Any] | None = None
 
 
 @dataclass
@@ -136,16 +125,14 @@ def convert_slice(
                         },
                     )
                 except ValueError as exc:
-                    result.skips.append(
-                        SkipRecord(
-                            source_entry=source_entry,
-                            source=source or converter.template_id,
-                            reason="validation",
-                            detail=str(exc),
-                        )
+                    result.skip(
+                        source_entry=source_entry,
+                        source=source or converter.template_id,
+                        reason="validation",
+                        detail=str(exc),
                     )
                     continue
-                result.records.append(record)
+                result.add(record)
 
     # dedup by evidence_id — duplicate raw rows (e.g. the same NCT appearing
     # several times in the slice) collapse to one content-addressed record,

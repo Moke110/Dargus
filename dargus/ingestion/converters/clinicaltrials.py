@@ -159,7 +159,19 @@ class ClinicalTrialsConverter(BaseConverter):
             "source_entry": source_entry,
             "source_time": source_time,
         }
-        return [raw_evidence]
+        out: list[dict[str, Any] | SkipRecord] = [raw_evidence]
+        # log any condition that could not be mapped even though the trial
+        # still yields evidence via another resolvable condition (per #71)
+        if unmapped:
+            out.append(
+                SkipRecord(
+                    source_entry=source_entry,
+                    source=self.template_id,
+                    reason="unmapped_disease",
+                    detail=";".join(unmapped[:5]),
+                )
+            )
+        return out
 
 
 def _strip_nct(source_entry: str) -> str:

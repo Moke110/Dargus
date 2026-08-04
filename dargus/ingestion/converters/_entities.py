@@ -16,12 +16,11 @@ _DRUGS: list[dict] | None = None
 _BY_NAME: dict[str, dict] = {}
 _BY_BRAND: dict[str, dict] = {}
 _BY_CID: dict[str, dict] = {}
-_BY_CHEMBL: dict[str, dict] = {}
 
 
 def load_drugs(path: str | Path | None = None) -> list[dict]:
     """Load the curated drug list (list of {name, chembl_id, ...})."""
-    global _DRUGS, _BY_NAME, _BY_BRAND, _BY_CID, _BY_CHEMBL
+    global _DRUGS, _BY_NAME, _BY_BRAND, _BY_CID
     if _DRUGS is not None and path is None:
         return _DRUGS
     if path is None:
@@ -33,7 +32,6 @@ def load_drugs(path: str | Path | None = None) -> list[dict]:
     _BY_NAME = {}
     _BY_BRAND = {}
     _BY_CID = {}
-    _BY_CHEMBL = {}
     for d in drugs:
         name = d.get("name")
         if not name:
@@ -44,9 +42,13 @@ def load_drugs(path: str | Path | None = None) -> list[dict]:
             _BY_BRAND.setdefault(str(b).lower().strip(), d)
         if d.get("pubchem_cid"):
             _BY_CID[str(d["pubchem_cid"]).lower().strip()] = d
-        if d.get("chembl_id"):
-            _BY_CHEMBL.setdefault(str(d["chembl_id"]).lower().strip(), d)
     return _DRUGS
+
+
+def canon_mondo(curie: str) -> str:
+    """Normalize a CURIE to the validator's registered prefix case."""
+    prefix, _, accession = curie.partition(":")
+    return f"{prefix.lower()}:{accession}"
 
 
 def _norm(term: str) -> str:

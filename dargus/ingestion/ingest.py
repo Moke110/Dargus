@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
 from dargus.dbase import DBase
 from dargus.dbase.store import DBaseStore
+from dargus.ingestion.converters.base import SkipRecord
 from dargus.ingestion.converters.clinicaltrials import ClinicalTrialsConverter
 from dargus.ingestion.converters.clinvar import ClinVarConverter
 from dargus.ingestion.converters.openfda import OpenFDAConverter
@@ -26,39 +25,60 @@ def ingest_dataset(
     data_dir: str,
     projects_root: str = "projects",
 ) -> dict[str, Any]:
+    """Drive one registered converter over a source's ``raw.jsonl`` wrappers.
+
+    Reads every provenance wrapper under *data_dir*, passes it to the
+    converter, runs each evidence dict through ``DBaseStore.build_evidence`` +
+    ``write_record`` (dedup by content-addressed ``evidence_id``), and
+    reports skips as a summary count.
+    """
     if dataset_name not in CONVERTERS:
         raise ValueError(f"Unknown dataset {dataset_name!r}")
 
     dbase = DBase(project_id, root_dir=Path(projects_root) / project_id)
-    converter_factory = CONVERTERS[dataset_name]
-    converter = converter_factory()
+    converter = CONVERTERS[dataset_name]()
 
     manager = DBaseStore(dbase)
     n_added = 0
-    for path in Path(data_dir).glob("*"):
-        if not path.is_file():
-            continue
-        for row_idx, raw in enumerate(converter.convert(path)):
-            record_id = hashlib.sha1(
-                json.dumps(
-                    {"path": path.name, "row": row_idx, "raw": raw},
-                    sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()[:16]
-            record = manager.build_evidence(
-                raw,
-                source_metadata={
-                    "type": "public_db",
-                    "database_id": dataset_name,
-                    "record_id": record_id,
-                    "source_file": path.name,
-                    "source_row": row_idx,
-                },
-            )
-            manager.write_record(record)
-            n_added += 1
+    n_skipped = 0
+    for path in sorted(Path(data_dir).glob("raw.jsonl")):
+        with path.open("r", encoding="utf-8") as fh:
+            for raw in _iter_raw_lines(fh):
+                for item in converter.convert(raw):
+                    if isinstance(item, SkipRecord):
+                        n_skipped += 1
+                        continue
+                    record = manager.build_evidence(
+                        item,
+                        source_metadata={
+                            "type": "database",
+                            "name": dataset_name,
+                            "entry": str(raw.get("source_entry", "")),
+                            "time": str(raw.get("source_time", "")),
+                        },
+                    )
+                    if manager.write_record(record) is True:
+                        n_added += 1
 
-    return {"project_id": project_id, "dataset_name": dataset_name, "n_records": n_added}
+    return {
+        "project_id": project_id,
+        "dataset_name": dataset_name,
+        "n_records": n_added,
+        "n_skipped": n_skipped,
+    }
+
+
+def _iter_raw_lines(fh):
+    import json as _json
+
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
 
 
 def populate_project(

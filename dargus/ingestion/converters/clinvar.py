@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dargus.ingestion.converters._entities import canon_mondo
 from dargus.ingestion.converters.base import BaseConverter
 from dargus.ingestion.converters.pipeline import SkipRecord
 from dargus.ingestion.resolver import resolve_disease
@@ -73,7 +74,7 @@ class ClinVarConverter(BaseConverter):
             curie = None
             for x in xrefs:
                 if isinstance(x, dict) and x.get("db_source") == "MONDO" and x.get("db_id"):
-                    curie = _canon_mondo(str(x["db_id"]))
+                    curie = canon_mondo(str(x["db_id"]))
                     break
             if curie is None:
                 tname = str(trait.get("trait_name") or "").strip()
@@ -130,8 +131,3 @@ class ClinVarConverter(BaseConverter):
             "source_time": source_time,
         }
         return raw_evidence
-
-
-def _canon_mondo(curie: str) -> str:
-    prefix, _, accession = curie.partition(":")
-    return f"{prefix.lower()}:{accession}"

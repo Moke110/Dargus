@@ -89,15 +89,21 @@ def test_unmappable_condition_skips_with_reason():
 
 
 def test_partial_mapping_skips_with_reason():
-    """If at least one condition resolves, we keep; if none resolve, skip."""
+    """If ≥1 condition resolves we keep evidence AND log the unmapped ones."""
     converter = ClinicalTrialsConverter()
     raw = _wrapper(
         "NCT00000003",
         conditions=["Sickle Cell Disease", "Essential Hypertension"],
         interventions=[{"type": "DRUG", "name": "Drug X"}],
     )
-    rec = converter.convert(raw)[0]
+    items = converter.convert(raw)
+    assert len(items) == 2
+    rec, skip = items
+    assert not isinstance(rec, SkipRecord)
     assert rec["bg"]["disease_id"] == ["mondo:0001134"]
+    assert isinstance(skip, SkipRecord)
+    assert skip.reason == "unmapped_disease"
+    assert "Sickle Cell Disease" in skip.detail
 
 
 def test_no_drug_intervention_skips():

@@ -48,19 +48,29 @@ def test_exact_name_returns_expected_curie():
     assert resolve_disease("essential hypertension") == "mondo:0001134"
 
 
-# ── tier 2: curated alias table ──────────────────────────────────────────────
+# ── specific-over-umbrella + curated alias fallback ─────────────────────────
+
+
+def test_specific_cancer_subtype_preferred_over_umbrella():
+    """Cancer subtypes resolve to the specific registry entry when one exists."""
+    # registry carries 'prostate carcinoma' -> MONDO:0005159, 'colorectal cancer' -> MONDO:0005575
+    assert resolve_disease("prostate cancer") == "mondo:0005159"
+    assert resolve_disease("colorectal cancer") == "mondo:0005575"
+    assert resolve_disease("renal cell carcinoma") == "mondo:0002367"
+    # melanoma resolves specifically too (registry entry, not umbrella)
+    assert resolve_disease("melanoma") == "mondo:0005105"
 
 
 @pytest.mark.parametrize(
     ("term", "target"),
     [
-        ("prostate cancer", "cancer"),
-        ("breast cancer", "cancer"),
-        ("non-small cell lung cancer", "cancer"),
         ("diabetes", "diabetes mellitus"),
         ("type 2 diabetes", "diabetes mellitus"),
         ("hypertension", "essential hypertension"),
         ("depression", "major depressive disorder"),
+        ("breast cancer", "cancer"),
+        ("multiple myeloma", "cancer"),
+        ("glioblastoma", "cancer"),
     ],
 )
 def test_alias_table(term, target):

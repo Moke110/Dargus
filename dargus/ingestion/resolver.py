@@ -24,17 +24,13 @@ import unicodedata
 from pathlib import Path
 from typing import Iterable
 
+from dargus.ingestion.converters._entities import canon_mondo
+
 # ── registry loading (pure once loaded) ──────────────────────────────────────
 
 _REGISTRY: list[dict] | None = None
 _BY_NAME: dict[str, str] = {}
 _BY_SYNONYM: dict[str, str] = {}
-
-
-def _canon_mondo(mondo: str) -> str:
-    """Normalize a registry CURIE to the validator's registered prefix case."""
-    prefix, _, accession = mondo.partition(":")
-    return f"{prefix.lower()}:{accession}"
 
 
 def load_registry(path: str | Path | None = None) -> list[dict]:
@@ -55,7 +51,7 @@ def load_registry(path: str | Path | None = None) -> list[dict]:
         mondo = d.get("mondo_id")
         if not name or not mondo:
             continue
-        curie = _canon_mondo(mondo)
+        curie = canon_mondo(mondo)
         _BY_NAME[normalize(name)] = curie
         for syn in _synonyms(d):
             _BY_SYNONYM.setdefault(normalize(syn), curie)
@@ -115,21 +111,23 @@ def _strip_parenthetical(term: str) -> str:
 # diabetes variants -> ``diabetes mellitus``, etc. No invented CURIEs.
 
 ALIASES: dict[str, str] = {
-    # oncology — umbrella ``cancer`` (MONDO:0004992) for common subtypes
-    "prostate cancer": "cancer",
+    # oncology — point at the most specific registry entry the registry
+    # carries (prostate carcinoma, lung carcinoma, kidney cancer, colorectal
+    # cancer), falling back to the umbrella ``cancer`` only for subtypes the
+    # registry lacks. No invented CURIEs.
+    "prostate cancer": "prostate carcinoma",
     "breast cancer": "cancer",
-    "non small cell lung cancer": "cancer",
+    "non small cell lung cancer": "lung carcinoma",
     "small cell lung cancer": "cancer",
-    "lung cancer": "cancer",
+    "lung cancer": "lung carcinoma",
     "ovarian cancer": "cancer",
-    "colorectal cancer": "cancer",
+    "colorectal cancer": "colorectal cancer",
     "pancreatic cancer": "cancer",
-    "renal cell carcinoma": "cancer",
+    "renal cell carcinoma": "kidney cancer",
     "hepatocellular carcinoma": "cancer",
     "gastric cancer": "cancer",
     "bladder cancer": "cancer",
     "head and neck cancer": "cancer",
-    "melanoma": "cancer",
     "multiple myeloma": "cancer",
     "leukemia": "cancer",
     "lymphoma": "cancer",
@@ -180,19 +178,26 @@ def resolve_disease(term: str) -> str | None:
     if not s:
         return None
 
+    # Parenthetical qualifiers ("Prostate Cancer (stage IV)") are stripped
+    # before matching so they don't pollute the token set and force an
+    # umbrella match ("cancer") instead of the alias ("prostate carcinoma").
+    s = normalize(_strip_parenthetical(term)) or s
+
     # tier 1 — exact registry name
     if s in _BY_NAME:
         return _BY_NAME[s]
 
-    # tier 2 — curated alias
+    # tier 2 — exact synonym
+    if s in _BY_SYNONYM:
+        return _BY_SYNONYM[s]
+
+    # tier 3 — curated alias. Runs before the substring tier so an exact
+    # alias term (e.g. "prostate cancer") resolves to its specific registry
+    # entry rather than being swallowed by the umbrella "cancer" substring.
     if s in ALIASES:
         target = normalize(ALIASES[s])
         if target in _BY_NAME:
             return _BY_NAME[target]
-
-    # tier 3 — exact synonym
-    if s in _BY_SYNONYM:
-        return _BY_SYNONYM[s]
 
     # tier 4 — substring (condition contains a registry name); among all
     # registry names fully contained in the condition, prefer the most

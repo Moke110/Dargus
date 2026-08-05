@@ -14,7 +14,7 @@ import yaml
 
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
-from dargus.models.conversation import Conversation
+from dargus.models.conversation import Conversation, ToolCall, ToolResult
 from dargus.models.reasoning import Message, ReasoningLLM
 from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
@@ -134,6 +134,12 @@ class BaseAgent(ABC):
         self._conversation = conv
         return conv
 
+    def _session(self) -> Any | None:
+        """The runtime's durable session object, or None (standalone/test)."""
+        if self._runtime is not None:
+            return getattr(self._runtime, "session", None)
+        return None
+
     @staticmethod
     def _load_default_config() -> dict[str, Any]:
         config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
@@ -154,18 +160,30 @@ class BaseAgent(ABC):
         are active for each round.
         """
         traces: list[CallTrace] = []
-        history: list[dict] = []
         round_num = 0
         converged = False
         data_gaps: list[str] = []
         bias_notes: list[str] = []
         findings: list = []
-        act_cache: dict[str, Any] = {}
+
+        # The Conversation is the single source of truth (ADR-0003): the loop
+        # reads prior context from and appends every round to it. There is no
+        # separate private history/act_cache buffer.
+        conversation = self._resolve_conversation(task_spec)
+        if not conversation.messages:
+            # First round of a fresh conversation: record the task as the
+            # opening user message. Subsequent turns append their own user
+            # message via the same path (the Conversation persists on the
+            # runtime), so cross-turn dialogue lives in one ordered log.
+            conversation.add_user(
+                json.dumps(task_spec, ensure_ascii=False),
+                mode=self._mode,
+            )
 
         while not converged and round_num < self.MAX_ROUNDS:
             # ── PERCEIVE: context assembly (no LLM call) ────────────
             perceive_t0 = time.monotonic()
-            perceive_cache = self._perceive(task_spec, history, round_num, act_cache)
+            perceive_cache = self._perceive(task_spec, conversation, round_num)
             perceive_elapsed = int((time.monotonic() - perceive_t0) * 1000)
 
             perceive_trace = CallTrace(
@@ -181,7 +199,7 @@ class BaseAgent(ABC):
                 _ctx = HookContext(
                     runtime=self._runtime,
                     task_spec=task_spec,
-                    session=None,
+                    session=self._session(),
                     agent=self,
                     round=round_num,
                     trace=perceive_trace,
@@ -191,7 +209,7 @@ class BaseAgent(ABC):
 
             # ── REASON: single LLM call ───────────────────────────
             reason_response, reason_trace = self._reason(
-                task_spec, history, round_num, perceive_cache
+                task_spec, conversation, round_num, perceive_cache
             )
             traces.append(reason_trace)
 
@@ -201,7 +219,7 @@ class BaseAgent(ABC):
                 reason_ctx = HookContext(
                     runtime=self._runtime,
                     task_spec=task_spec,
-                    session=None,
+                    session=self._session(),
                     agent=self,
                     round=round_num,
                     trace=reason_trace,
@@ -212,9 +230,9 @@ class BaseAgent(ABC):
             # ── ACT: execute or converge ──────────────────────────
             skip_act = reason_ctx.extra.get("skip_act", False) if reason_ctx else False
             if skip_act:
-                # Mode-tag mismatch or hook veto — inject warning into next round
-                warning = reason_ctx.extra.get("mode_tag_warning", "") if reason_ctx else ""
-                act_cache = {"skipped": True, "warning": warning}
+                # Mode-tag mismatch or hook veto — the round is skipped (the
+                # warning was already injected into the next PERCEIVE round by
+                # the mode-tag hook).
                 act_output = {}
                 act_traces: list[CallTrace] = []
             else:
@@ -224,7 +242,7 @@ class BaseAgent(ABC):
                     _ctx = HookContext(
                         runtime=self._runtime,
                         task_spec=task_spec,
-                        session=None,
+                        session=self._session(),
                         agent=self,
                         tools=self._tool_map(),
                         round=round_num,
@@ -246,7 +264,7 @@ class BaseAgent(ABC):
                 _ctx = HookContext(
                     runtime=self._runtime,
                     task_spec=task_spec,
-                    session=None,
+                    session=self._session(),
                     agent=self,
                     tools=self._tool_map(),
                     round=round_num,
@@ -255,19 +273,22 @@ class BaseAgent(ABC):
                 )
                 self._hook_registry.run(HookPoint.ACT_END, _ctx)
 
-            # ── Convergence check ─────────────────────────────────
+            # ── Record the round in the Conversation ───────────────
             action = reason_response.get("action", "text")
             if action == "text":
                 converged = True
                 findings.append(reason_response.get("text", ""))
+                conversation.add_assistant(reason_response.get("text", ""), mode=self._mode)
             elif action == "tool_call":
-                # Cache for next PERCEIVE
-                act_cache = {
-                    "llm_response": reason_response,
-                    "tool_name": reason_response.get("tool", ""),
-                    "tool_params": reason_response.get("params", {}),
-                    "tool_output": act_output,
-                }
+                tool_name = reason_response.get("tool", "")
+                params = reason_response.get("params", {})
+                # A failed Tool settles as an error Message in the log, not dropped.
+                error = act_output.get("error") if isinstance(act_output, dict) else None
+                conversation.add_tool(
+                    ToolCall(name=tool_name, params=params),
+                    ToolResult(output=act_output, error=error),
+                    mode=self._mode,
+                )
 
             # Track mode transitions
             if action == "tool_call" and reason_response.get("tool") == "switch_mode":
@@ -275,20 +296,12 @@ class BaseAgent(ABC):
                 if new_mode:
                     logger.info("%s: mode transition %s → %s", self.name, self._mode, new_mode)
 
-            history.append(
-                {
-                    "round": round_num,
-                    "reason_response": reason_response,
-                    "act_output": act_output,
-                }
-            )
-
             # Hook: ROUND_END
             if self._hook_registry is not None:
                 _ctx = HookContext(
                     runtime=self._runtime,
                     task_spec=task_spec,
-                    session=None,
+                    session=self._session(),
                     agent=self,
                     round=round_num,
                     extra={},
@@ -297,7 +310,7 @@ class BaseAgent(ABC):
 
             round_num += 1
 
-        confidence = self._compute_confidence(history)
+        confidence = self._compute_confidence(conversation)
 
         return AgentReport(
             agent_name=self.name,
@@ -358,15 +371,14 @@ class BaseAgent(ABC):
     def _perceive(
         self,
         task_spec: dict,
-        history: list[dict],
+        conversation: Conversation,
         round_num: int,
-        act_cache: dict[str, Any],
     ) -> dict[str, Any]:
         """Assemble the context blob for the next REASON round.
 
         Reads the current mode from ``self._mode``, looks up its ModeSpec,
         collects the mode's system prompt, tool definitions (as JSON Schema),
-        and skill content. Merges session history with the last act cache.
+        and skill content. The dialogue context comes from the Conversation.
 
         No LLM call — pure data assembly.
         """
@@ -448,7 +460,7 @@ class BaseAgent(ABC):
             except KeyError:
                 pass
 
-        # ── Session history + act cache merge ──────────────────────
+        # ── Dialogue context: project the Conversation ────────────
         return {
             "system_prompt": system_prompt,
             "mode": self._mode,
@@ -456,8 +468,8 @@ class BaseAgent(ABC):
             "tool_definitions": tool_defs,
             "skill_content": skill_content,
             "task_spec": task_spec,
-            "history": history,
-            "act_cache": act_cache,
+            "conversation": conversation,
+            "llm_messages": conversation.to_llm_messages(),
             "round": round_num,
         }
 
@@ -476,7 +488,7 @@ class BaseAgent(ABC):
     def _reason(
         self,
         task_spec: dict,
-        history: list[dict],
+        conversation: Conversation,
         round_num: int,
         perceive_cache: dict[str, Any],
     ) -> tuple[dict, CallTrace]:
@@ -490,18 +502,24 @@ class BaseAgent(ABC):
         t0 = time.monotonic()
 
         system_prompt = perceive_cache.get("system_prompt", self._build_reason_prompt())
-        user_prompt = json.dumps(
+        # The model-visible dialogue is the Conversation projected to LLM
+        # messages — no JSON dump of a private history buffer (ADR-0003).
+        llm_messages = perceive_cache.get("llm_messages", conversation.to_llm_messages())
+        task_framing = json.dumps(
             {
                 "task_spec": perceive_cache.get("task_spec", task_spec),
                 "mode": perceive_cache.get("mode", self._mode),
                 "available_tools": perceive_cache.get("tool_definitions", []),
                 "available_skills": perceive_cache.get("skill_content", []),
-                "history": perceive_cache.get("history", history),
-                "last_action": perceive_cache.get("act_cache", {}),
                 "round": round_num,
             },
             ensure_ascii=False,
         )
+        dialogue = json.dumps(
+            [{"role": m.role, "content": m.content} for m in llm_messages],
+            ensure_ascii=False,
+        )
+        user_prompt = f"{task_framing}\n\nDialogue so far:\n{dialogue}"
 
         response = self._llm_call(system_prompt, user_prompt)
         try:
@@ -613,6 +631,11 @@ class BaseAgent(ABC):
             results["output"] = {"error": str(exc)}
             error = str(exc)
 
+        # Surface failures at the top level too so the run loop can settle
+        # an interrupted Tool as an error Message (T2 / #85).
+        if error is not None:
+            results["error"] = error
+
         elapsed = int((time.monotonic() - t0) * 1000)
         traces.append(
             CallTrace(
@@ -644,12 +667,17 @@ class BaseAgent(ABC):
             '"params": {}}}'
         )
 
-    def _compute_confidence(self, history: list[dict]) -> float:
-        """Heuristic confidence from round count and convergence."""
-        if not history:
+    def _compute_confidence(self, conversation: Conversation) -> float:
+        """Heuristic confidence from round count and convergence.
+
+        Derived from the Conversation (ADR-0003) rather than a private
+        history buffer. Each assistant Message contributes diminishing
+        confidence.
+        """
+        n_rounds = sum(1 for m in conversation.messages if m.role == "assistant")
+        if n_rounds == 0:
             return 0.0
-        # Each completed round contributes diminishing confidence
-        return min(0.9, len(history) * 0.2)
+        return min(0.9, n_rounds * 0.2)
 
     # ------------------------------------------------------------------
     # Backward-compat legacy methods (deprecated)

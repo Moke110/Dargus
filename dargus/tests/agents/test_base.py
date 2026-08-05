@@ -1,10 +1,12 @@
 """Test Phase D: BaseAgent dependency injection and hook triggering."""
 
+from typing import Any
 from unittest.mock import MagicMock
 
 from dargus.agents.base import BaseAgent
 from dargus.agents.skill_registry import SkillRegistry
 from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
+from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
 
 
@@ -28,6 +30,97 @@ def test_base_agent_no_di_works():
     assert agent.config is not None
     assert agent._tool_registry is not None
     assert agent._skill_registry is not None
+
+
+# ------------------------------------------------------------------
+# Conversation as single source of truth (T2 / #85)
+# ------------------------------------------------------------------
+
+
+class _StubLLM:
+    """Scripted reasoning LLM: returns each queued response in order."""
+
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.calls: list[list] = []
+
+    def chat(self, messages: list) -> Any:
+        self.calls.append(list(messages))
+        if self.responses:
+            return type("R", (), {"content": self.responses.pop(0)})()
+        return type("R", (), {"content": '{"mode": "auto", "action": "text", "text": "done"}'})()
+
+
+def _make_agent(runtime=None, responses: list[str] | None = None):
+    agent = _MinimalAgent(
+        name="test",
+        hook_registry=HookRegistry(),
+        reasoning_llm=_StubLLM(responses or []),
+    )
+    if runtime is not None:
+        agent._runtime = runtime
+    return agent
+
+
+def test_run_appends_one_assistant_message_per_round():
+    """T2: a multi-round run (tool_call then text) appends one assistant
+    Message per round to the Conversation."""
+    agent = _make_agent(
+        responses=[
+            '{"mode": "auto", "action": "tool_call", "tool": "dbase_query", "params": {}}',
+            '{"mode": "auto", "action": "text", "text": "concluded"}',
+        ]
+    )
+    report = agent.run({"query": "assess"})
+    assert report.rounds == 2
+
+    conv = agent._resolve_conversation({"query": "assess"})
+    # Sanity: the text message is the terminal round
+    assert conv.last().text == "concluded"
+    roles = [m.role for m in conv.messages]
+    # user + tool-call assistant + text assistant
+    assert roles == ["user", "assistant", "assistant"]
+    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].tool_call.name == "dbase_query"
+
+
+def test_run_settles_interrupted_tool_as_error_message():
+    """T2: a Tool that raises settles an error Message for that round."""
+    registry = ToolRegistry()
+    boom = Tool(
+        name="boom_tool",
+        description="always fails",
+        parameters=[],
+        output={},
+    )
+    boom.bind(lambda: (_ for _ in ()).throw(RuntimeError("kaboom")))
+    registry.register(boom)
+
+    agent = _MinimalAgent(name="test", tool_registry=registry)
+    agent._mode_config = {
+        "auto": type("MS", (), {"system_prompt": "", "tools": ["boom_tool"], "skills": []})(),
+    }
+    agent._reasoning_llm = _StubLLM(
+        ['{"mode": "auto", "action": "tool_call", "tool": "boom_tool", "params": {}}']
+    )
+    agent._hook_registry = HookRegistry()
+    agent.run({"query": "x"})
+
+    conv = agent._resolve_conversation({"query": "x"})
+    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
+    assert len(tool_msgs) == 1
+    assert "kaboom" in (tool_msgs[0].tool_result.error or "")
+
+
+def test_run_messages_carry_active_mode():
+    """T2: Messages carry the Mode active when they were produced."""
+    agent = _make_agent(responses=['{"mode": "predict", "action": "text", "text": "ok"}'])
+    agent._mode = "predict"
+    agent.run({"query": "x"})
+
+    conv = agent._resolve_conversation({"query": "x"})
+    assert all(m.mode == "predict" for m in conv.messages)
 
 
 def test_base_agent_config_only_works():

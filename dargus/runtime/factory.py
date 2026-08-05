@@ -47,6 +47,7 @@ class AgentFactory:
 
     def __init__(self, runtime: DargusRuntime) -> None:
         self._runtime = runtime
+        self._iris_cache: Any | None = None
 
     # ------------------------------------------------------------------
     # Dependency bundle
@@ -121,10 +122,19 @@ class AgentFactory:
         return self._wire(D4Expert(dbase=self._dbase(), agent_factory=self, **self._di_kwargs()))
 
     def iris(self):
-        """Create the Iris commander Agent."""
+        """Create — and then cache — the Iris commander Agent.
+
+        Iris is long-lived (SPEC-B): the same instance is returned on
+        subsequent calls so her identity and session state stay stable
+        within a process. The cache is reset by :meth:`terminate`.
+        """
+        if self._iris_cache is not None:
+            return self._iris_cache
         from dargus.iris.commander import Iris
 
-        return self._wire(Iris(agent_factory=self, **self._di_kwargs()))
+        iris = self._wire(Iris(agent_factory=self, **self._di_kwargs()))
+        self._iris_cache = iris
+        return iris
 
     # ------------------------------------------------------------------
     # Termination
@@ -146,4 +156,6 @@ class AgentFactory:
                 logger.warning(
                     "Agent %r raised during close()", getattr(agent, "name", agent), exc_info=True
                 )
+        if self._iris_cache is agent:
+            self._iris_cache = None
         logger.debug("AgentFactory terminated agent %r", getattr(agent, "name", agent))

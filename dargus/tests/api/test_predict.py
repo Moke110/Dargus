@@ -16,6 +16,39 @@ def minimal_dbase(tmp_path):
     return dargus_home
 
 
+def test_runtime_reuse_bootstraps_once():
+    """SPEC-B: two consecutive API calls reuse the same DargusRuntime."""
+    import dargus.api as api
+
+    api._RUNTIME_CACHE = None
+    r1 = api._get_runtime()
+    r2 = api._get_runtime()
+    assert r1 is r2
+    # Reset the process cache so other tests bootstrap their own runtime.
+    api._RUNTIME_CACHE = None
+
+
+def test_runtime_reuse_bootstrap_failure_refuses_session(monkeypatch):
+    """SPEC-B: a bootstrap failure marks the runtime unhealthy and entry
+    points refuse new sessions — no silent fallback."""
+    import dargus.api as api
+
+    api._RUNTIME_CACHE = None
+
+    def _fail_bootstrap(*_a, **_k):
+        raise RuntimeError("config missing")
+
+    import importlib
+
+    bootstrap_mod = importlib.import_module("dargus.runtime.bootstrap")
+
+    monkeypatch.setattr(bootstrap_mod, "bootstrap", _fail_bootstrap)
+    with pytest.raises(RuntimeError, match="refusing new session"):
+        api._get_runtime()
+    # A failed bootstrap leaves the cache empty so a later healthy call can retry.
+    assert api._RUNTIME_CACHE is None
+
+
 def test_api_predict_returns_prediction_matrix(minimal_dbase):
     """dargus.predict() returns the correct output contract shape."""
     result = dargus.predict(

@@ -15,15 +15,26 @@ from dargus.iris.commander import Iris
 logger = logging.getLogger(__name__)
 
 
-def _create_iris_with_lm() -> Iris:
-    """Create Iris through the runtime's AgentFactory.
+#: Process-lifetime runtime accessor. The first API call bootstraps; every
+#: subsequent call reuses the same DargusRuntime so it (and the Conversations
+#: it owns) survives across ask/predict/ingest/status turns (SPEC-B).
+_RUNTIME_CACHE: Any | None = None
 
-    Bootstraps a DargusRuntime from the config file. Per design/2_runtime_structure.md
-    the runtime starts healthy and entry points refuse new sessions while
-    unhealthy — there is no silent fallback to a runtime-less path. On an
-    unrecoverable bootstrap failure the runtime is marked unhealthy and the
-    entry point raises.
+
+def _get_runtime() -> Any:
+    """Return the process-lifetime DargusRuntime, bootstrapping it once.
+
+    Bootstraps lazily on first call and caches the runtime. Per
+    design/2_runtime_structure.md the runtime starts healthy and entry points
+    refuse new sessions while unhealthy — there is no silent fallback to a
+    runtime-less path. On an unrecoverable bootstrap failure the runtime is
+    marked unhealthy and the entry point raises.
     """
+    global _RUNTIME_CACHE
+    if _RUNTIME_CACHE is not None:
+        _RUNTIME_CACHE.ensure_healthy()
+        return _RUNTIME_CACHE
+
     from dargus.runtime.bootstrap import bootstrap
 
     try:
@@ -32,7 +43,17 @@ def _create_iris_with_lm() -> Iris:
         logger.error("API: runtime bootstrap failed: %s", exc)
         raise RuntimeError(f"DargusRuntime failed to start: {exc} — refusing new session") from exc
     runtime.ensure_healthy()
-    return runtime.agent_factory.iris()
+    _RUNTIME_CACHE = runtime
+    return runtime
+
+
+def _create_iris_with_lm() -> Iris:
+    """Create Iris through the runtime's AgentFactory.
+
+    Uses the process-lifetime runtime (see :func:`_get_runtime`) so the same
+    DargusRuntime and the same cached Iris are reused across API calls.
+    """
+    return _get_runtime().agent_factory.iris()
 
 
 def predict(
@@ -43,7 +64,7 @@ def predict(
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Run a full Iris -> Iris multi-round prediction.
 
-    Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
+    Reuses the process-lifetime DargusRuntime and the cached Iris;
     refuses the session when the runtime is unhealthy.
 
     Args:
@@ -67,7 +88,7 @@ def predict(
 def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> dict[str, Any]:
     """Ingest data into the global D-Base.
 
-    Bootstraps the DargusRuntime and creates Iris via the AgentFactory;
+    Reuses the process-lifetime DargusRuntime and the cached Iris;
     refuses the session when the runtime is unhealthy.
 
     Args:

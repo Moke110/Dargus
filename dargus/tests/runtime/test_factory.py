@@ -86,6 +86,27 @@ class TestExpertCreation:
         assert isinstance(iris, Iris)
         assert iris._agent_factory is factory
 
+    def test_iris_cached_returns_same_instance(self):
+        """SPEC-B: AgentFactory.iris() caches and returns the same Iris."""
+        factory = AgentFactory(DargusRuntime())
+        iris1 = factory.iris()
+        iris2 = factory.iris()
+        assert iris1 is iris2
+
+    def test_iris_cache_reset_on_terminate(self):
+        """SPEC-B: terminating Iris clears the factory cache."""
+        factory = AgentFactory(DargusRuntime())
+        iris1 = factory.iris()
+        factory.terminate(iris1)
+        iris2 = factory.iris()
+        assert iris2 is not iris1
+
+    def test_iris_cache_is_per_factory(self):
+        """Two factories on different runtimes each cache their own Iris."""
+        f1 = AgentFactory(DargusRuntime())
+        f2 = AgentFactory(DargusRuntime())
+        assert f1.iris() is not f2.iris()
+
     def test_experts_receive_dbase_from_runtime_manager(self):
         class _Manager:
             dbase = object()

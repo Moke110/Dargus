@@ -174,6 +174,10 @@ class BaseAgent(ABC):
         # reads prior context from and appends every round to it. There is no
         # separate private history/act_cache buffer.
         conversation = self._resolve_conversation(task_spec)
+        # Record the active session so the spawn_expert tool can link a
+        # Subagent's Conversation to this one's (SPEC-C).
+        if self._runtime is not None:
+            self._runtime.current_session_id = conversation.session_id
         if not conversation.messages or task_spec.get("_user_turn"):
             # Fresh conversation: record the task as the opening user message.
             # Subsequent user turns (ask() across a reused runtime) carry the

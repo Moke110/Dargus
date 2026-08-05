@@ -90,7 +90,7 @@ class BiomedExpert(Expert):
         if in_vivo_count == 0 and in_vitro_count > 0:
             data_gaps.append("No in vivo evidence — efficacy may not translate to organism level")
 
-        confidence = self._compute_confidence(findings)
+        confidence = self._assess_confidence(findings)
         return ExpertReport(
             expert="BiomedExpert",
             round=context.round,
@@ -110,7 +110,7 @@ class BiomedExpert(Expert):
             score += 0.15
         return min(max(score, 0.0), 1.0)
 
-    def _compute_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
+    def _assess_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_preclinical_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)

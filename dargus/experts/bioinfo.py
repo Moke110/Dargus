@@ -123,7 +123,7 @@ class BioinfoExpert(Expert):
                 )
             )
 
-        confidence = self._compute_confidence(findings)
+        confidence = self._assess_confidence(findings)
         return ExpertReport(
             expert="BioinfoExpert",
             round=context.round,
@@ -142,7 +142,7 @@ class BioinfoExpert(Expert):
             score += 0.2
         return min(max(score, 0.0), 1.0)
 
-    def _compute_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
+    def _assess_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_bioinfo_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)

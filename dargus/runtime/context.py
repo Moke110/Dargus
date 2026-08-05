@@ -51,15 +51,27 @@ class DargusRuntime:
     conversation_store: dict[tuple[str, str], Any] = field(default_factory=dict)
     # The durable session object hooks receive — survives rounds and turns.
     session: dict[str, Any] = field(default_factory=dict)
+    # ── Subagent spawning (SPEC-C) ──────────────────────────────────────
+    # Stack of active subagent sessions; empty while Iris runs (depth 0).
+    # Non-empty means a Subagent is mid-run, so spawn_expert is denied
+    # (depth-1 guard — only Iris may spawn).
+    spawn_stack: list[str] = field(default_factory=list)
+    # Session id of the agent currently running (set by BaseAgent.run) so the
+    # spawn tool can link a Subagent's Conversation to its parent's.
+    current_session_id: str | None = None
 
-    def get_conversation(self, session_id: str, agent: str) -> Any:
-        """Return (creating if needed) the Conversation for session/agent."""
+    def get_conversation(self, session_id: str, agent: str, parent_id: str | None = None) -> Any:
+        """Return (creating if needed) the Conversation for session/agent.
+
+        ``parent_id`` links a Subagent's Conversation to its parent's
+        (opencode ``parentID`` analogue).
+        """
         key = (session_id, agent)
         conv = self.conversation_store.get(key)
         if conv is None:
             from dargus.models.conversation import Conversation
 
-            conv = Conversation(session_id=session_id, agent=agent)
+            conv = Conversation(session_id=session_id, agent=agent, parent_id=parent_id)
             self.conversation_store[key] = conv
         return conv
 
@@ -111,9 +123,126 @@ class DargusRuntime:
         # Register the switch_mode tool — always available regardless of mode.
         self.tool_registry.register(make_switch_mode_tool(self))
 
+        # Bind real implementations for the dbase_* Tools so any Agent (Iris or
+        # an Expert Subagent) can actually query/write D-Base (SPEC-C: Experts
+        # self-serve evidence). The registry.yaml entries are schema-only stubs;
+        # this wires them to the runtime's DBaseStore when one is available.
+        self._bind_dbase_tools()
+
+        # Register the spawn_expert tool (SPEC-C) — only available in predict
+        # mode. It is bound lazily at first Iris construction because it needs
+        # the AgentFactory + Iris back-references.
+        self._spawn_tool = None
+
         # Populate mode_config from config or defaults.
         if not self.mode_config:
             self.mode_config = _mode_config_from_config(self.config)
+
+    def _bind_dbase_tools(self) -> None:
+        """Bind dbase_query/dbase_write/... with lazily-resolved store impls.
+
+        The registry.yaml entries are schema-only stubs. This replaces them
+        with implementations that resolve the D-Base store per call: the
+        runtime's ``dbase_store`` when wired, else the global D-Base. The
+        runtime's ``dbase_store`` field is left untouched by default
+        construction (existing contract).
+        """
+        from dargus.tools.base import Tool, ToolParam
+        from dargus.tools.dbase import (
+            dbase_query,
+            dbase_status,
+            dbase_update_status,
+            dbase_write,
+            dbase_write_summary,
+        )
+
+        def _store() -> Any | None:
+            if self.dbase_store is not None:
+                return self.dbase_store
+            try:
+                from dargus.dbase import DBase
+                from dargus.dbase.store import DBaseStore
+
+                return DBaseStore(DBase.global_instance())
+            except Exception:
+                return None
+
+        specs: dict[str, Tool] = {}
+
+        q = Tool(
+            name="dbase_query",
+            description="Query the D-Base evidence store by drug/disease/level filters",
+            parameters=[
+                ToolParam("x_entity", "string", description="Intervention entity id (CURIE)"),
+                ToolParam("disease_id", "string", description="Disease id (CURIE)"),
+                ToolParam("y_type", "string", description="Readout/endpoint type"),
+                ToolParam("y_category", "string", description="Readout category"),
+                ToolParam("level", "string", description="Biological evidence level"),
+                ToolParam("evidence_design", "string", description="Evidence design"),
+                ToolParam("limit", "integer", default=100, description="Max records"),
+            ],
+            output={"type": "object", "properties": {"records": {"type": "array"}}},
+        )
+        q.bind(lambda **kw: dbase_query(_store(), kw))
+        specs["dbase_query"] = q
+
+        w = Tool(
+            name="dbase_write",
+            description="Write an evidence record through the single-writer D-Base API",
+            parameters=[ToolParam("record", "object", required=True, description="Evidence dict")],
+            output={"type": "object", "properties": {"evidence_id": {"type": "string"}}},
+        )
+        w.bind(lambda record: dbase_write(_store(), record))
+        specs["dbase_write"] = w
+
+        s = Tool(
+            name="dbase_status",
+            description="Report D-Base state (record count, shards, parquet view)",
+            parameters=[],
+            output={"type": "object", "properties": {"record_count": {"type": "integer"}}},
+        )
+        s.bind(lambda: dbase_status(_store()))
+        specs["dbase_status"] = s
+
+        us = Tool(
+            name="dbase_update_status",
+            description="Append a lifecycle status transition (supersede, retract, holdout)",
+            parameters=[
+                ToolParam("evidence_id", "string", required=True),
+                ToolParam(
+                    "status",
+                    "string",
+                    required=True,
+                    enum=["active", "superseded", "retracted", "holdout-test", "holdout-valid"],
+                ),
+                ToolParam("superseded_by", "string"),
+            ],
+            output={"type": "object", "properties": {"status": {"type": "string"}}},
+        )
+        us.bind(
+            lambda evidence_id, status, superseded_by=None: dbase_update_status(
+                _store(), evidence_id, status, superseded_by
+            )
+        )
+        specs["dbase_update_status"] = us
+
+        ws = Tool(
+            name="dbase_write_summary",
+            description="Write or replace the LLM summary sidecar entry for a record",
+            parameters=[
+                ToolParam("evidence_id", "string", required=True),
+                ToolParam("summary", "string", required=True),
+            ],
+            output={"type": "object", "properties": {"written": {"type": "boolean"}}},
+        )
+        ws.bind(lambda evidence_id, summary: dbase_write_summary(_store(), evidence_id, summary))
+        specs["dbase_write_summary"] = ws
+
+        for name, tool in specs.items():
+            if _store() is None:
+                logger.debug("DargusRuntime: no D-Base available — %s stays unbound", name)
+                continue
+            self.tool_registry.register(tool)
 
     # ── Mode system (ADR-0002) ─────────────────────────────────────────
 

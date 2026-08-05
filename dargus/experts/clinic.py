@@ -103,7 +103,7 @@ class ClinicExpert(Expert):
         if real_clinical == 0:
             data_gaps.append("No real clinical trial evidence — only simulated or none")
 
-        confidence = self._compute_confidence(findings)
+        confidence = self._assess_confidence(findings)
         return ExpertReport(
             expert="ClinicExpert",
             round=context.round,
@@ -124,7 +124,7 @@ class ClinicExpert(Expert):
             score = min(score + 0.1, 1.0)
         return min(max(score, 0.0), 1.0)
 
-    def _compute_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
+    def _assess_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
         if not findings:
             return ConfidenceInterval(low=0.0, high=1.0, sources=["no_clinical_evidence"])
         avg = sum(f.quality_score for f in findings) / len(findings)

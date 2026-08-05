@@ -134,6 +134,20 @@ class AgentFactory:
 
         iris = self._wire(Iris(agent_factory=self, **self._di_kwargs()))
         self._iris_cache = iris
+
+        # Wire the spawn_expert tool (SPEC-C) into the runtime now that Iris
+        # exists — it needs the factory + Iris back-references. Register once.
+        rt = self._runtime
+        if rt is not None and getattr(rt, "_spawn_tool", None) is None:
+            from dargus.tools.spawn import make_spawn_expert_tool
+
+            tool = make_spawn_expert_tool(self, iris)
+            rt._spawn_tool = tool
+            rt.tool_registry.register(tool)
+            # Expose spawn_expert in predict mode's tool list.
+            predict_spec = rt.mode_config.get("predict")
+            if predict_spec is not None and "spawn_expert" not in predict_spec.tools:
+                predict_spec.tools = list(predict_spec.tools) + ["spawn_expert"]
         return iris
 
     # ------------------------------------------------------------------

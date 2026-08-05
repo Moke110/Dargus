@@ -15,6 +15,22 @@ def minimal_dbase(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_api_key():
+    """Prevent a real DARGUS_LLM_API_KEY from leaking into the suite.
+
+    Model-driven paths (predict, T8) call the reasoning LLM; a leaked key
+    would trigger real, slow network calls in tests. Tests drive the stub
+    path instead. Tests that need a key can set it explicitly.
+    """
+    import os
+
+    old = os.environ.pop("DARGUS_LLM_API_KEY", None)
+    yield
+    if old is not None:
+        os.environ["DARGUS_LLM_API_KEY"] = old
+
+
+@pytest.fixture(autouse=True)
 def _no_real_embedding_model(request, monkeypatch):
     """Block the lazy SentenceTransformer default from loading in tests.
 

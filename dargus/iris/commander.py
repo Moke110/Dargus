@@ -17,6 +17,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _report_from_dict(payload: dict) -> Any:
+    """Rebuild an ExpertReport from its serialized dict (spawn tool result).
+
+    Mirrors :func:`dargus.tools.spawn._report_to_dict`.
+    """
+    from dargus.experts.protocol import (
+        ConfidenceInterval,
+        EvidenceAssessment,
+        ExpertReport,
+        TaskDelegation,
+    )
+
+    findings = [
+        EvidenceAssessment(
+            record_ids=f.get("record_ids", []),
+            biological_level=f.get("biological_level", ""),
+            relevance=f.get("relevance", "medium"),
+            quality_score=f.get("quality_score", 0.5),
+            limitations=f.get("limitations", []),
+        )
+        for f in payload.get("findings", [])
+    ]
+    conf = payload.get("confidence") or {}
+    delegations = [
+        TaskDelegation(
+            target_expert=d.get("target_expert", ""),
+            record_ids=d.get("record_ids", []),
+            reason=d.get("reason", ""),
+            priority=d.get("priority", "medium"),
+        )
+        for d in payload.get("delegations", [])
+    ]
+    return ExpertReport(
+        expert=payload.get("expert", ""),
+        round=payload.get("round", 0),
+        findings=findings,
+        confidence=ConfidenceInterval(
+            low=conf.get("low", 0.0),
+            high=conf.get("high", 1.0),
+            sources=conf.get("sources", []),
+        ),
+        delegations=delegations,
+        data_gaps=payload.get("data_gaps", []),
+        bias_notes=payload.get("bias_notes", []),
+    )
+
+
 class Iris(BaseAgent):
     """Coordinates D-Base, Expert system, and Iris prediction agents via Harness."""
 
@@ -96,86 +143,139 @@ class Iris(BaseAgent):
         endpoints: list[str],
         max_rounds: int = 5,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        """Run full multi-Expert assessment.
+        """Run model-driven multi-Expert assessment (SPEC-C).
 
-        With an injected LifecycleManager this delegates to
-        ``run_predict(task_spec)``; without one it runs the direct
-        expert-loop implementation. Experts are created through the
-        AgentFactory when one is wired (design/2_runtime_structure.md: the factory
-        is the single creation point for every Agent).
+        Replaces the hardcoded expert loop: predict-mode Iris runs its PRA
+        loop, the model emits ``spawn_expert`` calls (each creates a
+        parent-linked subagent and returns an ExpertReport as the Tool
+        result), and final synthesis consumes the collected ExpertReports.
+
+        When no reasoning LLM is wired (stub mode), Iris deterministically
+        spawns all four domain Experts plus the D4 director so a usable
+        DES ± DCS prediction is still produced.
         """
-        if self._lifecycle_manager is not None:
-            result = self._lifecycle_manager.run_predict(
-                {
-                    "drug_ids": drug_ids,
-                    "disease_id": disease_id,
-                    "endpoints": endpoints,
-                    "max_rounds": max_rounds,
-                }
-            )
-            if result is not None:
-                return result
-
-        from dargus.experts.protocol import ExpertContext
-
-        factory = self._agent_factory
-        manager = self._global_manager()
+        from dargus.models.conversation import Conversation
 
         result: dict[str, dict[str, dict[str, Any]]] = {}
+        # Predict runs in predict mode so the spawn_expert tool is available
+        # and the model's mode-tag validates (SPEC-C).
+        self._mode = "predict"
         for drug_id in drug_ids:
             result[drug_id] = {disease_id: {}}
             for endpoint in endpoints:
-                ctx = ExpertContext(
-                    drug_ids=[drug_id],
-                    disease_id=disease_id,
-                    endpoints=[endpoint],
-                )
-                records = manager.read_records(disease_id=disease_id)
-                if factory is not None:
-                    molecule = factory.expert("molecular")
-                    biomed = factory.expert("biomedical")
-                    bioinfo = factory.expert("bioinformatics")
-                    clinic = factory.expert("clinical")
-                    director = factory.d4_expert()
-                else:
-                    from dargus.experts.bioinfo import BioinfoExpert
-                    from dargus.experts.biomed import BiomedExpert
-                    from dargus.experts.clinic import ClinicExpert
-                    from dargus.experts.director import D4Expert
-                    from dargus.experts.molecule import MoleculeExpert
-
-                    molecule = MoleculeExpert(dbase=manager.dbase)
-                    biomed = BiomedExpert(dbase=manager.dbase)
-                    bioinfo = BioinfoExpert(dbase=manager.dbase)
-                    clinic = ClinicExpert(dbase=manager.dbase)
-                    director = D4Expert(dbase=manager.dbase)
-
-                mol_report = molecule.assess(records, ctx)
-                bio_report = biomed.assess(records, ctx)
-                bioinfo_report = bioinfo.assess(records, ctx)
-                clinic_report = clinic.assess(records, ctx)
-
-                all_reports: dict[str, list] = {
-                    "MoleculeExpert": [mol_report],
-                    "BiomedExpert": [bio_report],
-                    "BioinfoExpert": [bioinfo_report],
-                    "ClinicExpert": [clinic_report],
+                # ── Model-driven run: Iris reasons and emits spawn_expert ──
+                task_spec = {
+                    "workflow": "predict",
+                    "drug_ids": [drug_id],
+                    "disease_id": disease_id,
+                    "endpoints": [endpoint],
+                    "session_id": f"predict:{drug_id}:{disease_id}:{endpoint}",
                 }
-                final = director.conclude(drug_id, disease_id, endpoint, all_reports)
+                self.run(task_spec)
+
+                # Collect ExpertReports from the spawn_expert Tool results in
+                # Iris's Conversation (each spawn is a Tool Message).
+                reports_by_expert: dict[str, list[Any]] = {}
+                conv: Conversation = self._resolve_conversation(task_spec)
+                for msg in conv.messages:
+                    if msg.tool_call is None or msg.tool_call.name != "spawn_expert":
+                        continue
+                    if msg.tool_result is None or msg.tool_result.error is not None:
+                        continue
+                    payload = msg.tool_result.output
+                    if not isinstance(payload, dict) or "report" not in payload:
+                        continue
+                    expert_name = payload.get("expert", "unknown")
+                    reports_by_expert.setdefault(expert_name, []).append(
+                        _report_from_dict(payload["report"])
+                    )
+
+                # ── Final synthesis: consume the collected ExpertReports ──
+                if not reports_by_expert and self._reasoning_llm is None:
+                    # Stub mode (no LLM): deterministically spawn all four
+                    # domain experts so a usable prediction is produced.
+                    reports_by_expert = self._stub_spawn_all(drug_id, disease_id, endpoint)
+
+                # Surface any TaskDelegations carried by ExpertReports to Iris
+                # as synthetic Messages — Iris (the sole orchestrator) decides
+                # whether to spawn the target Expert (SPEC-C).
+                self._surface_delegations(conv, reports_by_expert)
+
+                final = self._synthesize(drug_id, disease_id, endpoint, reports_by_expert)
                 result[drug_id][disease_id][endpoint] = {
                     "efficacy_score": final.efficacy_score,
                     "confidence_score": final.confidence_score,
                     "confidence_level": final.confidence_level,
-                    "reasoning_mode": "Iris-expert",
+                    "reasoning_mode": "Iris-model-driven",
                     "supporting_records": final.supporting_records,
                     "expert_consensus": final.expert_consensus,
                     "contradictions": final.contradictions,
                     "data_gaps": final.data_gaps,
                 }
-                if factory is not None:
-                    for agent in (molecule, biomed, bioinfo, clinic, director):
-                        factory.terminate(agent)
         return result
+
+    def _stub_spawn_all(self, drug_id: str, disease_id: str, endpoint: str) -> dict[str, list[Any]]:
+        """Stub-mode fallback: spawn every domain Expert via the spawn tool.
+
+        Used when no reasoning LLM is wired — the model cannot emit
+        spawn_expert calls, so Iris deterministically consults all four
+        domain Experts (SPEC-C preserves a usable no-model path).
+        """
+        tool = getattr(self._runtime, "_spawn_tool", None) if self._runtime is not None else None
+        reports: dict[str, list[Any]] = {}
+        if tool is None:
+            return reports
+        for domain, expert_name in (
+            ("molecular", "MoleculeExpert"),
+            ("biomedical", "BiomedExpert"),
+            ("bioinformatics", "BioinfoExpert"),
+            ("clinical", "ClinicExpert"),
+        ):
+            try:
+                out = tool.execute(
+                    expert=domain, drug=drug_id, disease=disease_id, endpoint=endpoint
+                )
+                if isinstance(out, dict) and "report" in out:
+                    reports.setdefault(expert_name, []).append(_report_from_dict(out["report"]))
+            except Exception:
+                logger.warning("stub spawn of %s failed", domain, exc_info=True)
+        return reports
+
+    @staticmethod
+    def _surface_delegations(conv: Any, reports_by_expert: dict[str, list[Any]]) -> None:
+        """Surface TaskDelegations from ExpertReports as synthetic Messages.
+
+        Because Experts cannot spawn, a TaskDelegation travels as data in the
+        delegating Expert's ExpertReport; the harness surfaces it to Iris as a
+        ``synthetic`` Message so Iris can decide whether to spawn the target
+        (SPEC-C).
+        """
+        for expert_name, reports in reports_by_expert.items():
+            for report in reports:
+                for delegation in getattr(report, "delegations", []) or []:
+                    conv.add_synthetic(
+                        f"[TaskDelegation] {expert_name} requests {delegation.target_expert} "
+                        f"for records {list(delegation.record_ids)}: {delegation.reason}"
+                    )
+
+    def _synthesize(
+        self,
+        drug_id: str,
+        disease_id: str,
+        endpoint: str,
+        reports_by_expert: dict[str, list[Any]],
+    ) -> Any:
+        """Synthesize collected ExpertReports into a FinalReport via D4Expert.
+
+        When the D4 director was not itself spawned (no LLM), it is created
+        directly and its ``conclude`` produces the DES ± DCS contract.
+        """
+        from dargus.experts.director import D4Expert
+
+        director = self._agent_factory.d4_expert() if self._agent_factory is not None else None
+        if director is None:
+            director = D4Expert(dbase=self._global_manager().dbase)
+        return director.conclude(drug_id, disease_id, endpoint, reports_by_expert)
 
     def _empty_pred(self) -> dict[str, Any]:
         return {

@@ -16,6 +16,22 @@ def minimal_dbase(tmp_path):
     return dargus_home
 
 
+@pytest.fixture(autouse=True)
+def _no_api_key():
+    """Prevent a real DARGUS_LLM_API_KEY from leaking into these tests.
+
+    The model-driven predict path (T8) calls the reasoning LLM; with a key
+    present it would make a real, slow network call. Tests drive the stub
+    path instead.
+    """
+    import os
+
+    old = os.environ.pop("DARGUS_LLM_API_KEY", None)
+    yield
+    if old is not None:
+        os.environ["DARGUS_LLM_API_KEY"] = old
+
+
 def test_runtime_reuse_bootstraps_once():
     """SPEC-B: two consecutive API calls reuse the same DargusRuntime."""
     import dargus.api as api

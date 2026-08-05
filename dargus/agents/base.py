@@ -15,7 +15,7 @@ import yaml
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
 from dargus.models.conversation import Conversation, ToolCall, ToolResult
-from dargus.models.reasoning import Message, ReasoningLLM
+from dargus.models.reasoning import LiteLLMBackend, Message, ReasoningLLM
 from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
@@ -351,8 +351,13 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def _llm_call(self, system_prompt: str, user_prompt: str) -> str:
-        """Send a prompt to the injected ReasoningLLM; stub when none is wired."""
-        if self._reasoning_llm is not None:
+        """Send a prompt to the injected ReasoningLLM; stub when none is wired.
+
+        Falls back to the deterministic stub when no API key is configured
+        (or the LLM call fails) so model-driven paths do not hang on a doomed
+        network call in tests / key-less environments.
+        """
+        if self._reasoning_llm is not None and self._llm_available():
             try:
                 response = self._reasoning_llm.chat(
                     [
@@ -367,6 +372,23 @@ class BaseAgent(ABC):
 
         logger.warning("%s: no LLM configured, using stub", self.name)
         return self._llm_stub(system_prompt, user_prompt)
+
+    def _llm_available(self) -> bool:
+        """True when the reasoning LLM is usable (an API key is configured).
+
+        The runtime may hold a ReasoningLLM even without a key (bootstrap
+        keeps it for diagnostics); a key-less LiteLLM backend cannot complete
+        a call, so the agent should fall back to its deterministic stub rather
+        than hang on a doomed network call. Fake backends (tests) always count
+        as available.
+        """
+        llm = self._reasoning_llm
+        if llm is None:
+            return False
+        backend = getattr(llm, "_backend", None)
+        if isinstance(backend, LiteLLMBackend):
+            return bool(backend._api_key)
+        return True
 
     def _llm_stub(self, system_prompt: str, user_prompt: str) -> str:
         """Deterministic stub when no LLM is available."""

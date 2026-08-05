@@ -123,7 +123,11 @@ class BaseAgent(ABC):
             store = getattr(self._runtime, "conversation_store", None)
         if store is not None:
             session_id = task_spec.get("session_id", f"{self.name}")
-            conv = store.get(session_id, self.name)
+            getter = getattr(self._runtime, "get_conversation", None)
+            if getter is not None:
+                conv = getter(session_id, self.name)
+            else:
+                conv = store.get((session_id, self.name))
             self._conversation = conv
             return conv
 
@@ -170,11 +174,11 @@ class BaseAgent(ABC):
         # reads prior context from and appends every round to it. There is no
         # separate private history/act_cache buffer.
         conversation = self._resolve_conversation(task_spec)
-        if not conversation.messages:
-            # First round of a fresh conversation: record the task as the
-            # opening user message. Subsequent turns append their own user
-            # message via the same path (the Conversation persists on the
-            # runtime), so cross-turn dialogue lives in one ordered log.
+        if not conversation.messages or task_spec.get("_user_turn"):
+            # Fresh conversation: record the task as the opening user message.
+            # Subsequent user turns (ask() across a reused runtime) carry the
+            # ``_user_turn`` marker so the new query is appended in order —
+            # cross-turn dialogue lives in one ordered log (ADR-0003).
             conversation.add_user(
                 json.dumps(task_spec, ensure_ascii=False),
                 mode=self._mode,

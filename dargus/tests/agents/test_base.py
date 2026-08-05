@@ -123,6 +123,40 @@ def test_run_messages_carry_active_mode():
     assert all(m.mode == "predict" for m in conv.messages)
 
 
+def test_two_user_turns_accumulate_in_one_conversation():
+    """T4: two ask()-style turns on one reused runtime append user messages
+    in order and the second turn sees the first turn's messages."""
+    from dargus.runtime.context import DargusRuntime
+
+    runtime = DargusRuntime()
+    # Use a stub reasoning LLM wired via DI.
+    agent = _MinimalAgent(
+        name="Iris",
+        hook_registry=HookRegistry(),
+        reasoning_llm=_StubLLM(
+            [
+                '{"mode": "auto", "action": "text", "text": "first reply"}',
+                '{"mode": "auto", "action": "text", "text": "second reply"}',
+            ]
+        ),
+    )
+    agent._runtime = runtime
+
+    agent.run({"query": "what is aspirin?", "session_id": "dialogue", "_user_turn": True})
+    agent.run({"query": "and metformin?", "session_id": "dialogue", "_user_turn": True})
+
+    conv = runtime.get_conversation("dialogue", "Iris")
+    texts = [m.text for m in conv.messages]
+    # Two user turns + two assistant replies, in order.
+    n_aspirin = sum(1 for t in texts if "what is aspirin?" in t)
+    n_metformin = sum(1 for t in texts if "and metformin?" in t)
+    assert n_aspirin == 1
+    assert n_metformin == 1
+    assert "first reply" in texts
+    assert "second reply" in texts
+    assert len(conv.messages) == 4
+
+
 def test_base_agent_config_only_works():
     """BaseAgent(config=...) must work without DI."""
     agent = _MinimalAgent(config={"projects": {"root_dir": "/tmp"}})

@@ -45,6 +45,23 @@ class DargusRuntime:
     # ── Mode system (ADR-0002) ─────────────────────────────────────────
     mode: str = "auto"
     mode_config: dict[str, ModeSpec] = field(default_factory=dict)
+    # ── Conversations (ADR-0003 / SPEC-B) ───────────────────────────────
+    # Every agent's Conversation, keyed by (session_id, agent). Owned by the
+    # runtime so the log survives agent churn and API turns.
+    conversation_store: dict[tuple[str, str], Any] = field(default_factory=dict)
+    # The durable session object hooks receive — survives rounds and turns.
+    session: dict[str, Any] = field(default_factory=dict)
+
+    def get_conversation(self, session_id: str, agent: str) -> Any:
+        """Return (creating if needed) the Conversation for session/agent."""
+        key = (session_id, agent)
+        conv = self.conversation_store.get(key)
+        if conv is None:
+            from dargus.models.conversation import Conversation
+
+            conv = Conversation(session_id=session_id, agent=agent)
+            self.conversation_store[key] = conv
+        return conv
 
     def mark_unhealthy(self, reason: str) -> None:
         """Flip the health flag after an unrecoverable dependency failure.

@@ -1,6 +1,12 @@
 """Dargus model layer — ReasoningLLM, EmbeddingModel, and configuration."""
 
 from dargus.models.config import EnvSecretsManager, ModelConfig, SecretsManager, load_model_config
+from dargus.models.conversation import (
+    Conversation,
+    ConvMessage,
+    ToolCall,
+    ToolResult,
+)
 from dargus.models.embedding import (
     Embedding,
     EmbeddingBackend,
@@ -23,6 +29,10 @@ __all__ = [
     "ModelConfig",
     "load_model_config",
     "Message",
+    "Conversation",
+    "ConvMessage",
+    "ToolCall",
+    "ToolResult",
     "ReasoningOptions",
     "LLMUsage",
     "LLMResponse",

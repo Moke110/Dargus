@@ -14,6 +14,7 @@ import yaml
 
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
+from dargus.models.conversation import Conversation
 from dargus.models.reasoning import Message, ReasoningLLM
 from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
@@ -80,6 +81,11 @@ class BaseAgent(ABC):
         # pass through.
         self._runtime: Any | None = runtime
 
+        # The agent's Conversation (ADR-0003) — the single source of truth
+        # for context. Resolved through the runtime's conversation store when
+        # one is wired (T4); a per-instance fallback otherwise.
+        self._conversation: Conversation | None = None
+
         self._validate_permissions()
 
     def _validate_permissions(self) -> None:
@@ -96,6 +102,37 @@ class BaseAgent(ABC):
                     f"{self.name}: skill '{skill_name}' requires tools {missing} "
                     f"not in PERMITTED_TOOLS={self.PERMITTED_TOOLS}"
                 )
+
+    # ------------------------------------------------------------------
+    # Conversation access (ADR-0003)
+    # ------------------------------------------------------------------
+
+    def _resolve_conversation(self, task_spec: dict[str, Any]) -> Conversation:
+        """Return the agent's Conversation, resolving it through the runtime.
+
+        When a runtime conversation store is wired (T4), the store owns the
+        Conversation keyed by session/agent so it survives agent churn and
+        API turns. Otherwise a per-instance fallback Conversation is used
+        (standalone/test contexts).
+        """
+        if self._conversation is not None:
+            return self._conversation
+
+        store = None
+        if self._runtime is not None:
+            store = getattr(self._runtime, "conversation_store", None)
+        if store is not None:
+            session_id = task_spec.get("session_id", f"{self.name}")
+            conv = store.get(session_id, self.name)
+            self._conversation = conv
+            return conv
+
+        conv = Conversation(
+            session_id=task_spec.get("session_id", f"{self.name}"),
+            agent=self.name,
+        )
+        self._conversation = conv
+        return conv
 
     @staticmethod
     def _load_default_config() -> dict[str, Any]:

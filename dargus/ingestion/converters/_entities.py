@@ -24,7 +24,13 @@ def load_drugs(path: str | Path | None = None) -> list[dict]:
     if _DRUGS is not None and path is None:
         return _DRUGS
     if path is None:
-        path = Path(__file__).resolve().parent.parent.parent.parent / "fda_approved_drugs.json"
+        path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "ingest"
+            / "retrieval_v1"
+            / "lists"
+            / "fda_approved_drugs.json"
+        )
     with Path(path).open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     drugs = data["drugs"] if isinstance(data, dict) else data

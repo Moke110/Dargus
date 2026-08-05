@@ -26,11 +26,9 @@ CONTEXT.md
 data/
 docs/
 graphify-out/
-scripts/
 test/
 projects/
 logs/
 outputs/
 literature/
-prompts/
-ingest_source/
+ingest/

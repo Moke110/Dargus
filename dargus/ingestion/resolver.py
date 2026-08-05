@@ -39,7 +39,13 @@ def load_registry(path: str | Path | None = None) -> list[dict]:
     if _REGISTRY is not None and path is None:
         return _REGISTRY
     if path is None:
-        path = Path(__file__).resolve().parent.parent.parent / "disease_registry.json"
+        path = (
+            Path(__file__).resolve().parent.parent.parent
+            / "ingest"
+            / "retrieval_v1"
+            / "lists"
+            / "disease_registry.json"
+        )
     with Path(path).open("r", encoding="utf-8") as fh:
         data = json.load(fh)
     diseases = data["diseases"] if isinstance(data, dict) else data

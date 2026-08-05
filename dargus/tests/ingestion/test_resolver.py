@@ -15,7 +15,7 @@ from dargus.ingestion.resolver import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-REGISTRY = REPO_ROOT / "disease_registry.json"
+REGISTRY = REPO_ROOT / "ingest" / "retrieval_v1" / "lists" / "disease_registry.json"
 
 
 @pytest.fixture(autouse=True)

@@ -59,6 +59,8 @@ class DargusRuntime:
 
     def __post_init__(self) -> None:
         from dargus.runtime.factory import AgentFactory
+        from dargus.runtime.hooks import HookPoint, HookRegistry, WorkspaceGuardHook
+        from dargus.runtime.mode_tag import ModeTagValidationHook
         from dargus.runtime.workspace import WorkspaceGuard
         from dargus.tools.cache import ToolCache
         from dargus.tools.file import make_read_file_tool, make_write_file_tool
@@ -73,6 +75,14 @@ class DargusRuntime:
             self.workspace_guard = WorkspaceGuard(root=self.config.get("workspace_root"))
         if self.tool_registry is None:
             self.tool_registry = ToolRegistry()
+        if self.hook_registry is None:
+            self.hook_registry = HookRegistry()
+
+        # Wire the agent-loop hooks every agent should see (ADR-0002).
+        # Mode-tag validation runs at REASON_END to block off-mode ACT; the
+        # workspace guard backstops path-typed tool params at ACT_START.
+        self.hook_registry.register(HookPoint.REASON_END, ModeTagValidationHook())
+        self.hook_registry.register(HookPoint.ACT_START, WorkspaceGuardHook())
 
         # Register general-purpose file Tools wired to the WorkspaceGuard.
         # These are not in registry.yaml because they require the runtime's

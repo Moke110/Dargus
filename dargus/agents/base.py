@@ -49,6 +49,7 @@ class BaseAgent(ABC):
         hook_registry: HookRegistry | None = None,
         mode: str = "auto",
         mode_config: dict[str, Any] | None = None,
+        runtime: Any | None = None,
     ):
         # Backward compat: if first positional arg is a dict, treat as config not name
         if isinstance(name, dict):
@@ -72,6 +73,12 @@ class BaseAgent(ABC):
         # Mode system (ADR-0002)
         self._mode: str = mode
         self._mode_config: dict[str, Any] = mode_config or {}
+
+        # Back-reference to the owning DargusRuntime, injected by AgentFactory.
+        # Runtime-dependent hooks (mode-tag validation, workspace guard) read
+        # state off this; None in standalone/test contexts, where those hooks
+        # pass through.
+        self._runtime: Any | None = runtime
 
         self._validate_permissions()
 
@@ -135,7 +142,7 @@ class BaseAgent(ABC):
             # Hook: PERCEIVE_END
             if self._hook_registry is not None:
                 _ctx = HookContext(
-                    runtime=None,
+                    runtime=self._runtime,
                     task_spec=task_spec,
                     session=None,
                     agent=self,
@@ -155,7 +162,7 @@ class BaseAgent(ABC):
             reason_ctx: HookContext | None = None
             if self._hook_registry is not None:
                 reason_ctx = HookContext(
-                    runtime=None,
+                    runtime=self._runtime,
                     task_spec=task_spec,
                     session=None,
                     agent=self,
@@ -174,6 +181,25 @@ class BaseAgent(ABC):
                 act_output = {}
                 act_traces: list[CallTrace] = []
             else:
+                # Hook: ACT_START — pre-execution guard (workspace paths,
+                # tool allowlist). Fired only when ACT will actually run.
+                if self._hook_registry is not None:
+                    _ctx = HookContext(
+                        runtime=self._runtime,
+                        task_spec=task_spec,
+                        session=None,
+                        agent=self,
+                        tools=self._tool_map(),
+                        round=round_num,
+                        trace=CallTrace(
+                            round=round_num,
+                            phase="act",
+                            tool_called=reason_response.get("tool"),
+                        ),
+                        extra={"reason_response": reason_response},
+                    )
+                    self._hook_registry.run(HookPoint.ACT_START, _ctx)
+
                 act_output, act_traces = self._act(reason_response, round_num, perceive_cache)
 
             traces.extend(act_traces)
@@ -181,10 +207,11 @@ class BaseAgent(ABC):
             # Hook: ACT_END
             if self._hook_registry is not None and not skip_act:
                 _ctx = HookContext(
-                    runtime=None,
+                    runtime=self._runtime,
                     task_spec=task_spec,
                     session=None,
                     agent=self,
+                    tools=self._tool_map(),
                     round=round_num,
                     trace=act_traces[-1] if act_traces else None,
                     extra={"act_output": act_output},
@@ -222,7 +249,7 @@ class BaseAgent(ABC):
             # Hook: ROUND_END
             if self._hook_registry is not None:
                 _ctx = HookContext(
-                    runtime=None,
+                    runtime=self._runtime,
                     task_spec=task_spec,
                     session=None,
                     agent=self,
@@ -253,6 +280,13 @@ class BaseAgent(ABC):
 
     def _get_tool(self, name: str) -> Tool:
         return self._tool_registry.get(name)
+
+    def _tool_map(self) -> dict[str, Tool]:
+        """All registered tools keyed by name — for hook contexts."""
+        try:
+            return {tool.name: tool for tool in self._tool_registry.list_all()}
+        except Exception:
+            return {}
 
     # ------------------------------------------------------------------
     # LLM helpers

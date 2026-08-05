@@ -399,3 +399,91 @@ def test_mode_tag_mismatch_warning_injected():
     ctx3 = HookContext(runtime=None, extra={"reason_response": {"mode": "predict"}})
     result3 = hook(ctx3)
     assert result3.extra.get("skip_act") is not True
+
+
+# ------------------------------------------------------------------
+# Hook wiring through the real runtime (issue #64/#66 gaps)
+# ------------------------------------------------------------------
+
+
+def test_runtime_hook_registry_is_prewired():
+    """DargusRuntime auto-creates a HookRegistry with the agent-loop hooks.
+
+    ADR-0002: ModeTagValidationHook at REASON_END and WorkspaceGuardHook at
+    ACT_START must be registered so the live loop actually enforces them.
+    """
+    from dargus.runtime.context import DargusRuntime
+    from dargus.runtime.hooks import HookPoint
+    from dargus.runtime.mode_tag import ModeTagValidationHook
+
+    rt = DargusRuntime()
+    reason_hooks = rt.hook_registry.list_hooks(HookPoint.REASON_END)
+    act_start_hooks = rt.hook_registry.list_hooks(HookPoint.ACT_START)
+
+    assert any(isinstance(h, ModeTagValidationHook) for h in reason_hooks)
+    assert act_start_hooks, "WorkspaceGuardHook must be registered at ACT_START"
+
+
+def test_factory_injects_runtime_into_agents():
+    """AgentFactory attaches the runtime back-reference to every agent."""
+    from dargus.runtime.context import DargusRuntime
+
+    rt = DargusRuntime()
+    iris = rt.agent_factory.iris()
+    assert iris._runtime is rt
+
+
+def test_mode_tag_hook_fires_through_live_loop():
+    """A mismatched LLM mode-tag blocks ACT in the real runtime-wired loop.
+
+    Drives Iris through the actual DargusRuntime so the REASON_END
+    ModeTagValidationHook is registered and receives a non-None runtime.
+    """
+    import json
+
+    from dargus.runtime.context import DargusRuntime
+    from dargus.runtime.hooks import HookPoint
+
+    # LLM claims mode "predict" while runtime stays in "auto" → mismatch.
+    response = json.dumps(
+        {"mode": "predict", "action": "tool_call", "tool": "read_file", "params": {"path": "x"}}
+    )
+
+    rt = DargusRuntime()
+    iris = rt.agent_factory.iris()
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris._reasoning_llm = ReasoningLLM(backend=FakeReasoningBackend(response))
+
+    report = iris.run({"query": "test"})
+
+    # The mode-tag hook must have fired at REASON_END with a real runtime.
+    fired = [
+        e
+        for e in rt.hook_registry.invocation_log
+        if e["point"] == HookPoint.REASON_END.name and e["hook"] == "ModeTagValidationHook"
+    ]
+    assert fired, "ModeTagValidationHook did not fire at REASON_END"
+    # Mismatch → ACT skipped → no read_file tool executed.
+    executed = [t for t in report.call_trace if t.tool_called == "read_file" and t.error is None]
+    assert not executed
+
+
+def test_act_start_hook_fires_through_live_loop():
+    """ACT_START fires before tool execution in the real runtime-wired loop."""
+    import json
+
+    from dargus.runtime.context import DargusRuntime
+    from dargus.runtime.hooks import HookPoint
+
+    response = json.dumps({"mode": "auto", "action": "text", "text": "done"})
+
+    rt = DargusRuntime()
+    iris = rt.agent_factory.iris()
+    from dargus.models.reasoning import ReasoningLLM
+
+    iris._reasoning_llm = ReasoningLLM(backend=FakeReasoningBackend(response))
+    iris.run({"query": "test"})
+
+    points = {e["point"] for e in rt.hook_registry.invocation_log}
+    assert HookPoint.REASON_END.name in points

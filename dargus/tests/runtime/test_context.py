@@ -23,7 +23,9 @@ class TestDargusRuntime:
         assert rt.tool_registry is not None
         assert rt.skill_registry is None
         assert rt.dbase_store is None
-        assert rt.hook_registry is None
+        # hook_registry is auto-created in __post_init__ and pre-wired with the
+        # agent-loop hooks (ADR-0002): mode-tag validation + workspace guard.
+        assert rt.hook_registry is not None
         # Mode system defaults
         assert rt.mode == "auto"
         assert "auto" in rt.mode_config

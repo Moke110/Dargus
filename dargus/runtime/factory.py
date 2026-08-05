@@ -73,6 +73,16 @@ class AgentFactory:
 
         return DBase.global_instance()
 
+    def _wire(self, agent: Any) -> Any:
+        """Attach the runtime back-reference for runtime-dependent hooks.
+
+        Done post-construction (not via the DI bundle) because Expert and
+        D4Expert subclass constructors declare explicit kwargs and do not
+        forward unknown ones to ``BaseAgent``.
+        """
+        agent._runtime = self._runtime
+        return agent
+
     # ------------------------------------------------------------------
     # Creation
     # ------------------------------------------------------------------
@@ -81,7 +91,7 @@ class AgentFactory:
         """Create a BaseAgent with dependencies injected from the runtime."""
         from dargus.agents.base import BaseAgent
 
-        return BaseAgent(name=name, **self._di_kwargs())
+        return self._wire(BaseAgent(name=name, **self._di_kwargs()))
 
     def expert(self, domain: str):
         """Create the DomainExpert for *domain*.
@@ -102,19 +112,19 @@ class AgentFactory:
                 f"Known domains: {sorted(_DOMAIN_EXPERT_PATHS)}"
             )
         expert_cls = _import_class(path)
-        return expert_cls(dbase=self._dbase(), **self._di_kwargs())
+        return self._wire(expert_cls(dbase=self._dbase(), **self._di_kwargs()))
 
     def d4_expert(self):
         """Create the D4Expert coordinator."""
         from dargus.experts.director import D4Expert
 
-        return D4Expert(dbase=self._dbase(), agent_factory=self, **self._di_kwargs())
+        return self._wire(D4Expert(dbase=self._dbase(), agent_factory=self, **self._di_kwargs()))
 
     def iris(self):
         """Create the Iris commander Agent."""
         from dargus.iris.commander import Iris
 
-        return Iris(agent_factory=self, **self._di_kwargs())
+        return self._wire(Iris(agent_factory=self, **self._di_kwargs()))
 
     # ------------------------------------------------------------------
     # Termination

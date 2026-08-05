@@ -113,7 +113,12 @@ class AgentFactory:
                 f"Known domains: {sorted(_DOMAIN_EXPERT_PATHS)}"
             )
         expert_cls = _import_class(path)
-        return self._wire(expert_cls(dbase=self._dbase(), **self._di_kwargs()))
+        # Experts run in the least-privilege "expert" mode (SPEC-C): they
+        # self-serve evidence via dbase_query but cannot switch modes, write
+        # files, or spawn subagents. Override the runtime's default mode.
+        di = self._di_kwargs()
+        di["mode"] = "expert"
+        return self._wire(expert_cls(dbase=self._dbase(), **di))
 
     def d4_expert(self):
         """Create the D4Expert coordinator."""

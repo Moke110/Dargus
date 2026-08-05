@@ -101,4 +101,19 @@ def default_mode_config() -> dict[str, ModeSpec]:
             hooks=["mode_tag_validation"],
             system_prompt=DEFAULT_PREDICT_SYSTEM_PROMPT,
         ),
+        # Expert Subagent mode (SPEC-C): least-privilege — dbase_query + read
+        # tools only. Explicitly NOT switch_mode / write_file / spawn_expert.
+        # Experts self-serve evidence from the shared D-Base.
+        "expert": ModeSpec(
+            tools=["read_file", "dbase_query"],
+            skills=["routing"],
+            hooks=["mode_tag_validation"],
+            system_prompt=(
+                "You are a domain Expert assessing drug efficacy evidence. "
+                "Query the D-Base with dbase_query to gather evidence within "
+                "your biological-level scope, reason over the results, and "
+                "converge with a text assessment. You cannot spawn other "
+                "experts or switch modes."
+            ),
+        ),
     }

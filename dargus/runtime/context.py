@@ -315,7 +315,7 @@ def _mode_config_from_config(config: dict) -> dict[str, ModeSpec]:
         return defaults
 
     result: dict[str, ModeSpec] = {}
-    for mode_name in ("auto", "ingest", "predict"):
+    for mode_name in ("auto", "ingest", "predict", "expert"):
         yaml_entry = yaml_modes.get(mode_name, {}) if isinstance(yaml_modes, dict) else {}
         default_spec = defaults.get(mode_name, ModeSpec())
         result[mode_name] = ModeSpec(

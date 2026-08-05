@@ -464,15 +464,23 @@ class BaseAgent(ABC):
         for skill_name in mode_skill_names:
             try:
                 skill = self._skill_registry.get(skill_name)
-                skill_content.append(skill.prompt)
+                skill_content.append(skill.body)
             except KeyError:
                 pass
 
         # ── Dialogue context: project the Conversation ────────────
+        # Always-available tools (_modes=["*"], e.g. switch_mode) are injected
+        # into orchestrator modes. The least-privilege "expert" subagent mode
+        # opts out — a Subagent cannot switch modes, write files, or spawn
+        # (SPEC-C).
+        if self._mode == "expert":
+            available = list(mode_tool_names)
+        else:
+            available = mode_tool_names + self._always_available_tool_names()
         return {
             "system_prompt": system_prompt,
             "mode": self._mode,
-            "mode_tool_names": mode_tool_names + self._always_available_tool_names(),
+            "mode_tool_names": available,
             "tool_definitions": tool_defs,
             "skill_content": skill_content,
             "task_spec": task_spec,
@@ -592,11 +600,13 @@ class BaseAgent(ABC):
         if perceive_cache:
             allowed_tools.update(perceive_cache.get("mode_tool_names", []))
         if tool_name not in allowed_tools:
-            # Always-available tool check (switch_mode is the canonical example)
+            # Always-available tool check (switch_mode is the canonical example).
+            # The least-privilege "expert" subagent mode opts out of the
+            # always-available escape hatch (SPEC-C).
             try:
                 tool = self._get_tool(tool_name)
                 tool_modes: list[str] = getattr(tool, "_modes", [])
-                if tool_modes != ["*"]:
+                if self._mode == "expert" or tool_modes != ["*"]:
                     error_msg = f"Tool {tool_name!r} not permitted in mode {self._mode!r}"
                     results["output"] = {"error": error_msg}
                     traces.append(

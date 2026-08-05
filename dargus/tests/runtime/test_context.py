@@ -152,9 +152,9 @@ class TestModeSpec:
         assert ms.on_enter == "on_enter_hook"
         assert ms.on_exit == "on_exit_hook"
 
-    def test_default_mode_config_has_three_modes(self):
+    def test_default_mode_config_has_four_modes(self):
         config = default_mode_config()
-        assert set(config.keys()) == {"auto", "ingest", "predict"}
+        assert set(config.keys()) == {"auto", "ingest", "predict", "expert"}
         assert all(isinstance(v, ModeSpec) for v in config.values())
 
     def test_default_mode_config_has_system_prompts(self):

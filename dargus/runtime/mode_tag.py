@@ -28,7 +28,10 @@ class ModeTagValidationHook:
             return context  # No runtime → nothing to validate
 
         reason_response = context.extra.get("reason_response", {})
-        expected_mode = runtime.mode
+        # Validate against the acting agent's own mode (a Subagent runs in its
+        # own mode, not the runtime's), falling back to the runtime's mode.
+        agent = context.agent
+        expected_mode = getattr(agent, "_mode", None) or runtime.mode
         response_mode = reason_response.get("mode", "")
 
         if not response_mode:
@@ -43,7 +46,7 @@ class ModeTagValidationHook:
         # Mismatch — block ACT, inject warning
         warning = (
             f"Mode tag mismatch: LLM responded with mode={response_mode!r} "
-            f"but runtime is in mode={expected_mode!r}. "
+            f"but the agent is in mode={expected_mode!r}. "
             "Please ensure your response uses the correct mode field."
         )
         context.extra["skip_act"] = True

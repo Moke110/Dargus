@@ -106,3 +106,63 @@ def test_spawn_expert_unknown_domain_errors():
         endpoint="IC50",
     )
     assert "error" in result
+
+
+# ------------------------------------------------------------------
+# T7 (#90): Expert self-serve + least-privilege
+# ------------------------------------------------------------------
+
+
+def test_expert_mode_is_least_privilege():
+    """Experts run in 'expert' mode: dbase_query + read only; NOT
+    switch_mode / write_file / spawn_expert."""
+    rt = _make_runtime()
+    rt.agent_factory.iris()
+    expert = rt.agent_factory.expert("molecular")
+    assert expert._mode == "expert"
+
+    mode_tools = set(rt.mode_config["expert"].tools)
+    assert {"dbase_query", "read_file"} <= mode_tools
+    assert "switch_mode" not in mode_tools
+    assert "write_file" not in mode_tools
+    assert "spawn_expert" not in mode_tools
+
+
+def test_expert_cannot_invoke_forbidden_tools():
+    """An Expert's ACT is denied for switch_mode / write_file / spawn_expert."""
+    rt = _make_runtime()
+    rt.agent_factory.iris()
+    expert = rt.agent_factory.expert("clinical")
+    expert._runtime = rt
+
+    # Expert's perceive cache carries the expert-mode tool allowlist.
+    perceive = expert._perceive({"workflow": "predict"}, expert._resolve_conversation({}), 0)
+    allowed = set(perceive["mode_tool_names"])
+    for forbidden in ("switch_mode", "write_file", "spawn_expert"):
+        assert forbidden not in allowed
+
+    # ACT rejects a switch_mode call in expert mode.
+    out, _traces = expert._act(
+        {"action": "tool_call", "tool": "switch_mode", "params": {"target": "auto"}},
+        0,
+        perceive,
+    )
+    assert "error" in out["output"]
+    assert "not permitted" in out["output"]["error"]
+
+
+def test_spawn_expert_records_tool_message_in_iris_conversation():
+    """T6/T7: a spawn shows up as a Tool Message in Iris's Conversation."""
+    rt = _make_runtime()
+    iris = rt.agent_factory.iris()
+    tool = rt._spawn_tool
+
+    iris.run({"query": "predict aspirin", "session_id": "dialogue"})
+    # Manually invoke the spawn tool within Iris's session.
+    result = tool.execute(
+        expert="molecular",
+        drug="chembl:1",
+        disease="MONDO:1",
+        endpoint="IC50",
+    )
+    assert "report" in result

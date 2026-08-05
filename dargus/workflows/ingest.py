@@ -596,34 +596,17 @@ def _partition_by_domain(
 def _extract_evidence(
     domain: str, files: list[str], task_spec: dict[str, Any] | None = None
 ) -> tuple[list[dict[str, Any]], int]:
-    """Convert phase: extract structured evidence from files via DomainExpert.
+    """Convert phase: extract structured evidence from files.
 
-    When a Domain Expert is wired via ``_domain_experts`` in the task_spec
-    (keyed by domain), calls ``expert.extract(files)``.  When no expert is
-    available, falls back to stub evidence instances using the Expert base
-    class's ``_STUB_EVIDENCE`` dicts keyed by the domain's primary biological
-    level.
+    Falls back to stub evidence instances using the Expert base class's
+    ``_STUB_EVIDENCE`` dicts keyed by the domain's primary biological level.
 
     Individual file extraction failures are caught and counted as errors;
     they do not abort the batch.
 
     Returns (extracted_instances, n_errors).
     """
-    experts = (task_spec or {}).get("_domain_experts", {}) if task_spec else {}
-    expert = experts.get(domain) if isinstance(experts, dict) else None
-    if expert is not None:
-        instances: list[dict[str, Any]] = []
-        errors = 0
-        for fp in files:
-            try:
-                results = expert.extract(fp)
-                instances.extend(results)
-            except Exception:
-                logger.warning("Domain %s: extraction failed for %s", domain, fp, exc_info=True)
-                errors += 1
-        return instances, errors
-
-    # ---- Stub fallback: produce one instance per file with domain label ----
+    # ---- Stub extraction: produce one instance per file with domain label ----
     logger.info(
         "Domain %s: no expert wired — using stub extraction for %d files",
         domain,

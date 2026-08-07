@@ -9,6 +9,7 @@ from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.dbase.store import DBaseStore
+from dargus.models.conversation import ToolCall, ToolResult
 from dargus.workflows.ingest import run_ingest
 
 if TYPE_CHECKING:
@@ -191,10 +192,14 @@ class Iris(BaseAgent):
                     )
 
                 # ── Final synthesis: consume the collected ExpertReports ──
-                if not reports_by_expert and self._reasoning_llm is None:
-                    # Stub mode (no LLM): deterministically spawn all four
-                    # domain experts so a usable prediction is produced.
-                    reports_by_expert = self._stub_spawn_all(drug_id, disease_id, endpoint)
+                if not reports_by_expert and not self._llm_available():
+                    # No usable reasoning LLM: deterministically spawn all four
+                    # domain experts so a usable prediction is produced. Gated on
+                    # _llm_available() (not just "no LLM wired") because a
+                    # keyless-but-configured backend is equally unusable.
+                    reports_by_expert = self._stub_spawn_all(
+                        drug_id, disease_id, endpoint, conv
+                    )
 
                 # Surface any TaskDelegations carried by ExpertReports to Iris
                 # as synthetic Messages — Iris (the sole orchestrator) decides
@@ -214,12 +219,16 @@ class Iris(BaseAgent):
                 }
         return result
 
-    def _stub_spawn_all(self, drug_id: str, disease_id: str, endpoint: str) -> dict[str, list[Any]]:
+    def _stub_spawn_all(
+        self, drug_id: str, disease_id: str, endpoint: str, conv: Any
+    ) -> dict[str, list[Any]]:
         """Stub-mode fallback: spawn every domain Expert via the spawn tool.
 
-        Used when no reasoning LLM is wired — the model cannot emit
-        spawn_expert calls, so Iris deterministically consults all four
-        domain Experts (SPEC-C preserves a usable no-model path).
+        Used when no usable reasoning LLM is available — the model cannot
+        emit spawn_expert calls, so Iris deterministically consults all four
+        domain Experts (SPEC-C preserves a usable no-model path). Each spawn
+        is recorded as a Tool Message in Iris's Conversation, mirroring the
+        model-driven path (T6: spawns are inspectable in the log).
         """
         tool = getattr(self._runtime, "_spawn_tool", None) if self._runtime is not None else None
         reports: dict[str, list[Any]] = {}
@@ -235,10 +244,27 @@ class Iris(BaseAgent):
                 out = tool.execute(
                     expert=domain, drug=drug_id, disease=disease_id, endpoint=endpoint
                 )
-                if isinstance(out, dict) and "report" in out:
-                    reports.setdefault(expert_name, []).append(_report_from_dict(out["report"]))
             except Exception:
                 logger.warning("stub spawn of %s failed", domain, exc_info=True)
+                continue
+            if not isinstance(out, dict) or "report" not in out:
+                continue
+            reports.setdefault(expert_name, []).append(_report_from_dict(out["report"]))
+            # Record the spawn as a Tool Message so the stub path is as
+            # inspectable as the model-driven one (T6).
+            conv.add_tool(
+                ToolCall(
+                    name="spawn_expert",
+                    params={
+                        "expert": domain,
+                        "drug": drug_id,
+                        "disease": disease_id,
+                        "endpoint": endpoint,
+                    },
+                ),
+                ToolResult(output=out),
+                mode=self._mode,
+            )
         return reports
 
     @staticmethod

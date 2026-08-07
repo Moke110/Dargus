@@ -22,6 +22,46 @@ def _make_runtime():
     return rt
 
 
+def _keyless_runtime():
+    """A runtime whose reasoning_llm is wired but unusable (keyless backend).
+
+    Mirrors bootstrap in a keyless-but-configured env: a LiteLLMBackend is
+    built even without a key, so ``reasoning_llm is not None`` while
+    ``_llm_available()`` is False.
+    """
+    from dargus.models.reasoning import LiteLLMBackend, ReasoningLLM
+
+    rt = DargusRuntime()
+    rt.reasoning_llm = ReasoningLLM(
+        backend=LiteLLMBackend(provider="deepseek", model="deepseek-chat", api_key="")
+    )
+    return rt
+
+
+def test_keyless_backend_still_produces_des():
+    """T8 regression: a keyless-but-configured backend (reasoning_llm wired,
+    no usable key) still consults experts and produces a prediction —
+    the stub fallback must gate on _llm_available(), not on 'no LLM'."""
+    rt = _keyless_runtime()
+    iris = rt.agent_factory.iris()
+    assert iris._reasoning_llm is not None  # wired...
+    assert iris._llm_available() is False  # ...but unusable
+
+    result = iris.predict(
+        drug_ids=["chembl:1"],
+        disease_id="MONDO:1",
+        endpoints=["IC50"],
+        max_rounds=1,
+    )
+    entry = result["chembl:1"]["MONDO:1"]["IC50"]
+    # The stub fallback ran (experts were consulted) even though the gate
+    # variable is non-None.
+    conv = rt.get_conversation("predict:chembl:1:MONDO:1:IC50", "Iris")
+    spawn_msgs = [m for m in conv.messages if m.tool_call and m.tool_call.name == "spawn_expert"]
+    assert len(spawn_msgs) == 4
+    assert entry["confidence_level"] in ("insufficient_data", "low", "medium", "high")
+
+
 def test_spawn_expert_registered_in_predict_mode():
     """spawn_expert is registered as a Tool and available in predict mode."""
     rt = _make_runtime()
@@ -74,6 +114,24 @@ def test_spawn_expert_links_parent_conversation():
     sub_session = result["session_id"]
     child = rt.get_conversation(sub_session, "ClinicExpert")
     assert child.parent_id == "dialogue"
+
+
+def test_second_spawn_keeps_parent_link():
+    """T6 regression: consecutive spawns in one run both link to the same
+    parent — the Expert's run must restore the parent session_id."""
+    rt = _make_runtime()
+    rt.agent_factory.iris()  # lazily wires the spawn tool
+    tool = rt._spawn_tool
+
+    rt.current_session_id = "predict:chembl:1:MONDO:1:IC50"
+    r1 = tool.execute(expert="molecular", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    r2 = tool.execute(expert="clinical", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+
+    c1 = rt.get_conversation(r1["session_id"], "MoleculeExpert")
+    c2 = rt.get_conversation(r2["session_id"], "ClinicExpert")
+    # Both link back to Iris's predict session, not a stale sub-session.
+    assert c1.parent_id == "predict:chembl:1:MONDO:1:IC50"
+    assert c2.parent_id == "predict:chembl:1:MONDO:1:IC50"
 
 
 def test_spawn_expert_depth_guard_denies_subagent():
@@ -155,20 +213,36 @@ def test_expert_cannot_invoke_forbidden_tools():
 
 
 def test_spawn_expert_records_tool_message_in_iris_conversation():
-    """T6/T7: a spawn shows up as a Tool Message in Iris's Conversation."""
-    rt = _make_runtime()
-    iris = rt.agent_factory.iris()
-    tool = rt._spawn_tool
+    """T6/T7: a spawn shows up as a Tool Message in Iris's Conversation.
 
-    iris.run({"query": "predict aspirin", "session_id": "dialogue"})
-    # Manually invoke the spawn tool within Iris's session.
-    result = tool.execute(
-        expert="molecular",
-        drug="chembl:1",
-        disease="MONDO:1",
-        endpoint="IC50",
+    Drives the no-LLM stub path (reasoning_llm=None), which now records each
+    spawn as a Tool Message so the stub path is as inspectable as the
+    model-driven one (T8 / code-review fix).
+    """
+    rt = _make_runtime()
+    rt.reasoning_llm = None  # no LLM wired -> Iris takes the stub path
+    iris = rt.agent_factory.iris()
+
+    result = iris.predict(
+        drug_ids=["chembl:1"],
+        disease_id="MONDO:1",
+        endpoints=["IC50"],
+        max_rounds=1,
     )
-    assert "report" in result
+    assert "chembl:1" in result
+
+    conv = rt.get_conversation("predict:chembl:1:MONDO:1:IC50", "Iris")
+    spawn_msgs = [m for m in conv.messages if m.tool_call and m.tool_call.name == "spawn_expert"]
+    # Four domain experts were spawned, each recorded as a Tool Message.
+    assert len(spawn_msgs) == 4
+    assert {m.tool_call.params["expert"] for m in spawn_msgs} == {
+        "molecular",
+        "biomedical",
+        "bioinformatics",
+        "clinical",
+    }
+    for m in spawn_msgs:
+        assert m.tool_result is not None and m.tool_result.error is None
 
 
 # ------------------------------------------------------------------

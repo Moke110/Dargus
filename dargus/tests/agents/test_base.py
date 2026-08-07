@@ -157,6 +157,37 @@ def test_two_user_turns_accumulate_in_one_conversation():
     assert len(conv.messages) == 4
 
 
+def test_distinct_sessions_get_distinct_conversations():
+    """T4 regression: a reused agent resolves a separate Conversation per
+    session_id instead of caching the first session's log."""
+    from dargus.runtime.context import DargusRuntime
+
+    runtime = DargusRuntime()
+    agent = _MinimalAgent(
+        name="Iris",
+        hook_registry=HookRegistry(),
+        reasoning_llm=_StubLLM(
+            [
+                '{"mode": "auto", "action": "text", "text": "dialogue reply"}',
+                '{"mode": "auto", "action": "text", "text": "predict reply"}',
+            ]
+        ),
+    )
+    agent._runtime = runtime
+
+    agent.run({"query": "follow up", "session_id": "dialogue", "_user_turn": True})
+    agent.run({"query": "predict", "session_id": "predict:d1:d2:IC50", "_user_turn": True})
+
+    dialogue = runtime.get_conversation("dialogue", "Iris")
+    predict = runtime.get_conversation("predict:d1:d2:IC50", "Iris")
+    # Distinct logs: the predict turn did not bleed into the dialogue log.
+    assert dialogue is not predict
+    assert len(dialogue.messages) == 2
+    assert len(predict.messages) == 2
+    assert "follow up" in dialogue.messages[0].text
+    assert "predict" in predict.messages[0].text
+
+
 def test_base_agent_config_only_works():
     """BaseAgent(config=...) must work without DI."""
     agent = _MinimalAgent(config={"projects": {"root_dir": "/tmp"}})

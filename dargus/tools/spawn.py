@@ -64,13 +64,20 @@ def _derive_expert_report(expert: Any, drug: str, disease: str, endpoint: str) -
 
 
 def _run_expert_subagent(expert: Any, session_id: str, task_spec: dict[str, Any]) -> Any:
-    """Run the Expert's PRA loop inside its own parent-linked Conversation."""
-    # Wire the Expert into the runtime's conversation store via its parent id.
-    expert._runtime.current_session_id = session_id
+    """Run the Expert's PRA loop inside its own parent-linked Conversation.
+
+    The sub-session is made current for the duration of the run so the
+    Expert's Conversation is created under its own ``session_id``; the
+    parent's ``current_session_id`` is restored on the way out so a later
+    spawn in the same run still links to the same parent (SPEC-C).
+    """
+    runtime = expert._runtime
+    parent_session = getattr(runtime, "current_session_id", None)
+    runtime.current_session_id = session_id
     try:
         report = expert.run(task_spec)
     finally:
-        expert._runtime.current_session_id = None
+        runtime.current_session_id = parent_session
     return report
 
 

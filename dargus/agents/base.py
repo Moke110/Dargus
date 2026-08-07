@@ -112,12 +112,12 @@ class BaseAgent(ABC):
 
         When a runtime conversation store is wired (T4), the store owns the
         Conversation keyed by session/agent so it survives agent churn and
-        API turns. Otherwise a per-instance fallback Conversation is used
-        (standalone/test contexts).
+        API turns. The store is consulted on every call: a long-lived Iris
+        is reused across ``ask()`` (session ``"dialogue"``) and ``predict()``
+        (per-(drug,endpoint) sessions), and each session must get its own log.
+        A per-instance fallback Conversation is used in standalone/test
+        contexts (no runtime store), created once and reused.
         """
-        if self._conversation is not None:
-            return self._conversation
-
         store = None
         if self._runtime is not None:
             store = getattr(self._runtime, "conversation_store", None)
@@ -125,18 +125,15 @@ class BaseAgent(ABC):
             session_id = task_spec.get("session_id", f"{self.name}")
             getter = getattr(self._runtime, "get_conversation", None)
             if getter is not None:
-                conv = getter(session_id, self.name)
-            else:
-                conv = store.get((session_id, self.name))
-            self._conversation = conv
-            return conv
+                return getter(session_id, self.name)
+            return store.get((session_id, self.name))
 
-        conv = Conversation(
-            session_id=task_spec.get("session_id", f"{self.name}"),
-            agent=self.name,
-        )
-        self._conversation = conv
-        return conv
+        if self._conversation is None:
+            self._conversation = Conversation(
+                session_id=task_spec.get("session_id", f"{self.name}"),
+                agent=self.name,
+            )
+        return self._conversation
 
     def _session(self) -> Any | None:
         """The runtime's durable session object, or None (standalone/test)."""

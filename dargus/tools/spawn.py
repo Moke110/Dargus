@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 from dargus.experts.protocol import ExpertContext
 from dargus.experts.reports import (
     EXPERT_DOMAINS,
-    expert_report_from_dict,
     expert_report_to_dict,
     final_report_to_dict,
     predict_task_spec,
@@ -55,15 +54,14 @@ def _self_serve(expert: Any, task_spec: dict[str, Any]) -> None:
     """
     conv = expert._resolve_conversation(task_spec)
     level = expert.SUPPORTED_LEVELS[0] if getattr(expert, "SUPPORTED_LEVELS", ()) else None
-    params: dict[str, Any] = {
-        "disease_id": task_spec.get("disease_id"),
-        "x_entity": (task_spec.get("drug_ids") or [None])[0],
-        "y_type": (task_spec.get("endpoints") or [None])[0],
-        "limit": 100,
-    }
+    # The Expert self-serves within its biological-level scope (SPEC-C US8):
+    # query by level, letting the Routing-Skill ranking narrow to the
+    # drug/disease. Over-constraining on drug/disease/endpoint here would
+    # (a) exceed the self-serve mandate and (b) empty the result set on a
+    # mismatch — the parquet path collapses zero-row frames.
+    params: dict[str, Any] = {"limit": 100}
     if level is not None:
         params["level"] = level
-    params = {k: v for k, v in params.items() if v is not None}
 
     from dargus.models.conversation import ToolCall, ToolResult
 
@@ -87,18 +85,21 @@ def _self_serve(expert: Any, task_spec: dict[str, Any]) -> None:
     )
 
 
-def _derive_report_from_conversation(expert: Any, drug: str, disease: str, endpoint: str) -> Any:
+def _derive_report_from_conversation(
+    expert: Any, session_id: str, drug: str, disease: str, endpoint: str
+) -> Any:
     """Derive the ExpertReport from the Expert's own Conversation (SPEC-C / #95).
 
     Collects the records the Expert gathered via its own ``dbase_query`` Tool
-    Messages, then runs the Expert's ``assess()`` evidence logic over them. The
-    report is built from what the Expert actually did in its PRA loop, not from
-    records the tool fetched on its behalf.
+    Messages from the Conversation at *session_id*, then runs the Expert's
+    ``assess()`` evidence logic over them. The report is built from what the
+    Expert actually did in its PRA loop, not from records the tool fetched on
+    its behalf.
     """
     from dargus.models.conversation import Conversation
 
     conv: Conversation = expert._resolve_conversation(
-        predict_task_spec(drug=drug, disease=disease, endpoint=endpoint, session_id="")
+        predict_task_spec(drug=drug, disease=disease, endpoint=endpoint, session_id=session_id)
     )
     records: list[dict] = []
     for msg in conv.messages:
@@ -118,34 +119,19 @@ def _derive_report_from_conversation(expert: Any, drug: str, disease: str, endpo
     return expert.assess(records, ctx)
 
 
-def _collect_domain_reports(iris: Iris, drug: str, disease: str, endpoint: str) -> dict[str, Any]:
-    """Collect the domain ExpertReports Iris has already gathered for the scope.
+def _collect_domain_reports(iris: Iris, session_id: str) -> dict[str, Any]:
+    """Collect the domain ExpertReports Iris has already gathered.
 
-    Reads the ``spawn_expert`` Tool Messages in Iris's Conversation and
-    rebuilds the ``{expert_name: [ExpertReport, ...]}`` dict the D4 director's
-    ``conclude()`` consumes (SPEC-C / #96).
+    Reads the ``spawn_expert`` Tool Messages from Iris's Conversation at
+    *session_id* (the parent predict session) and rebuilds the
+    ``{expert_name: [ExpertReport, ...]}`` dict the D4 director's ``conclude()``
+    consumes (SPEC-C / #96). The D4 director's own report is excluded so the
+    director is never fed its own output.
     """
-    from dargus.models.conversation import Conversation
+    from dargus.experts.reports import collect_spawned_reports
 
-    conv: Conversation = iris._resolve_conversation(
-        predict_task_spec(drug=drug, disease=disease, endpoint=endpoint, session_id="")
-    )
-    reports_by_expert: dict[str, list[Any]] = {}
-    for msg in conv.messages:
-        if msg.tool_call is None or msg.tool_call.name != "spawn_expert":
-            continue
-        if msg.tool_result is None or msg.tool_result.error is not None:
-            continue
-        payload = msg.tool_result.output
-        if not isinstance(payload, dict) or "report" not in payload:
-            continue
-        if payload.get("expert") == "D4Expert":
-            continue  # never feed the director its own report
-        expert_name = payload.get("expert", "unknown")
-        reports_by_expert.setdefault(expert_name, []).append(
-            expert_report_from_dict(payload["report"])
-        )
-    return reports_by_expert
+    conv = iris._resolve_conversation({"session_id": session_id})
+    return collect_spawned_reports(conv, skip="D4Expert")
 
 
 def _run_expert_subagent(expert: Any, session_id: str, task_spec: dict[str, Any]) -> Any:
@@ -222,20 +208,24 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
                 # conclude() — the DES ± DCS contract is produced by the D4
                 # spawn, not by Iris constructing the director directly.
                 _run_expert_subagent(expert_agent, sub_session, task_spec)
-                all_reports = _collect_domain_reports(iris, drug, disease, endpoint)
+                all_reports = _collect_domain_reports(iris, parent_session)
                 conclusion = expert_agent.conclude(drug, disease, endpoint, all_reports)
                 return {
                     "expert": expert_agent.name,
                     "session_id": sub_session,
                     "report": expert_report_to_dict(
-                        _derive_report_from_conversation(expert_agent, drug, disease, endpoint)
+                        _derive_report_from_conversation(
+                            expert_agent, sub_session, drug, disease, endpoint
+                        )
                     ),
                     "final_report": final_report_to_dict(conclusion),
                 }
 
             # ── Domain Expert (self-serves evidence) ────────────────
             _run_expert_subagent(expert_agent, sub_session, task_spec)
-            report = _derive_report_from_conversation(expert_agent, drug, disease, endpoint)
+            report = _derive_report_from_conversation(
+                expert_agent, sub_session, drug, disease, endpoint
+            )
         finally:
             if runtime is not None and runtime.spawn_stack:
                 runtime.spawn_stack.pop()

@@ -58,7 +58,8 @@ def test_keyless_backend_still_produces_des():
     # variable is non-None.
     conv = rt.get_conversation("predict:chembl:1:MONDO:1:IC50", "Iris")
     spawn_msgs = [m for m in conv.messages if m.tool_call and m.tool_call.name == "spawn_expert"]
-    assert len(spawn_msgs) == 4
+    # Four domain experts + the D4 synthesis spawn (#96).
+    assert len(spawn_msgs) == 5
     assert entry["confidence_level"] in ("insufficient_data", "low", "medium", "high")
 
 
@@ -233,13 +234,15 @@ def test_spawn_expert_records_tool_message_in_iris_conversation():
 
     conv = rt.get_conversation("predict:chembl:1:MONDO:1:IC50", "Iris")
     spawn_msgs = [m for m in conv.messages if m.tool_call and m.tool_call.name == "spawn_expert"]
-    # Four domain experts were spawned, each recorded as a Tool Message.
-    assert len(spawn_msgs) == 4
+    # Four domain experts were spawned, plus the D4 synthesis spawn (#96),
+    # each recorded as a Tool Message.
+    assert len(spawn_msgs) == 5
     assert {m.tool_call.params["expert"] for m in spawn_msgs} == {
         "molecular",
         "biomedical",
         "bioinformatics",
         "clinical",
+        "d4",
     }
     for m in spawn_msgs:
         assert m.tool_result is not None and m.tool_result.error is None
@@ -271,6 +274,58 @@ def test_expert_self_serves_evidence_in_its_own_conversation():
     # findings (or a delegation) keyed to the query's scope.
     report = result["report"]
     assert report["expert"] == "MoleculeExpert"
+
+
+def test_expert_report_reflects_self_served_records(tmp_path):
+    """#95 defect fix: the ExpertReport is derived from the records the Expert
+    actually gathered via its own dbase_query — not from an empty, mis-keyed
+    Conversation. Seeding D-Base with a molecular record yields findings."""
+    from dargus.dbase import DBase
+    from dargus.dbase.store import DBaseStore
+
+    rt = _make_runtime()
+    # Wire a real D-Base store so dbase_query returns records.
+    dbase = DBase("spawn-self-serve", root_dir=str(tmp_path / "dbase"))
+    store = DBaseStore(dbase)
+    rt.dbase_store = store
+    rt._bind_dbase_tools()  # re-binds dbase_query against the store
+    rt.reasoning_llm = None
+    rt.agent_factory.iris()
+    tool = rt._spawn_tool
+
+    record = {
+        "biological_level": "molecular",
+        "evidence_design": "descriptive",
+        "xy": {"count": 1},
+        "x": {"type": "drug", "value": [{"entity_id": "chembl:1", "entity_label": "test"}]},
+        "y": {"type": "binding_affinity", "category": "binding", "value": [1.0]},
+        "bg": {"disease_id": ["mondo:0005180"], "drugs": [], "genes": []},
+        "sources": [{"rank": 1, "type": "journal", "name": "stub"}],
+        "source_entry": "stub://x",
+        "source_time": "2024-01-01",
+    }
+    assert store.write_record(record) is True
+    result = tool.execute(expert="molecular", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    assert "error" not in result
+
+    sub_session = result["session_id"]
+    expert_conv = rt.get_conversation(sub_session, "MoleculeExpert")
+    query_msgs = [
+        m for m in expert_conv.messages if m.tool_call and m.tool_call.name == "dbase_query"
+    ]
+    assert query_msgs
+    # The query actually returned the seeded record.
+    assert query_msgs[0].tool_result is not None and query_msgs[0].tool_result.error is None
+    assert query_msgs[0].tool_result.output["records"], "self-serve query returned no records"
+
+    # The report reflects the records the Expert self-served — evidence_id
+    # findings, not a vacuous empty assessment.
+    report = result["report"]
+    assert report["expert"] == "MoleculeExpert"
+    # The seeded record was assessed into a finding (quality_score > 0).
+    seeded_eid = store.read_records(level="molecular")[0]["evidence_id"]
+    found = [f for f in report["findings"] if seeded_eid in f["record_ids"]]
+    assert found, "ExpertReport must include a finding for the self-served record"
 
 
 def test_spawn_d4_synthesizes_from_collected_reports():

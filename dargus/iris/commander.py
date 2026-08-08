@@ -11,6 +11,7 @@ from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.dbase.store import DBaseStore
 from dargus.experts.reports import (
     DOMAIN_EXPERTS,
+    collect_spawned_reports,
     expert_report_from_dict,
     predict_task_spec,
 )
@@ -135,20 +136,8 @@ class Iris(BaseAgent):
 
                 # Collect ExpertReports from the spawn_expert Tool results in
                 # Iris's Conversation (each spawn is a Tool Message).
-                reports_by_expert: dict[str, list[Any]] = {}
                 conv: Conversation = self._resolve_conversation(task_spec)
-                for msg in conv.messages:
-                    if msg.tool_call is None or msg.tool_call.name != "spawn_expert":
-                        continue
-                    if msg.tool_result is None or msg.tool_result.error is not None:
-                        continue
-                    payload = msg.tool_result.output
-                    if not isinstance(payload, dict) or "report" not in payload:
-                        continue
-                    expert_name = payload.get("expert", "unknown")
-                    reports_by_expert.setdefault(expert_name, []).append(
-                        expert_report_from_dict(payload["report"])
-                    )
+                reports_by_expert = collect_spawned_reports(conv)
 
                 # ── Final synthesis: consume the collected ExpertReports ──
                 if not reports_by_expert and not self._llm_available():
@@ -220,6 +209,37 @@ class Iris(BaseAgent):
             )
         return reports
 
+    def _record_spawn(
+        self, drug_id: str, disease_id: str, endpoint: str, out: dict[str, Any]
+    ) -> None:
+        """Record a spawn_expert Tool Message in Iris's Conversation.
+
+        The model-driven D4 spawn (from ``_synthesize``) is written into Iris's
+        Conversation exactly like the stub-path spawns so the synthesis step is
+        as inspectable as the domain spawns (SPEC-C / #96).
+        """
+        conv = self._resolve_conversation(
+            predict_task_spec(
+                drug=drug_id,
+                disease=disease_id,
+                endpoint=endpoint,
+                session_id=f"predict:{drug_id}:{disease_id}:{endpoint}",
+            )
+        )
+        conv.add_tool(
+            ToolCall(
+                name="spawn_expert",
+                params={
+                    "expert": "d4",
+                    "drug": drug_id,
+                    "disease": disease_id,
+                    "endpoint": endpoint,
+                },
+            ),
+            ToolResult(output=out),
+            mode=self._mode,
+        )
+
     @staticmethod
     def _surface_delegations(conv: Any, reports_by_expert: dict[str, list[Any]]) -> None:
         """Surface TaskDelegations from ExpertReports as synthetic Messages.
@@ -249,7 +269,8 @@ class Iris(BaseAgent):
         In the model-driven path the D4 director is itself spawned via
         ``spawn_expert(expert="d4")`` (SPEC-C / #96) — its subagent runs and
         its ``conclude`` produces the DES ± DCS contract, which this method
-        returns. When the D4 spawn is unavailable (no LLM stub path), the
+        returns. When the D4 spawn yields no usable result (spawn failed, or
+        the stub D4 concluded with empty domain reports → no DES ± DCS), the
         director is created directly and ``conclude`` is called procedurally
         so a usable prediction is still produced.
         """
@@ -266,7 +287,15 @@ class Iris(BaseAgent):
                 if isinstance(out, dict) and "final_report" in out:
                     from dargus.experts.reports import final_report_from_dict
 
-                    return final_report_from_dict(out["final_report"])
+                    final = final_report_from_dict(out["final_report"])
+                    # Record the D4 spawn as a Tool Message so the synthesis
+                    # step is inspectable in Iris's Conversation (SPEC-C / #96).
+                    self._record_spawn(drug_id, disease_id, endpoint, out)
+                    # A D4 conclude over an empty report set is not a usable
+                    # prediction — fall through to the procedural path with the
+                    # reports Iris actually collected.
+                    if final.efficacy_score is not None or reports_by_expert:
+                        return final
 
         from dargus.experts.director import D4Expert
 

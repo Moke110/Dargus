@@ -28,9 +28,13 @@ from dargus.experts.protocol import (
     TaskDelegation,
 )
 
-#: The expert keys the spawn tool accepts: the four domain experts + the
-#: D4 director (SPEC-C). Consumed by the ``spawn_expert`` Tool's ``enum``.
-EXPERT_DOMAINS: list[str] = ["molecular", "biomedical", "bioinformatics", "clinical", "d4"]
+#: The four domain expert keys (excludes the D4 director). Used where the
+#: spawn/stub path consults the full domain set.
+DOMAIN_EXPERTS: list[str] = ["molecular", "biomedical", "bioinformatics", "clinical"]
+
+#: The expert keys the spawn tool accepts: the four domain experts + the D4
+#: director (SPEC-C). Consumed by the ``spawn_expert`` Tool's ``enum``.
+EXPERT_DOMAINS: list[str] = DOMAIN_EXPERTS + ["d4"]
 
 #: Domain key → expert class path. Single registry; ``AgentFactory.expert()``
 #: and ``D4Expert.delegate_to_expert()`` resolve from here.
@@ -49,10 +53,6 @@ EXPERT_NAME_TO_DOMAIN: dict[str, str] = {
     "BioinfoExpert": "bioinformatics",
     "ClinicExpert": "clinical",
 }
-
-#: The four domain expert keys (excludes the D4 director). Used where the
-#: spawn/stub path consults the full domain set.
-DOMAIN_EXPERTS: list[str] = ["molecular", "biomedical", "bioinformatics", "clinical"]
 
 
 def expert_report_to_dict(report: ExpertReport) -> dict[str, Any]:
@@ -152,6 +152,32 @@ def final_report_to_dict(report: FinalReport) -> dict[str, Any]:
             }
         }
     }
+
+
+def collect_spawned_reports(conv: Any, skip: str | None = None) -> dict[str, list[ExpertReport]]:
+    """Collect the ExpertReports carried by a Conversation's ``spawn_expert``
+    Tool Messages into ``{expert_name: [ExpertReport, ...]}``.
+
+    Shared by Iris's predict loop and the D4 spawn (SPEC-C / #95, #96): every
+    spawn is a Tool Message in the parent Conversation, and the D4 director's
+    ``conclude()`` consumes this dict keyed by expert class name.
+    """
+    reports_by_expert: dict[str, list[ExpertReport]] = {}
+    for msg in getattr(conv, "messages", []):
+        if msg.tool_call is None or msg.tool_call.name != "spawn_expert":
+            continue
+        if msg.tool_result is None or msg.tool_result.error is not None:
+            continue
+        payload = msg.tool_result.output
+        if not isinstance(payload, dict) or "report" not in payload:
+            continue
+        if skip is not None and payload.get("expert") == skip:
+            continue  # never feed the director its own report
+        expert_name = payload.get("expert", "unknown")
+        reports_by_expert.setdefault(expert_name, []).append(
+            expert_report_from_dict(payload["report"])
+        )
+    return reports_by_expert
 
 
 def final_report_from_dict(payload: dict) -> FinalReport:

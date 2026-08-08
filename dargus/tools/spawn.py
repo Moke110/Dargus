@@ -33,31 +33,82 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _derive_expert_report(expert: Any, drug: str, disease: str, endpoint: str) -> Any:
-    """Run the Expert's evidence logic over the scope and return an ExpertReport.
+def _self_serve(expert: Any, task_spec: dict[str, Any]) -> None:
+    """Deterministic self-serve fallback: the Expert issues ``dbase_query``
+    itself, through its own Conversation (SPEC-C / #95).
 
-    Reuses each Expert's existing ``assess()`` (which carries the per-domain
-    quality/delegation evidence logic) against the records D-Base holds for
-    the drug/disease/endpoint scope. The Expert self-serves: it queries D-Base
-    for its scope rather than Iris brokering records in (SPEC-C).
+    When no usable reasoning LLM is wired, the model cannot emit the tool call,
+    so this routine drives the same PRA loop the model would: the Expert's ACT
+    runs ``dbase_query`` for its scope (drug, disease, endpoint, level) and the
+    round is settled in the Expert's Conversation exactly like a model-driven
+    tool round. This replaces the old Iris-brokered ``store.read_records``.
 
-    Returns the ExpertReport dataclass.
+    The query is issued via the Expert's own tool registry, and the result
+    lands in its Conversation — so the derived ExpertReport (below) is built
+    from what the Expert actually did.
     """
+    conv = expert._resolve_conversation(task_spec)
+    level = expert.SUPPORTED_LEVELS[0] if getattr(expert, "SUPPORTED_LEVELS", ()) else None
+    params: dict[str, Any] = {
+        "disease_id": task_spec.get("disease_id"),
+        "x_entity": (task_spec.get("drug_ids") or [None])[0],
+        "y_type": (task_spec.get("endpoints") or [None])[0],
+        "limit": 100,
+    }
+    if level is not None:
+        params["level"] = level
+    params = {k: v for k, v in params.items() if v is not None}
+
+    from dargus.models.conversation import ToolCall, ToolResult
+
+    try:
+        tool = expert._get_tool("dbase_query")
+        output = tool.execute(**params)
+    except Exception as exc:
+        logger.warning("spawn_expert: %s self-serve dbase_query failed", expert.name, exc_info=True)
+        conv.add_tool(
+            ToolCall(name="dbase_query", params=params),
+            ToolResult(error=str(exc)),
+            mode=getattr(expert, "_mode", "expert"),
+        )
+        return
+
+    records = output.get("records", []) if isinstance(output, dict) else []
+    conv.add_tool(
+        ToolCall(name="dbase_query", params=params),
+        ToolResult(output={"records": records, "count": len(records)}),
+        mode=getattr(expert, "_mode", "expert"),
+    )
+
+
+def _derive_report_from_conversation(expert: Any, drug: str, disease: str, endpoint: str) -> Any:
+    """Derive the ExpertReport from the Expert's own Conversation (SPEC-C / #95).
+
+    Collects the records the Expert gathered via its own ``dbase_query`` Tool
+    Messages, then runs the Expert's ``assess()`` evidence logic over them. The
+    report is built from what the Expert actually did in its PRA loop, not from
+    records the tool fetched on its behalf.
+    """
+    from dargus.models.conversation import Conversation
+
+    conv: Conversation = expert._resolve_conversation(
+        predict_task_spec(drug=drug, disease=disease, endpoint=endpoint, session_id="")
+    )
+    records: list[dict] = []
+    for msg in conv.messages:
+        if msg.tool_call is None or msg.tool_call.name != "dbase_query":
+            continue
+        if msg.tool_result is None or msg.tool_result.error is not None:
+            continue
+        output = msg.tool_result.output
+        if isinstance(output, dict):
+            records.extend(output.get("records", []) or [])
+
     ctx = ExpertContext(
         drug_ids=[drug],
         disease_id=disease,
         endpoints=[endpoint],
     )
-    manager = getattr(expert, "_runtime", None)
-    records: list[dict] = []
-    if manager is not None:
-        store = getattr(manager, "dbase_store", None)
-        if store is not None:
-            try:
-                records = store.read_records(disease_id=disease)
-            except Exception:
-                logger.warning("spawn_expert: D-Base query failed", exc_info=True)
-                records = []
     return expert.assess(records, ctx)
 
 
@@ -68,12 +119,19 @@ def _run_expert_subagent(expert: Any, session_id: str, task_spec: dict[str, Any]
     Expert's Conversation is created under its own ``session_id``; the
     parent's ``current_session_id`` is restored on the way out so a later
     spawn in the same run still links to the same parent (SPEC-C).
+
+    When no usable reasoning LLM is wired, the Expert's PRA loop converges
+    after a deterministic self-serve ``dbase_query`` round (#95).
     """
     runtime = expert._runtime
     parent_session = getattr(runtime, "current_session_id", None)
     runtime.current_session_id = session_id
     try:
-        report = expert.run(task_spec)
+        if expert._llm_available():
+            report = expert.run(task_spec)
+        else:
+            _self_serve(expert, task_spec)
+            report = expert.run(task_spec)  # converges on the settled round
     finally:
         runtime.current_session_id = parent_session
     return report
@@ -125,8 +183,8 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
             # ── Run the Expert's PRA loop (self-serves evidence) ─────
             _run_expert_subagent(expert_agent, sub_session, task_spec)
 
-            # ── Derive the ExpertReport from the Expert's assessment ──
-            report = _derive_expert_report(expert_agent, drug, disease, endpoint)
+            # ── Derive the ExpertReport from the Expert's Conversation ──
+            report = _derive_report_from_conversation(expert_agent, drug, disease, endpoint)
         finally:
             if runtime is not None and runtime.spawn_stack:
                 runtime.spawn_stack.pop()

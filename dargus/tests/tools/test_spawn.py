@@ -245,6 +245,34 @@ def test_spawn_expert_records_tool_message_in_iris_conversation():
         assert m.tool_result is not None and m.tool_result.error is None
 
 
+def test_expert_self_serves_evidence_in_its_own_conversation():
+    """#95 (SPEC-C): a spawned Expert issues ``dbase_query`` itself and its
+    ExpertReport is derived from its own Conversation — the tool no longer
+    fetches records on the Expert's behalf (no store.read_records)."""
+    rt = _make_runtime()
+    rt.reasoning_llm = None  # no LLM -> deterministic self-serve path
+    rt.agent_factory.iris()  # wires the spawn tool
+    tool = rt._spawn_tool
+
+    result = tool.execute(expert="molecular", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    assert "error" not in result
+
+    sub_session = result["session_id"]
+    expert_conv = rt.get_conversation(sub_session, "MoleculeExpert")
+    # The Expert's own Conversation carries a dbase_query round.
+    query_msgs = [
+        m for m in expert_conv.messages if m.tool_call and m.tool_call.name == "dbase_query"
+    ]
+    assert query_msgs, "Expert must self-serve evidence via dbase_query"
+    for m in query_msgs:
+        assert m.tool_result is not None and m.tool_result.error is None
+
+    # The report derives from what the Expert gathered — evidence_id-based
+    # findings (or a delegation) keyed to the query's scope.
+    report = result["report"]
+    assert report["expert"] == "MoleculeExpert"
+
+
 # ------------------------------------------------------------------
 # T8 (#91): model-driven predict + TaskDelegation as synthetic message
 # ------------------------------------------------------------------

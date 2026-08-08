@@ -9,7 +9,11 @@ from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.dbase.store import DBaseStore
-from dargus.experts.reports import DOMAIN_EXPERTS, expert_report_from_dict, predict_task_spec
+from dargus.experts.reports import (
+    DOMAIN_EXPERTS,
+    expert_report_from_dict,
+    predict_task_spec,
+)
 from dargus.models.conversation import ToolCall, ToolResult
 from dargus.workflows.ingest import run_ingest
 
@@ -242,9 +246,28 @@ class Iris(BaseAgent):
     ) -> Any:
         """Synthesize collected ExpertReports into a FinalReport via D4Expert.
 
-        When the D4 director was not itself spawned (no LLM), it is created
-        directly and its ``conclude`` produces the DES ± DCS contract.
+        In the model-driven path the D4 director is itself spawned via
+        ``spawn_expert(expert="d4")`` (SPEC-C / #96) — its subagent runs and
+        its ``conclude`` produces the DES ± DCS contract, which this method
+        returns. When the D4 spawn is unavailable (no LLM stub path), the
+        director is created directly and ``conclude`` is called procedurally
+        so a usable prediction is still produced.
         """
+        tool = getattr(self._runtime, "_spawn_tool", None) if self._runtime is not None else None
+        if tool is not None:
+            try:
+                out = tool.execute(expert="d4", drug=drug_id, disease=disease_id, endpoint=endpoint)
+            except Exception:
+                logger.warning(
+                    "spawn_expert(d4) failed — falling back to procedural D4",
+                    exc_info=True,
+                )
+            else:
+                if isinstance(out, dict) and "final_report" in out:
+                    from dargus.experts.reports import final_report_from_dict
+
+                    return final_report_from_dict(out["final_report"])
+
         from dargus.experts.director import D4Expert
 
         director = self._agent_factory.d4_expert() if self._agent_factory is not None else None

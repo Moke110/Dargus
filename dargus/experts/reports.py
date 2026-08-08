@@ -24,6 +24,7 @@ from dargus.experts.protocol import (
     ConfidenceInterval,
     EvidenceAssessment,
     ExpertReport,
+    FinalReport,
     TaskDelegation,
 )
 
@@ -125,6 +126,55 @@ def expert_report_from_dict(payload: dict) -> ExpertReport:
         delegations=delegations,
         data_gaps=payload.get("data_gaps", []),
         bias_notes=payload.get("bias_notes", []),
+    )
+
+
+def final_report_to_dict(report: FinalReport) -> dict[str, Any]:
+    """Serialize a :class:`FinalReport` into the universal contract dict.
+
+    Mirrors the DES ± DCS nested shape ``predict()`` returns
+    (``{drug_id: {disease_id: {endpoint: {...}}}}``) so a D4 spawn's result
+    can feed the final prediction (SPEC-C / #96).
+    """
+    return {
+        report.drug_id: {
+            report.disease_id: {
+                report.endpoint: {
+                    "efficacy_score": report.efficacy_score,
+                    "confidence_score": report.confidence_score,
+                    "confidence_level": report.confidence_level,
+                    "reasoning_mode": report.reasoning_mode,
+                    "supporting_records": report.supporting_records,
+                    "expert_consensus": report.expert_consensus,
+                    "contradictions": report.contradictions,
+                    "data_gaps": report.data_gaps,
+                }
+            }
+        }
+    }
+
+
+def final_report_from_dict(payload: dict) -> FinalReport:
+    """Rebuild a :class:`FinalReport` from the universal contract dict.
+
+    Mirrors :func:`final_report_to_dict` — accepts the nested
+    ``{drug_id: {disease_id: {endpoint: {...}}}}`` shape a D4 spawn returns.
+    """
+    ((drug_id, diseases),) = payload.items()
+    ((disease_id, endpoints),) = diseases.items()
+    ((endpoint, entry),) = endpoints.items()
+    return FinalReport(
+        drug_id=drug_id,
+        disease_id=disease_id,
+        endpoint=endpoint,
+        efficacy_score=entry.get("efficacy_score"),
+        confidence_score=entry.get("confidence_score"),
+        confidence_level=entry.get("confidence_level", "insufficient_data"),
+        reasoning_mode=entry.get("reasoning_mode", "Iris-expert"),
+        supporting_records=entry.get("supporting_records", []),
+        expert_consensus=entry.get("expert_consensus", ""),
+        contradictions=entry.get("contradictions", []),
+        data_gaps=entry.get("data_gaps", []),
     )
 
 

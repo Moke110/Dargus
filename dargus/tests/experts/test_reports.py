@@ -9,6 +9,7 @@ from dargus.experts.protocol import (
     ConfidenceInterval,
     EvidenceAssessment,
     ExpertReport,
+    FinalReport,
     TaskDelegation,
 )
 from dargus.experts.reports import (
@@ -18,6 +19,8 @@ from dargus.experts.reports import (
     EXPERT_NAME_TO_DOMAIN,
     expert_report_from_dict,
     expert_report_to_dict,
+    final_report_from_dict,
+    final_report_to_dict,
     predict_task_spec,
 )
 
@@ -94,3 +97,35 @@ def test_predict_task_spec_shape():
         "endpoints": ["IC50"],
         "session_id": "s1",
     }
+
+
+def test_final_report_serializer_round_trip():
+    """#96: a D4 FinalReport serializes into the universal contract dict and
+    round-trips back field-for-field."""
+    original = FinalReport(
+        drug_id="chembl:1",
+        disease_id="MONDO:1",
+        endpoint="IC50",
+        efficacy_score=0.6,
+        confidence_score=0.2,
+        confidence_level="moderate",
+        reasoning_mode="Iris-expert",
+        supporting_records=["rec_1", "rec_2"],
+        expert_consensus="2 experts assessed 1 evidence items. Overall confidence: moderate.",
+        contradictions=["biomed vs clinic"],
+        data_gaps=["no phase 3"],
+    )
+    contract = final_report_to_dict(original)
+    # The universal nested shape predict() returns.
+    entry = contract["chembl:1"]["MONDO:1"]["IC50"]
+    assert entry["efficacy_score"] == 0.6
+    assert entry["confidence_level"] == "moderate"
+
+    restored = final_report_from_dict(contract)
+    assert restored == original
+    assert restored.drug_id == original.drug_id
+    assert restored.disease_id == original.disease_id
+    assert restored.endpoint == original.endpoint
+    assert restored.efficacy_score == original.efficacy_score
+    assert restored.confidence_score == original.confidence_score
+    assert restored.confidence_level == original.confidence_level

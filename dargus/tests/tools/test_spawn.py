@@ -273,6 +273,38 @@ def test_expert_self_serves_evidence_in_its_own_conversation():
     assert report["expert"] == "MoleculeExpert"
 
 
+def test_spawn_d4_synthesizes_from_collected_reports():
+    """#96 (SPEC-C): spawning expert=d4 runs the D4 director as a subagent and
+    its conclude() produces the DES ± DCS contract — the spawn result carries
+    a final_report, and the director is not restricted by the least-privilege
+    expert ModeSpec."""
+    rt = _make_runtime()
+    rt.reasoning_llm = None  # no LLM -> self-serve path
+    rt.agent_factory.iris()  # wires the spawn tool
+    tool = rt._spawn_tool
+
+    # Pre-seed a couple of domain spawns so the director has reports to
+    # synthesize.
+    r1 = tool.execute(expert="molecular", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    r2 = tool.execute(expert="clinical", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    assert "error" not in r1 and "error" not in r2
+
+    result = tool.execute(expert="d4", drug="chembl:1", disease="MONDO:1", endpoint="IC50")
+    assert "error" not in result
+    assert result["expert"] == "D4Expert"
+    # The D4 spawn produces a final_report (the DES ± DCS contract).
+    assert "final_report" in result
+    final = result["final_report"]
+    entry = final["chembl:1"]["MONDO:1"]["IC50"]
+    assert "efficacy_score" in entry
+    assert "confidence_score" in entry
+    assert entry["confidence_level"] in ("insufficient_data", "low", "moderate", "high")
+    # D4 is NOT bound by the least-privilege expert ModeSpec — the director
+    # is created via factory.d4_expert(), which does not force expert mode.
+    d4 = rt.agent_factory.d4_expert()
+    assert d4._mode != "expert"
+
+
 # ------------------------------------------------------------------
 # T8 (#91): model-driven predict + TaskDelegation as synthetic message
 # ------------------------------------------------------------------

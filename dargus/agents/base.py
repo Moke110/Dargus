@@ -370,6 +370,27 @@ class BaseAgent(ABC):
         logger.warning("%s: no LLM configured, using stub", self.name)
         return self._llm_stub(system_prompt, user_prompt)
 
+    def _llm_call_messages(self, system_prompt: str, messages: list[Message]) -> str:
+        """Send a system prompt + projected messages to the ReasoningLLM.
+
+        *messages* is the Conversation projected via ``to_llm_messages()`` —
+        the same role/content list the model consumes, so ``chat()`` receives
+        the dialogue directly instead of a re-serialized JSON blob (SPEC-A,
+        #94). Falls back to the deterministic stub when no API key is
+        configured (or the call fails), matching :meth:`_llm_call`.
+        """
+        if self._reasoning_llm is not None and self._llm_available():
+            try:
+                response = self._reasoning_llm.chat(
+                    [Message(role="system", content=system_prompt)] + list(messages)
+                )
+                return response.content
+            except Exception:
+                logger.exception("%s: ReasoningLLM call failed", self.name)
+                return json.dumps({"error": "llm_call_failed"})
+        logger.warning("%s: no LLM configured, using stub", self.name)
+        return self._llm_stub(system_prompt, "")
+
     def _llm_available(self) -> bool:
         """True when the reasoning LLM is usable (an API key is configured).
 
@@ -538,8 +559,11 @@ class BaseAgent(ABC):
 
         system_prompt = perceive_cache.get("system_prompt", self._build_reason_prompt())
         # The model-visible dialogue is the Conversation projected to LLM
-        # messages — no JSON dump of a private history buffer (ADR-0003).
+        # messages — the same role/content list ``chat()`` consumes (SPEC-A).
         llm_messages = perceive_cache.get("llm_messages", conversation.to_llm_messages())
+        # Task framing (task_spec, tools, skills, round) rides in the system
+        # message; the projected dialogue is passed through verbatim — no JSON
+        # dump of a private history buffer (ADR-0003, #94).
         task_framing = json.dumps(
             {
                 "task_spec": perceive_cache.get("task_spec", task_spec),
@@ -550,13 +574,9 @@ class BaseAgent(ABC):
             },
             ensure_ascii=False,
         )
-        dialogue = json.dumps(
-            [{"role": m.role, "content": m.content} for m in llm_messages],
-            ensure_ascii=False,
-        )
-        user_prompt = f"{task_framing}\n\nDialogue so far:\n{dialogue}"
+        system_with_framing = f"{system_prompt}\n\n# Task framing\n{task_framing}"
 
-        response = self._llm_call(system_prompt, user_prompt)
+        response = self._llm_call_messages(system_with_framing, llm_messages)
         try:
             reason_response = json.loads(response.strip())
         except json.JSONDecodeError:

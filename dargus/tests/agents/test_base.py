@@ -123,6 +123,59 @@ def test_run_messages_carry_active_mode():
     assert all(m.mode == "predict" for m in conv.messages)
 
 
+class _RecordingLLM:
+    """Scripted LLM that records the messages it receives at each call."""
+
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.calls: list[list] = []
+
+    def chat(self, messages: list) -> Any:
+        self.calls.append(list(messages))
+        if self.responses:
+            return type("R", (), {"content": self.responses.pop(0)})()
+        return type("R", (), {"content": '{"mode": "auto", "action": "text", "text": "done"}'})()
+
+
+def test_model_visible_context_is_projected_messages():
+    """#94 (SPEC-A): chat() receives the projected Conversation messages as
+    role/content, not a re-serialized JSON blob in one user_prompt.
+
+    A tool-call round renders as an assistant message carrying the tool
+    content, and the terminal text round is preserved verbatim.
+    """
+    from dargus.models.reasoning import Message
+
+    agent = _MinimalAgent(
+        name="test",
+        hook_registry=HookRegistry(),
+        reasoning_llm=_RecordingLLM(
+            [
+                '{"mode": "auto", "action": "tool_call", "tool": "dbase_query", "params": {}}',
+                '{"mode": "auto", "action": "text", "text": "concluded"}',
+            ]
+        ),
+    )
+    agent.run({"query": "assess"})
+
+    assert len(agent._reasoning_llm.calls) == 2
+    for call in agent._reasoning_llm.calls:
+        # First element is the system+framing message; the dialogue follows.
+        assert call[0].role == "system"
+        assert "# Task framing" in call[0].content
+        assert all(isinstance(m, Message) for m in call)
+
+    # The projection at each call is the Conversation as it stood *before*
+    # that round's own LLM call. Round 1: system + the opening user message.
+    first, second = agent._reasoning_llm.calls
+    assert [m.role for m in first] == ["system", "user"]
+
+    # Round 2: the round-1 tool call now renders as an assistant message
+    # carrying the tool content SPEC-A maps (not a JSON blob).
+    assert [m.role for m in second] == ["system", "user", "assistant"]
+    assert "[tool_call] dbase_query" in second[-1].content
+
+
 def test_two_user_turns_accumulate_in_one_conversation():
     """T4: two ask()-style turns on one reused runtime append user messages
     in order and the second turn sees the first turn's messages."""

@@ -113,6 +113,7 @@ def run_ingest(
     task_spec_or_datadir: dict[str, Any] | str,
     reset: bool = False,
     disease_kb_dir: str | None = None,
+    runtime: Any | None = None,
 ) -> IngestionReport | dict[str, Any]:
     """Execute the ingest workflow.
 
@@ -125,6 +126,9 @@ def run_ingest(
             ``datadir`` path string (old API).
         reset: (old API) Clear D-Base before ingestion.
         disease_kb_dir: (old API) Path to disease knowledge base directory.
+        runtime: The reused DargusRuntime (SPEC-B). When provided, the
+            workflow runs through the runtime's hook registry and a
+            runtime-wired ``HookContext`` instead of building its own.
 
     Returns:
         - ``dict[str, Any]`` when called with a ``task_spec`` dict.
@@ -140,7 +144,7 @@ def run_ingest(
         if disease_kb_dir is not None:
             task_spec["disease_kb_dir"] = disease_kb_dir
         try:
-            result = _run_ingest(task_spec)
+            result = _run_ingest(task_spec, runtime=runtime)
         except Exception:
             logger.exception("_run_ingest failed -- returning empty report")
             return IngestionReport()
@@ -151,10 +155,10 @@ def run_ingest(
             errors=[],
         )
     # New calling convention: run_ingest(task_spec)
-    return _run_ingest(task_spec_or_datadir)
+    return _run_ingest(task_spec_or_datadir, runtime=runtime)
 
 
-def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
+def _run_ingest(task_spec: dict[str, Any], runtime: Any | None = None) -> dict[str, Any]:
     """Execute ingest workflow with Hook enforcement.
 
     1. SESSION_START: SessionInitHook creates IngestSession
@@ -170,6 +174,10 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
         task_spec: Dict with keys ``workflow`` (must be ``"ingest"``),
             ``source_path``, optional ``source_type``, ``max_rounds``,
             ``require_confirmation``, ``confirm_callback``.
+        runtime: The reused DargusRuntime (SPEC-B). When provided the
+            workflow runs through its hook registry and a runtime-wired
+            ``HookContext``; otherwise a private registry/context is built
+            (standalone / backward-compat callers).
 
     Returns:
         IngestResult dict with keys: ``workflow``, ``status``,
@@ -180,7 +188,13 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     max_rounds = int(task_spec.get("max_rounds", 5))
 
     # ---- Build hook registry --------------------------------------------------
-    hooks = HookRegistry()
+    # Reuse the runtime's hook registry when one is wired (SPEC-B) so ingest
+    # runs through the same context wiring as predict/ask; fall back to a
+    # private registry for standalone callers.
+    if runtime is not None and getattr(runtime, "hook_registry", None) is not None:
+        hooks = runtime.hook_registry
+    else:
+        hooks = HookRegistry()
     hooks.register(HookPoint.SESSION_START, SessionInitHook())
     hooks.register(HookPoint.PERCEIVE_START, SkeletonContextHook(max_rounds=max_rounds))
     hooks.register(
@@ -191,7 +205,7 @@ def _run_ingest(task_spec: dict[str, Any]) -> dict[str, Any]:
     hooks.register(HookPoint.SESSION_END, ResultReportHook())
 
     # ---- Create initial context ------------------------------------------------
-    ctx = HookContext(runtime=None, task_spec=task_spec)
+    ctx = HookContext(runtime=runtime, task_spec=task_spec)
 
     # ---- SESSION_START hooks --------------------------------------------------
     ctx = hooks.run(HookPoint.SESSION_START, ctx)

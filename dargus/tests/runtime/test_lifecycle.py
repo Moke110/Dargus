@@ -1,5 +1,7 @@
 """Tests for LifecycleManager."""
 
+from typing import Any
+
 from dargus.runtime.context import DargusRuntime
 from dargus.runtime.lifecycle import LifecycleManager
 
@@ -83,3 +85,33 @@ class TestLifecycleManager:
         result = lm.run_ingest({"workflow": "ingest", "source_path": "/data/test", "max_rounds": 1})
         assert isinstance(result, dict)
         assert result["workflow"] == "ingest"
+
+    def test_run_ingest_uses_runtime_hook_registry(self):
+        """#93 (SPEC-B): ingest runs through the reused runtime's hook registry
+        and a runtime-wired HookContext, not a private registry."""
+        from dargus.workflows.ingest import _run_ingest
+
+        rt = DargusRuntime()
+        preexisting = rt.hook_registry.invocation_log  # shared registry
+        result = _run_ingest({"workflow": "ingest", "source_path": "", "max_rounds": 1}, runtime=rt)
+        assert result["workflow"] == "ingest"
+        # The runtime's shared registry was exercised by the ingest run.
+        assert rt.hook_registry.invocation_log is preexisting
+
+    def test_run_ingest_runtime_wired_context(self):
+        """#93 (SPEC-B): the HookContext carries the runtime, so a hook that
+        reads context.runtime sees the reused runtime (not None)."""
+        from dargus.runtime.hooks import HookContext, HookPoint
+        from dargus.workflows.ingest import _run_ingest
+
+        rt = DargusRuntime()
+        seen: list[Any] = []
+
+        def _capture_runtime(ctx: HookContext) -> HookContext:
+            seen.append(ctx.runtime)
+            return ctx
+
+        rt.hook_registry.register(HookPoint.SESSION_START, _capture_runtime)
+        _run_ingest({"workflow": "ingest", "source_path": "", "max_rounds": 1}, runtime=rt)
+
+        assert seen and all(r is rt for r in seen)

@@ -82,14 +82,16 @@ class Iris(BaseAgent):
     def ingest(self, datadir: str, disease_kb_dir: str | None = None) -> dict[str, Any]:
         """Run the Ingest workflow on the global D-Base.
 
-        Delegates to ``run_ingest(task_spec)``.
+        Delegates to ``run_ingest(task_spec)``. Runs through the reused
+        runtime's hook registry when one is wired (SPEC-B), matching predict
+        and ask.
         """
         _task_spec: dict = {"workflow": "ingest", "source_path": datadir}
         if disease_kb_dir is not None:
             _task_spec["disease_kb_dir"] = disease_kb_dir
         if self._lifecycle_manager is not None:
             return self._lifecycle_manager.run_ingest(_task_spec)
-        return run_ingest(_task_spec)
+        return run_ingest(_task_spec, runtime=self._runtime)
 
     def predict(
         self,

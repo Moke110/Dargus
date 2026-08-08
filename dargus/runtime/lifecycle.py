@@ -58,6 +58,10 @@ class LifecycleManager:
     def run_ingest(self, task_spec: dict) -> dict:
         """Execute an ingest workflow via the hook-orchestrated function.
 
+        The workflow runs through the reused runtime's hook registry and a
+        runtime-wired ``HookContext`` (SPEC-B) — same context wiring as
+        predict and ask.
+
         Args:
             task_spec: Dict with ``workflow``, ``source_path``, optional
                 ``source_type``, ``max_rounds``, ``require_confirmation``.
@@ -67,4 +71,4 @@ class LifecycleManager:
         """
         from dargus.workflows.ingest import run_ingest
 
-        return run_ingest(task_spec)
+        return run_ingest(task_spec, runtime=self._runtime)

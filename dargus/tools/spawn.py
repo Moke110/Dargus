@@ -22,6 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from dargus.experts.protocol import ExpertContext
+from dargus.experts.reports import EXPERT_DOMAINS, expert_report_to_dict, predict_task_spec
 from dargus.tools.base import Tool, ToolParam
 
 if TYPE_CHECKING:
@@ -30,9 +31,6 @@ if TYPE_CHECKING:
     from dargus.runtime.factory import AgentFactory
 
 logger = logging.getLogger(__name__)
-
-#: The four domain expert keys + the D4 director. Mirrors _DOMAIN_EXPERT_PATHS.
-_EXPERT_DOMAINS = ["molecular", "biomedical", "bioinformatics", "clinical", "d4"]
 
 
 def _derive_expert_report(expert: Any, drug: str, disease: str, endpoint: str) -> Any:
@@ -119,13 +117,9 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
         if runtime is not None:
             runtime.spawn_stack.append(sub_session)
 
-        task_spec = {
-            "workflow": "predict",
-            "drug_ids": [drug],
-            "disease_id": disease,
-            "endpoints": [endpoint],
-            "session_id": sub_session,
-        }
+        task_spec = predict_task_spec(
+            drug=drug, disease=disease, endpoint=endpoint, session_id=sub_session
+        )
 
         try:
             # ── Run the Expert's PRA loop (self-serves evidence) ─────
@@ -140,7 +134,7 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
         return {
             "expert": expert_agent.name,
             "session_id": sub_session,
-            "report": _report_to_dict(report),
+            "report": expert_report_to_dict(report),
         }
 
     tool = Tool(
@@ -160,7 +154,7 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
                     "Domain expert to spawn: molecular, biomedical, "
                     "bioinformatics, clinical, or d4."
                 ),
-                enum=_EXPERT_DOMAINS,
+                enum=EXPERT_DOMAINS,
             ),
             ToolParam("drug", "string", required=True, description="Drug identifier (CURIE)."),
             ToolParam(
@@ -184,37 +178,3 @@ def make_spawn_expert_tool(factory: AgentFactory, iris: Iris) -> Tool:
     tool._modes = ["predict"]
     tool.bind(_impl)
     return tool
-
-
-def _report_to_dict(report: Any) -> dict[str, Any]:
-    """Serialize an ExpertReport into a plain dict for the Tool result."""
-    return {
-        "expert": report.expert,
-        "round": report.round,
-        "findings": [
-            {
-                "record_ids": f.record_ids,
-                "biological_level": f.biological_level,
-                "relevance": f.relevance,
-                "quality_score": f.quality_score,
-                "limitations": list(f.limitations),
-            }
-            for f in report.findings
-        ],
-        "confidence": {
-            "low": report.confidence.low,
-            "high": report.confidence.high,
-            "sources": list(report.confidence.sources),
-        },
-        "delegations": [
-            {
-                "target_expert": d.target_expert,
-                "record_ids": list(d.record_ids),
-                "reason": d.reason,
-                "priority": d.priority,
-            }
-            for d in report.delegations
-        ],
-        "data_gaps": list(report.data_gaps),
-        "bias_notes": list(report.bias_notes),
-    }

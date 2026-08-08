@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any
 
+from dargus.experts.reports import DOMAIN_EXPERTS
 from dargus.runtime.hooks import (
     HookContext,
     HookPoint,
@@ -228,7 +229,7 @@ def _execute_predict_round(
     endpoints = ctx.task_spec.get("endpoints", [])
     question = f"Assess efficacy of {drug_ids} for {disease_id} on {endpoints or 'all endpoints'}"
 
-    domains = ["molecular", "biomedical", "bioinformatics", "clinical"]
+    domains = list(DOMAIN_EXPERTS)
     expert_reports: list[dict[str, Any]] = []
 
     for domain in domains:

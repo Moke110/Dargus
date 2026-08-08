@@ -12,6 +12,7 @@ from dargus.experts.protocol import (
     ExpertReport,
     FinalReport,
 )
+from dargus.experts.reports import DOMAIN_EXPERT_PATHS
 from dargus.models.reasoning import ReasoningLLM
 from dargus.runtime.hooks import HookRegistry
 from dargus.tools.registry import ToolRegistry
@@ -46,17 +47,7 @@ class D4Expert(Expert):
     DELEGATION_RULES = {}
 
     # ------------------------------------------------------------------
-    # Domain-expert registry for delegate_to_expert
-    # ------------------------------------------------------------------
-    _DOMAIN_EXPERT_MAP: dict[str, str] = {
-        "molecular": "dargus.experts.molecule.MoleculeExpert",
-        "biomedical": "dargus.experts.biomed.BiomedExpert",
-        "bioinformatics": "dargus.experts.bioinfo.BioinfoExpert",
-        "clinical": "dargus.experts.clinic.ClinicExpert",
-    }
-
-    # ------------------------------------------------------------------
-    # Constructor — DI passthrough to Expert → BaseAgent
+    # Domain-expert registry for delegate_to_expert (shared table)
     # ------------------------------------------------------------------
 
     def __init__(
@@ -120,10 +111,10 @@ class D4Expert(Expert):
         Raises:
             ValueError: If *domain* is not recognised.
         """
-        expert_cls_path = self._DOMAIN_EXPERT_MAP.get(domain)
+        expert_cls_path = DOMAIN_EXPERT_PATHS.get(domain)
         if expert_cls_path is None:
             raise ValueError(
-                f"Unknown domain {domain!r}. Known domains: " f"{list(self._DOMAIN_EXPERT_MAP)}"
+                f"Unknown domain {domain!r}. Known domains: " f"{list(DOMAIN_EXPERT_PATHS)}"
             )
 
         if self._agent_factory is not None:

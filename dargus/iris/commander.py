@@ -9,6 +9,7 @@ from dargus.agents.base import BaseAgent
 from dargus.dbase import DBase
 from dargus.dbase.paths import default_dargus_home, working_dbase
 from dargus.dbase.store import DBaseStore
+from dargus.experts.reports import DOMAIN_EXPERTS, expert_report_from_dict, predict_task_spec
 from dargus.models.conversation import ToolCall, ToolResult
 from dargus.workflows.ingest import run_ingest
 
@@ -16,53 +17,6 @@ if TYPE_CHECKING:
     from dargus.runtime.lifecycle import LifecycleManager
 
 logger = logging.getLogger(__name__)
-
-
-def _report_from_dict(payload: dict) -> Any:
-    """Rebuild an ExpertReport from its serialized dict (spawn tool result).
-
-    Mirrors :func:`dargus.tools.spawn._report_to_dict`.
-    """
-    from dargus.experts.protocol import (
-        ConfidenceInterval,
-        EvidenceAssessment,
-        ExpertReport,
-        TaskDelegation,
-    )
-
-    findings = [
-        EvidenceAssessment(
-            record_ids=f.get("record_ids", []),
-            biological_level=f.get("biological_level", ""),
-            relevance=f.get("relevance", "medium"),
-            quality_score=f.get("quality_score", 0.5),
-            limitations=f.get("limitations", []),
-        )
-        for f in payload.get("findings", [])
-    ]
-    conf = payload.get("confidence") or {}
-    delegations = [
-        TaskDelegation(
-            target_expert=d.get("target_expert", ""),
-            record_ids=d.get("record_ids", []),
-            reason=d.get("reason", ""),
-            priority=d.get("priority", "medium"),
-        )
-        for d in payload.get("delegations", [])
-    ]
-    return ExpertReport(
-        expert=payload.get("expert", ""),
-        round=payload.get("round", 0),
-        findings=findings,
-        confidence=ConfidenceInterval(
-            low=conf.get("low", 0.0),
-            high=conf.get("high", 1.0),
-            sources=conf.get("sources", []),
-        ),
-        delegations=delegations,
-        data_gaps=payload.get("data_gaps", []),
-        bias_notes=payload.get("bias_notes", []),
-    )
 
 
 class Iris(BaseAgent):
@@ -165,13 +119,12 @@ class Iris(BaseAgent):
             result[drug_id] = {disease_id: {}}
             for endpoint in endpoints:
                 # ── Model-driven run: Iris reasons and emits spawn_expert ──
-                task_spec = {
-                    "workflow": "predict",
-                    "drug_ids": [drug_id],
-                    "disease_id": disease_id,
-                    "endpoints": [endpoint],
-                    "session_id": f"predict:{drug_id}:{disease_id}:{endpoint}",
-                }
+                task_spec = predict_task_spec(
+                    drug=drug_id,
+                    disease=disease_id,
+                    endpoint=endpoint,
+                    session_id=f"predict:{drug_id}:{disease_id}:{endpoint}",
+                )
                 self.run(task_spec)
 
                 # Collect ExpertReports from the spawn_expert Tool results in
@@ -188,7 +141,7 @@ class Iris(BaseAgent):
                         continue
                     expert_name = payload.get("expert", "unknown")
                     reports_by_expert.setdefault(expert_name, []).append(
-                        _report_from_dict(payload["report"])
+                        expert_report_from_dict(payload["report"])
                     )
 
                 # ── Final synthesis: consume the collected ExpertReports ──
@@ -197,9 +150,7 @@ class Iris(BaseAgent):
                     # domain experts so a usable prediction is produced. Gated on
                     # _llm_available() (not just "no LLM wired") because a
                     # keyless-but-configured backend is equally unusable.
-                    reports_by_expert = self._stub_spawn_all(
-                        drug_id, disease_id, endpoint, conv
-                    )
+                    reports_by_expert = self._stub_spawn_all(drug_id, disease_id, endpoint, conv)
 
                 # Surface any TaskDelegations carried by ExpertReports to Iris
                 # as synthetic Messages — Iris (the sole orchestrator) decides
@@ -234,12 +185,7 @@ class Iris(BaseAgent):
         reports: dict[str, list[Any]] = {}
         if tool is None:
             return reports
-        for domain, expert_name in (
-            ("molecular", "MoleculeExpert"),
-            ("biomedical", "BiomedExpert"),
-            ("bioinformatics", "BioinfoExpert"),
-            ("clinical", "ClinicExpert"),
-        ):
+        for domain in DOMAIN_EXPERTS:
             try:
                 out = tool.execute(
                     expert=domain, drug=drug_id, disease=disease_id, endpoint=endpoint
@@ -249,7 +195,8 @@ class Iris(BaseAgent):
                 continue
             if not isinstance(out, dict) or "report" not in out:
                 continue
-            reports.setdefault(expert_name, []).append(_report_from_dict(out["report"]))
+            report = expert_report_from_dict(out["report"])
+            reports.setdefault(report.expert, []).append(report)
             # Record the spawn as a Tool Message so the stub path is as
             # inspectable as the model-driven one (T6).
             conv.add_tool(

@@ -17,22 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Domain key → expert class path, used by ``expert()``. Also consulted by
-# D4Expert when delegating a task to a domain expert.
-_DOMAIN_EXPERT_PATHS: dict[str, str] = {
-    "molecular": "dargus.experts.molecule.MoleculeExpert",
-    "biomedical": "dargus.experts.biomed.BiomedExpert",
-    "bioinformatics": "dargus.experts.bioinfo.BioinfoExpert",
-    "clinical": "dargus.experts.clinic.ClinicExpert",
-}
-
-_DOMAIN_ALIASES: dict[str, str] = {
-    "MoleculeExpert": "molecular",
-    "BiomedExpert": "biomedical",
-    "BioinfoExpert": "bioinformatics",
-    "ClinicExpert": "clinical",
-}
-
 
 def _import_class(path: str) -> type:
     import importlib
@@ -105,12 +89,17 @@ class AgentFactory:
         Raises:
             ValueError: If *domain* is not recognised.
         """
-        domain = _DOMAIN_ALIASES.get(domain, domain)
-        path = _DOMAIN_EXPERT_PATHS.get(domain)
+        # Lazy import: factory is loaded during BaseAgent init (via the
+        # runtime chain), so importing dargus.experts.reports at module level
+        # would cycle back through dargus.experts.
+        from dargus.experts.reports import DOMAIN_EXPERT_PATHS, EXPERT_NAME_TO_DOMAIN
+
+        domain = EXPERT_NAME_TO_DOMAIN.get(domain, domain)
+        path = DOMAIN_EXPERT_PATHS.get(domain)
         if path is None:
             raise ValueError(
                 f"Unknown expert domain {domain!r}. "
-                f"Known domains: {sorted(_DOMAIN_EXPERT_PATHS)}"
+                f"Known domains: {sorted(DOMAIN_EXPERT_PATHS)}"
             )
         expert_cls = _import_class(path)
         # Experts run in the least-privilege "expert" mode (SPEC-C): they

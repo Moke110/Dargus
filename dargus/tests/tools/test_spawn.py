@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from dargus.iris.commander import _report_from_dict
+from dargus.experts.reports import expert_report_from_dict
 from dargus.runtime.context import DargusRuntime
 
 
@@ -306,7 +306,7 @@ def test_task_delegation_surfaces_as_synthetic_message():
     iris = rt.agent_factory.iris()
 
     # Build a report that carries a delegation.
-    report = _report_from_dict(
+    report = expert_report_from_dict(
         {
             "expert": "ClinicExpert",
             "round": 0,

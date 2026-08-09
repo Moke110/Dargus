@@ -6,9 +6,6 @@ from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
     EvidenceAssessment,
-    ExpertContext,
-    ExpertReport,
-    TaskDelegation,
 )
 
 _HIGH_THROUGHPUT_ASSAYS = frozenset(
@@ -57,24 +54,23 @@ class BioinfoExpert(Expert):
         "epi",
         "rct-sim",
     )
-    DELEGATION_RULES = {
-        "molecular": "MoleculeExpert",
-        "molecular-sim": "MoleculeExpert",
-        "cellular": "BiomedExpert",
-        "cellular-sim": "BiomedExpert",
-        "exvivo": "BiomedExpert",
-        "exvivo-sim": "BiomedExpert",
-        "animal": "BiomedExpert",
-        "animal-sim": "BiomedExpert",
-        "rct": "ClinicExpert",
-        "epi": "ClinicExpert",
-        "rct-sim": "ClinicExpert",
-    }
+    # Bioinfo applies no simulation penalty or bias note — sim-derived omics
+    # records are assessed at face value.
+    SIM_PENALTY = 0.0
+    SIM_BIAS_MSG = ""
 
     def can_handle(self, record: dict) -> bool:
         level = self._read_biological_level(record)
         if level not in self.SUPPORTED_LEVELS:
             return False
+        return self._is_high_throughput(record)
+
+    def _gate(self, record: dict) -> bool:
+        """High-throughput gating: admission is the assay test, not level scope.
+
+        A high-throughput record at any biological level is assessed; anything
+        else is delegated to the level's domain Expert.
+        """
         return self._is_high_throughput(record)
 
     def _is_high_throughput(self, record: dict) -> bool:
@@ -85,54 +81,8 @@ class BioinfoExpert(Expert):
         assay_lower = str(assay).lower().replace(" ", "_").replace("-", "_")
         return assay_lower in _HIGH_THROUGHPUT_ASSAYS
 
-    def assess(
-        self,
-        records: list[dict],
-        context: ExpertContext,
-    ) -> ExpertReport:
-        findings: list[EvidenceAssessment] = []
-        delegations: list[TaskDelegation] = []
-        bias_notes: list[str] = []
-
-        for record in records:
-            eid = record.get("evidence_id", "")
-            level = self._read_biological_level(record)
-            if level is None:
-                continue
-
-            if not self._is_high_throughput(record):
-                target = self.delegate_target(record)
-                if target:
-                    delegations.append(
-                        TaskDelegation(
-                            target_expert=target,
-                            record_ids=[eid],
-                            reason=f"Non-high-throughput data delegated to {target}",
-                        )
-                    )
-                continue
-
-            quality = self._assess_quality(record)
-            findings.append(
-                EvidenceAssessment(
-                    record_ids=[eid],
-                    biological_level=level or "unknown",
-                    relevance="medium",
-                    quality_score=quality,
-                    limitations=[],
-                )
-            )
-
-        confidence = self._assess_confidence(findings)
-        return ExpertReport(
-            expert="BioinfoExpert",
-            round=context.round,
-            findings=findings,
-            confidence=confidence,
-            delegations=delegations,
-            data_gaps=[],
-            bias_notes=bias_notes,
-        )
+    def _delegation_reason(self, level: str, target: str) -> str:
+        return f"Non-high-throughput data delegated to {target}"
 
     def _assess_quality(self, record: dict) -> float:
         score = 0.5

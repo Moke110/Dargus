@@ -6,9 +6,6 @@ from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
     EvidenceAssessment,
-    ExpertContext,
-    ExpertReport,
-    TaskDelegation,
 )
 
 _PHASE_WEIGHTS = {
@@ -33,59 +30,15 @@ class ClinicExpert(Expert):
     SUPPORTED_SKILLS = []
 
     SUPPORTED_LEVELS = ("rct", "epi", "rct-sim")
-    DELEGATION_RULES = {
-        "molecular": "MoleculeExpert",
-        "molecular-sim": "MoleculeExpert",
-        "cellular": "BiomedExpert",
-        "cellular-sim": "BiomedExpert",
-        "exvivo": "BiomedExpert",
-        "exvivo-sim": "BiomedExpert",
-        "animal": "BiomedExpert",
-        "animal-sim": "BiomedExpert",
-    }
+    SIM_PENALTY = 0.3
+    SIM_BIAS_MSG = "Record {eid}: rct simulation data — no actual patient evidence"
+    RELEVANCE_MAP = {"rct": "high", "epi": "high"}
 
-    def assess(
-        self,
-        records: list[dict],
-        context: ExpertContext,
-    ) -> ExpertReport:
-        findings: list[EvidenceAssessment] = []
-        delegations: list[TaskDelegation] = []
-        data_gaps: list[str] = []
+    def _collect_gaps(
+        self, records: list[dict], findings: list[EvidenceAssessment]
+    ) -> tuple[list[str], list[str]]:
         bias_notes: list[str] = []
-
-        for record in records:
-            eid = record.get("evidence_id", "")
-            level = self._read_biological_level(record)
-            if level is None:
-                continue
-
-            if not self.can_handle(record):
-                target = self.delegate_target(record)
-                if target:
-                    delegations.append(
-                        TaskDelegation(
-                            target_expert=target,
-                            record_ids=[eid],
-                            reason=f"Record level '{level}' outside ClinicExpert scope",
-                        )
-                    )
-                continue
-
-            quality = self._assess_quality(record)
-            if "-sim" in (level or ""):
-                bias_notes.append(f"Record {eid}: rct simulation data — no actual patient evidence")
-                quality = max(0.0, quality - 0.3)
-
-            findings.append(
-                EvidenceAssessment(
-                    record_ids=[eid],
-                    biological_level=level or "unknown",
-                    relevance="high" if level in ("rct", "epi") else "medium",
-                    quality_score=quality,
-                    limitations=[],
-                )
-            )
+        data_gaps: list[str] = []
 
         # Mixed direction detection
         readouts = []
@@ -103,16 +56,7 @@ class ClinicExpert(Expert):
         if real_clinical == 0:
             data_gaps.append("No real clinical trial evidence — only simulated or none")
 
-        confidence = self._assess_confidence(findings)
-        return ExpertReport(
-            expert="ClinicExpert",
-            round=context.round,
-            findings=findings,
-            confidence=confidence,
-            delegations=delegations,
-            data_gaps=data_gaps,
-            bias_notes=bias_notes,
-        )
+        return data_gaps, bias_notes
 
     def _assess_quality(self, record: dict) -> float:
         score = 0.5

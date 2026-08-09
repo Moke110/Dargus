@@ -9,6 +9,13 @@ from typing import Any
 
 from dargus.agents.base import BaseAgent
 from dargus.agents.skill_registry import SkillRegistry
+from dargus.experts.protocol import (
+    ConfidenceInterval,
+    EvidenceAssessment,
+    ExpertContext,
+    ExpertReport,
+    TaskDelegation,
+)
 from dargus.models.reasoning import ReasoningLLM
 from dargus.runtime.hooks import HookRegistry
 from dargus.tools.registry import ToolRegistry
@@ -134,19 +141,52 @@ _DOMAIN_STUB_LEVEL: dict[str, str] = {
     "clinical": "rct",
 }
 
+#: The single canonical biological level -> target Expert routing table (ADR-0004).
+#: Routing is wiring/behaviour and lives in code next to the Expert classes, NOT
+#: in ``vocabularies.json`` (which owns the levels themselves and their
+#: clinical/simulation flags). Re-routing or adding a level is a one-line change.
+#: Consumed by :meth:`Expert.delegate_target`; previously duplicated five times
+#: as per-expert ``DELEGATION_RULES`` dicts (molecule / biomed / clinic / bioinfo
+#: and the D4 director).
+BIOLOGICAL_LEVEL_DELEGATION: dict[str, str] = {
+    "molecular": "MoleculeExpert",
+    "molecular-sim": "MoleculeExpert",
+    "cellular": "BiomedExpert",
+    "cellular-sim": "BiomedExpert",
+    "exvivo": "BiomedExpert",
+    "exvivo-sim": "BiomedExpert",
+    "animal": "BiomedExpert",
+    "animal-sim": "BiomedExpert",
+    "rct": "ClinicExpert",
+    "epi": "ClinicExpert",
+    "rct-sim": "ClinicExpert",
+}
+
 
 class Expert(BaseAgent):
-    """Domain expert with biological level declarations and delegation rules.
+    """Domain expert with biological level declarations and an assessment loop.
 
-    Each Expert declares:
+    The base owns the single canonical ``biological_level → Expert`` routing
+    table (:data:`BIOLOGICAL_LEVEL_DELEGATION`) and the ``assess()`` template
+    method. Each Expert declares only what makes it different:
+
       - SUPPORTED_LEVELS: which biological levels it can assess
-      - DELEGATION_RULES: {level: target_expert_name} for records outside scope
+      - SIM_PENALTY / SIM_BIAS_MSG: simulation-derived record quality penalty
+        and the bias-note text for it
+      - RELEVANCE_MAP: level → relevance label (default ``medium``)
       - PERMITTED_TOOLS: tools this expert may call during execution
       - SUPPORTED_SKILLS: skills this expert may load during planning
+
+    Experts may override one optional hook, ``_collect_gaps`` (post-loop data
+    gap / bias logic), and one optional gate, ``_gate`` (per-record admission;
+    defaults to ``can_handle``). ``_assess_quality`` and ``_assess_confidence``
+    remain overridable per domain.
     """
 
     SUPPORTED_LEVELS: tuple[str, ...] = ()
-    DELEGATION_RULES: dict[str, str] = {}
+    SIM_PENALTY: float = 0.2
+    SIM_BIAS_MSG: str = "Record {eid}: simulation-derived data ({level})"
+    RELEVANCE_MAP: dict[str, str] = {}
 
     def __init__(
         self,
@@ -182,13 +222,129 @@ class Expert(BaseAgent):
         level = self._read_biological_level(record)
         if level is None:
             return None
-        return self.DELEGATION_RULES.get(level)
+        return BIOLOGICAL_LEVEL_DELEGATION.get(level)
 
     def _read_biological_level(self, record: dict) -> str | None:
         return record.get("biological_level")
 
     def _read_field(self, record: dict, field_name: str) -> Any:
         return record.get(field_name)
+
+    # ------------------------------------------------------------------
+    # Shared assessment loop — the template method every domain Expert uses
+    # ------------------------------------------------------------------
+
+    def assess(
+        self,
+        records: list[dict],
+        context: ExpertContext,
+    ) -> ExpertReport:
+        """Assess a batch of records, delegating out-of-scope ones.
+
+        Template method shared by all domain Experts: for each record, read
+        its biological level, skip when absent, gate admission, assess quality,
+        apply the simulation penalty and bias note, and append a finding. After
+        the loop, collect domain data gaps via ``_collect_gaps``, assess
+        confidence, and build the :class:`ExpertReport`.
+
+        Domain-specific behaviour is declared as class attributes
+        (``SIM_PENALTY``, ``SIM_BIAS_MSG``, ``RELEVANCE_MAP``) and the two
+        overridable hooks ``_gate`` and ``_collect_gaps``.
+        """
+        findings: list[EvidenceAssessment] = []
+        delegations: list[TaskDelegation] = []
+        data_gaps: list[str] = []
+        bias_notes: list[str] = []
+
+        for record in records:
+            eid = record.get("evidence_id", "")
+            level = self._read_biological_level(record)
+            if level is None:
+                continue
+
+            if not self._gate(record):
+                target = self.delegate_target(record)
+                if target:
+                    delegations.append(
+                        TaskDelegation(
+                            target_expert=target,
+                            record_ids=[eid],
+                            reason=self._delegation_reason(level, target),
+                        )
+                    )
+                continue
+
+            quality = self._assess_quality(record)
+            if "-sim" in (level or "") and self.SIM_PENALTY > 0:
+                bias_notes.append(self._sim_bias_msg(eid, level))
+                quality = max(0.0, quality - self.SIM_PENALTY)
+
+            findings.append(
+                EvidenceAssessment(
+                    record_ids=[eid],
+                    biological_level=level or "unknown",
+                    relevance=self._relevance(level or "unknown"),
+                    quality_score=quality,
+                    limitations=[],
+                )
+            )
+
+        extra_gaps, extra_bias = self._collect_gaps(records, findings)
+        data_gaps.extend(extra_gaps)
+        bias_notes.extend(extra_bias)
+
+        confidence = self._assess_confidence(findings)
+        return ExpertReport(
+            expert=self.name,
+            round=context.round,
+            findings=findings,
+            confidence=confidence,
+            delegations=delegations,
+            data_gaps=data_gaps,
+            bias_notes=bias_notes,
+        )
+
+    def _gate(self, record: dict) -> bool:
+        """Admission gate for a record: default is level scope (``can_handle``).
+
+        Bioinfo overrides this with its high-throughput assay test.
+        """
+        return self.can_handle(record)
+
+    def _relevance(self, level: str) -> str:
+        """Relevance label for a biological level (default ``medium``)."""
+        return self.RELEVANCE_MAP.get(level, "medium")
+
+    def _sim_bias_msg(self, eid: str, level: str) -> str:
+        """Format the simulation-derived bias note for a record."""
+        try:
+            return self.SIM_BIAS_MSG.format(eid=eid, level=level)
+        except (KeyError, IndexError):
+            return self.SIM_BIAS_MSG
+
+    def _delegation_reason(self, level: str, target: str) -> str:
+        """Reason text attached to a delegation (default scope message)."""
+        return f"Record level '{level}' outside {self.name} scope"
+
+    def _assess_quality(self, record: dict) -> float:
+        """Assess a single record's evidence quality (overridden per domain)."""
+        raise NotImplementedError(f"{self.name} must implement _assess_quality")
+
+    def _assess_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
+        """Assess overall confidence from the findings (overridden per domain)."""
+        raise NotImplementedError(f"{self.name} must implement _assess_confidence")
+
+    def _collect_gaps(
+        self, records: list[dict], findings: list[EvidenceAssessment]
+    ) -> tuple[list[str], list[str]]:
+        """Post-loop domain logic: extra data gaps and bias notes.
+
+        Default is a no-op. Biomed overrides it for the in-vivo/in-vitro data
+        gap; Clinic overrides it for mixed-direction detection and the "no real
+        clinical evidence" gap. Receives both *records* and *findings* because
+        Clinic's mixed-direction detection reads raw records.
+        """
+        return [], []
 
     # ------------------------------------------------------------------
     # Prompt overrides — domain-specific system prompts

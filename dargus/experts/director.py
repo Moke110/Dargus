@@ -44,7 +44,6 @@ class D4Expert(Expert):
         "epi",
         "rct-sim",
     )
-    DELEGATION_RULES = {}
 
     # ------------------------------------------------------------------
     # Domain-expert registry for delegate_to_expert (shared table)

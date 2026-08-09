@@ -6,9 +6,6 @@ from dargus.experts.base import Expert
 from dargus.experts.protocol import (
     ConfidenceInterval,
     EvidenceAssessment,
-    ExpertContext,
-    ExpertReport,
-    TaskDelegation,
 )
 
 
@@ -21,74 +18,8 @@ class MoleculeExpert(Expert):
     SUPPORTED_SKILLS = ["dti_prediction", "admet_assessment", "molecular_similarity"]
 
     SUPPORTED_LEVELS = ("molecular", "molecular-sim")
-    DELEGATION_RULES = {
-        "cellular": "BiomedExpert",
-        "cellular-sim": "BiomedExpert",
-        "exvivo": "BiomedExpert",
-        "exvivo-sim": "BiomedExpert",
-        "animal": "BiomedExpert",
-        "animal-sim": "BiomedExpert",
-        "rct": "ClinicExpert",
-        "epi": "ClinicExpert",
-        "rct-sim": "ClinicExpert",
-    }
-
-    def assess(
-        self,
-        records: list[dict],
-        context: ExpertContext,
-    ) -> ExpertReport:
-        findings: list[EvidenceAssessment] = []
-        delegations: list[TaskDelegation] = []
-        data_gaps: list[str] = []
-        bias_notes: list[str] = []
-
-        for record in records:
-            eid = record.get("evidence_id", "")
-            level = self._read_biological_level(record)
-            if level is None:
-                continue
-
-            if not self.can_handle(record):
-                target = self.delegate_target(record)
-                if target:
-                    delegations.append(
-                        TaskDelegation(
-                            target_expert=target,
-                            record_ids=[eid],
-                            reason=f"Record level '{level}' outside MoleculeExpert scope",
-                        )
-                    )
-                continue
-
-            quality = self._assess_quality(record)
-            if "-sim" in (level or ""):
-                bias_notes.append(
-                    f"Record {eid}: computational/simulation data "
-                    f"({level}) — lower evidential weight"
-                )
-                quality = max(0.0, quality - 0.2)
-
-            findings.append(
-                EvidenceAssessment(
-                    record_ids=[eid],
-                    biological_level=level or "unknown",
-                    relevance="medium",
-                    quality_score=quality,
-                    limitations=[],
-                )
-            )
-
-        confidence = self._assess_confidence(findings)
-        return ExpertReport(
-            expert="MoleculeExpert",
-            round=context.round,
-            findings=findings,
-            confidence=confidence,
-            delegations=delegations,
-            data_gaps=data_gaps,
-            bias_notes=bias_notes,
-        )
+    SIM_PENALTY = 0.2
+    SIM_BIAS_MSG = "Record {eid}: computational/simulation data ({level}) — lower evidential weight"
 
     def _assess_quality(self, record: dict) -> float:
         has_readout = self._read_field(record, "readout_value") is not None

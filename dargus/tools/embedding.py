@@ -2,7 +2,7 @@
 
 The heavy embedding model is loaded once into the session
 :class:`~dargus.tools.cache.ToolCache` and reused across PRA rounds
-(design/6 §embedding tool).
+(design/3_D-Base.md §embedding tool).
 """
 
 from __future__ import annotations

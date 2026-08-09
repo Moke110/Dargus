@@ -31,8 +31,3 @@ def get_config_path() -> Path:
 
     # Packaged default
     return Path(__file__).resolve().parent / "dargus_config.yaml"
-
-
-def get_user_config_path() -> Path:
-    """Return the path for user-specific config overrides."""
-    return Path.home() / ".dargus" / "dargus_config.yaml"

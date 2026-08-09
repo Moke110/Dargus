@@ -19,24 +19,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# ── module-level compat exports (loaded from vocabularies.json) ──────────────
-
-_vm: VocabularyManager | None = None
-
-
-def _get_vm() -> "VocabularyManager":
-    global _vm
-    if _vm is None:
-        _vm = VocabularyManager()
-    return _vm
-
-
-# ── Module-level compat has been removed (S8_T2).  All constants now live
-#    only in vocabularies.json — the single source of truth for controlled
-#    vocabularies. The validate module reads directly from the JSON; every
-#    caller should instantiate a ``VocabularyManager`` and use its methods
-#    rather than importing module-level lists.
-
 # ── pending-state persistence ─────────────────────────────────────────────────
 
 _DEFAULT_PENDING_PATH = Path(__file__).resolve().parent / "vocabularies_pending.json"

@@ -461,7 +461,7 @@ class DBaseStore:
         y_type: str | None = None,
         top_k: int = 10,
     ) -> list[tuple[dict, float]]:
-        """Routing Skill: field match + sidecar cosine ranking (design/6).
+        """Routing Skill: field match + sidecar cosine ranking (design/3_D-Base.md).
 
         Field match first — ``biological_level``, ``bg.drugs`` entity IDs,
         ``bg.disease_id``, and ``y.type`` filter active records. Then the

@@ -125,7 +125,7 @@ def dbase_write_summary(manager: DBaseStore, evidence_id: str, summary: str) -> 
 
 
 # ---------------------------------------------------------------------------
-# Tool object bindings (design/6: dbase_* are real Tool instances)
+# Tool object bindings (dbase_* are real Tool instances)
 # ---------------------------------------------------------------------------
 
 

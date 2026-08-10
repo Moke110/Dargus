@@ -3,8 +3,9 @@ truth for every agent's context (ADR-0005).
 
 An Iris instance is a Session: it owns its dialogue state — metadata plus a
 history of Turns, each made of Rounds. ``DargusRuntime`` holds no per-session
-state. The log is **in-memory and single-process only** — durable persistence
-and compaction are explicitly deferred by ADR-0005.
+state. The in-memory Session is persisted to the workspace archive when it
+ends (ADR-0005); summarization/compaction of long Sessions is explicitly
+deferred.
 
 Grain:
 - **Round** — one iteration of the Perceive → Reason → Act loop within a Turn:
@@ -232,10 +233,15 @@ class Session:
         return self.turns[-1]
 
     def add_user(self, text: str) -> Round:
-        """Start a new Turn with *text* as the user prompt and return its Round."""
-        self.turns.append(Turn(prompt=text))
+        """Start a new Turn with *text* as the user prompt.
+
+        The prompt is Turn state (``turn.prompt``), not a logged Round; the
+        returned Round is the projected entry for the message stream.
+        """
+        turn = Turn(prompt=text)
+        self.turns.append(turn)
         self.metadata.turn_count += 1
-        return Round.user(text)
+        return Round.user(turn.prompt)
 
     def add_assistant(self, text: str = "") -> Round:
         return self._append(Round.assistant(text))
@@ -345,3 +351,8 @@ class Session:
             metadata=SessionMetadata.from_dict(data.get("metadata", {})),
             turns=[Turn.from_dict(t) for t in data.get("turns", [])],
         )
+
+    def close(self) -> None:
+        """Stamp the Session's closed timestamp (once)."""
+        if self.metadata.closed is None:
+            self.metadata.closed = _now_iso()

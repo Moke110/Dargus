@@ -529,12 +529,9 @@ class BaseAgent(ABC):
             logger.warning("%s: no workspace root — cannot persist session", self.name)
             return None
 
-        from dargus.models.session import _now_iso
         from dargus.sessions.store import SessionStore
 
-        if session.metadata.closed is None:
-            session.metadata.closed = _now_iso()
-
+        session.close()
         store = SessionStore(workspace_root=root)
         return store.write(session)
 

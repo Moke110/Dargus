@@ -209,6 +209,9 @@ def resume_session(session_id: str) -> str:
     root = _workspace_root(runtime)
     from dargus.sessions.store import SessionStore
 
+    # Load the archived session *before* ending the live one: an unknown id
+    # raises here, so the live session is never silently discarded (#107:
+    # resume persists-then-ends, then hydrates).
     loaded = SessionStore(root).read(session_id)
 
     # Fresh identity — resume continues prior work as a *new* Session.

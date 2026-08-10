@@ -29,6 +29,7 @@ def _populated_session(session_id: str = "s1", agent: str = "Iris", root: str = 
     session.add_user("first question")
     session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "data"})
     session.add_assistant("concluded")
+    session.close_current_turn()  # a persisted Session has closed Turns
     return session
 
 

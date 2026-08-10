@@ -141,12 +141,16 @@ class Round:
 class Turn:
     """One user prompt plus the final Iris reply it prompts; made of Rounds.
 
-    The coarse ``(prompt, final_reply)`` summary is what Iris recalls of a
-    closed Turn; its internal Rounds are retained for record and replay only.
+    A Turn is **closed** once the agent's run for its prompt completes (it
+    converged or hit MAX_ROUNDS). The coarse ``(prompt, final_reply)``
+    summary is what Iris recalls of a closed Turn; its internal Rounds are
+    retained for record and replay only. The currently-open Turn (the one in
+    flight) projects its full Rounds.
     """
 
     prompt: str
     rounds: list[Round] = field(default_factory=list)
+    closed: bool = False
 
     @property
     def final_reply(self) -> str:
@@ -166,6 +170,7 @@ class Turn:
         return {
             "prompt": self.prompt,
             "rounds": [r.to_dict() for r in self.rounds],
+            "closed": self.closed,
         }
 
     @classmethod
@@ -173,6 +178,7 @@ class Turn:
         return cls(
             prompt=data.get("prompt", ""),
             rounds=[Round.from_dict(r) for r in data.get("rounds", [])],
+            closed=bool(data.get("closed", False)),
         )
 
 
@@ -227,21 +233,34 @@ class Session:
     # ------------------------------------------------------------------
 
     def _current_turn(self) -> Turn:
-        """Return the in-flight Turn, creating an empty-prompt one lazily."""
-        if not self.turns:
+        """Return the in-flight Turn, creating an open one lazily."""
+        if not self.turns or self.turns[-1].closed:
             self.turns.append(Turn(prompt=""))
         return self.turns[-1]
 
     def add_user(self, text: str) -> Round:
-        """Start a new Turn with *text* as the user prompt.
+        """Start a new, open Turn with *text* as the user prompt.
 
-        The prompt is Turn state (``turn.prompt``), not a logged Round; the
-        returned Round is the projected entry for the message stream.
+        Starting a new Turn closes the previous one (a Turn is one user
+        prompt plus its reply). The prompt is Turn state (``turn.prompt``),
+        not a logged Round; the returned Round is the projected entry for
+        the message stream.
         """
+        if self.turns and not self.turns[-1].closed:
+            self.turns[-1].closed = True
         turn = Turn(prompt=text)
         self.turns.append(turn)
         self.metadata.turn_count += 1
         return Round.user(turn.prompt)
+
+    def close_current_turn(self) -> None:
+        """Close the in-flight Turn (its Rounds project coarse from here on).
+
+        Called by the agent when a run completes — converged or MAX_ROUNDS
+        exhausted — so a turn that ends without a text reply is still closed.
+        """
+        if self.turns:
+            self.turns[-1].closed = True
 
     def add_assistant(self, text: str = "") -> Round:
         return self._append(Round.assistant(text))
@@ -281,25 +300,25 @@ class Session:
         return entries
 
     def _is_in_flight(self, turn: Turn) -> bool:
-        """True while the PRA loop is still building *turn*.
+        """True for the Turn currently being built by the PRA loop.
 
-        A Turn is in flight until it receives its final reply; once closed
-        its internal Rounds are retained for record but no longer shown to
-        the model.
+        A Turn is in flight until its agent run completes; once closed its
+        internal Rounds are retained for record but no longer shown to the
+        model. State-based, not reply-based: a run that exhausts MAX_ROUNDS
+        with no text reply still closes its Turn.
         """
-        return not bool(turn.final_reply)
+        return not turn.closed
 
     def projection(self) -> list[Message]:
         """Project the Session into the ``list[Message]`` ``ReasoningLLM.chat()``
         consumes (ADR-0005 structural rule).
 
         Closed Turns project as their coarse ``(prompt, final reply)`` summary
-        only; the in-flight Turn (the one currently being built, without a
-        final reply) projects its full Rounds so multi-round tasks stay
-        coherent. What Iris sees depends on a Turn's state — never on how the
-        Session was loaded. A Session loaded from the archive has all Turns
-        closed, so a resumed Session projects coarse until the next Turn is
-        opened.
+        only; the in-flight Turn (the one currently being built) projects its
+        full Rounds so multi-round tasks stay coherent. What Iris sees depends
+        on a Turn's state — never on how the Session was loaded. A Session
+        loaded from the archive has all Turns closed, so a resumed Session
+        projects coarse until the next Turn is opened.
 
         System-prompt framing stays the responsibility of the agent's
         perceive step; this projects the dialogue + tool content.

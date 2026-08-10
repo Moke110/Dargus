@@ -9,6 +9,7 @@ one live session exists across swaps.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -176,3 +177,58 @@ class TestEndSession:
         api.end_session()
         # Second end is a no-op (append-only archive) but still returns the id.
         assert api.end_session() is not None
+
+
+class TestInterruptedTool:
+    def test_interrupted_tool_settles_as_error_entry(self, tmp_path, wire_runtime):
+        """#105: an interrupted/failed tool call settles as an error Round in
+        the Session — at the API seam."""
+        import dargus.api as api
+
+        # A scripted LLM that requests read_file but the tool execution will
+        # fail (tool not in PERMITTED_TOOLS → "not permitted" error).
+        rt = wire_runtime(['{"action": "tool_call", "tool": "write_file", "params": {}}'])
+        api.ask("do the thing")
+
+        session = _live(rt)._session
+        tool_rounds = [m for m in session.messages if m.tool_name is not None]
+        assert len(tool_rounds) == 1
+        # The failed call settles as an error in the record, not dropped.
+        assert "not permitted" in str(tool_rounds[0].tool_output)
+        assert tool_rounds[0].tool_name == "write_file"
+
+        # The turn is closed (no text reply) and the error is retained in
+        # the archive record.
+        assert session.turns[-1].closed is True
+        api.end_session()
+        archived = _archive_ids(rt)
+        assert len(archived) == 1
+
+
+class TestAtexitSafetyNet:
+    def test_register_atexit_is_guarded_noop(self, monkeypatch):
+        """Registering the atexit handler twice only registers once."""
+        import dargus.api as api
+
+        setattr(api._register_atexit_persist, "_registered", False)
+        with patch("atexit.register") as mock_register:
+            api._register_atexit_persist()
+            api._register_atexit_persist()
+            mock_register.assert_called_once()
+
+    def test_exit_handler_persists_live_session(self, tmp_path, wire_runtime):
+        """The atexit handler persists the live Iris Session (never
+        ``__del__``)."""
+        import dargus.api as api
+
+        rt = wire_runtime(["first reply"])
+        api.ask("hello")
+        session_id = _live(rt)._session.metadata.session_id
+
+        api._persist_live_session_on_exit()
+        assert session_id in _archive_ids(rt)
+
+    def test_exit_handler_noop_without_runtime(self):
+        import dargus.api as api
+
+        api._persist_live_session_on_exit()  # must not raise

@@ -184,6 +184,11 @@ class BaseAgent(ABC):
 
             round_num += 1
 
+        # Close the current Turn: whether the run converged or exhausted
+        # MAX_ROUNDS, its Rounds are no longer in flight and project coarse
+        # from here on (ADR-0005 structural rule).
+        session.close_current_turn()
+
         confidence = self._compute_confidence(session)
 
         return AgentReport(

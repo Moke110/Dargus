@@ -116,6 +116,7 @@ class TestSession:
         session.add_user("q1")
         session.add_system("context")
         session.add_assistant("a1")
+        session.close_current_turn()
         msgs = session.projection()
         assert [m.role for m in msgs] == ["user", "assistant"]
         assert msgs[0].content == "q1"
@@ -158,6 +159,7 @@ class TestSession:
         session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "data"})
         session.add_synthetic("subagent result")
         session.add_assistant("concluded")
+        session.close_current_turn()
         msgs = session.projection()
         assert [m.role for m in msgs] == ["user", "assistant"]
         assert msgs[0].content == "q1"
@@ -195,6 +197,25 @@ class TestSession:
         b.add_tool("read_file", params={"path": "/x"}, output={"ok": True})
 
         assert [m.content for m in a.projection()] == [m.content for m in b.projection()]
+
+    def test_closed_turn_without_reply_projects_coarse(self):
+        """A Turn closed with no text reply (e.g. MAX_ROUNDS exhausted mid
+        tool-loop) projects coarse and is not treated as in-flight forever."""
+        session = self._session()
+        session.add_user("q1")
+        session.add_tool("read_file", params={"path": "/x"}, output={"ok": True})
+        session.close_current_turn()  # run ended without a text reply
+
+        msgs = session.projection()
+        # Prompt shown; no assistant reply to show; tool Rounds hidden.
+        assert [m.role for m in msgs] == ["user"]
+        assert msgs[0].content == "q1"
+
+        # A later turn does not keep this one detailed.
+        session.add_user("q2")
+        session.add_assistant("a2")
+        later = session.projection()
+        assert [m.content for m in later] == ["q1", "q2", "a2"]
 
     def test_len_and_last(self):
         session = self._session()

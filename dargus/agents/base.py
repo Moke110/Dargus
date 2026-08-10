@@ -14,8 +14,8 @@ import yaml
 
 from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
-from dargus.models.conversation import Conversation, ToolCall, ToolResult
 from dargus.models.reasoning import LiteLLMBackend, Message, ReasoningLLM
+from dargus.models.session import Session, SessionMetadata
 from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
 
@@ -71,10 +71,10 @@ class BaseAgent(ABC):
         # standalone/test contexts.
         self._runtime: Any | None = runtime
 
-        # The agent's Conversation (ADR-0003) — the single source of truth
+        # The agent's Session (ADR-0005) — the single source of truth
         # for context. Resolved through the runtime's conversation store when
         # one is wired; a per-instance fallback otherwise.
-        self._conversation: Conversation | None = None
+        self._session: Session | None = None
 
         self._validate_permissions()
 
@@ -94,16 +94,16 @@ class BaseAgent(ABC):
                 )
 
     # ------------------------------------------------------------------
-    # Conversation access (ADR-0003)
+    # Session access (ADR-0005)
     # ------------------------------------------------------------------
 
-    def _resolve_conversation(self, task_spec: dict[str, Any]) -> Conversation:
-        """Return the agent's Conversation, resolving it through the runtime.
+    def _resolve_session(self, task_spec: dict[str, Any]) -> Session:
+        """Return the agent's Session, resolving it through the runtime.
 
         When a runtime conversation store is wired, the store owns the
-        Conversation keyed by session/agent so it survives agent churn and
+        Session keyed by session/agent so it survives agent churn and
         API turns. The store is consulted on every call so each session gets
-        its own log. A per-instance fallback Conversation is used in
+        its own log. A per-instance fallback Session is used in
         standalone/test contexts (no runtime store), created once and reused.
         """
         store = None
@@ -116,12 +116,14 @@ class BaseAgent(ABC):
                 return getter(session_id, self.name)
             return store.get((session_id, self.name))
 
-        if self._conversation is None:
-            self._conversation = Conversation(
-                session_id=task_spec.get("session_id", f"{self.name}"),
-                agent=self.name,
+        if self._session is None:
+            self._session = Session(
+                SessionMetadata(
+                    session_id=task_spec.get("session_id", f"{self.name}"),
+                    agent=self.name,
+                )
             )
-        return self._conversation
+        return self._session
 
     @staticmethod
     def _load_default_config() -> dict[str, Any]:
@@ -138,8 +140,8 @@ class BaseAgent(ABC):
     def run(self, task_spec: dict[str, Any]) -> AgentReport:
         """Execute Perceive → Reason → Act loop until convergence.
 
-        Every agent uses this single loop. The Conversation is the single
-        source of truth (ADR-0003): the loop reads prior context from and
+        Every agent uses this single loop. The Session is the single
+        source of truth (ADR-0005): the loop reads prior context from and
         appends every round to it.
         """
         traces: list[CallTrace] = []
@@ -149,15 +151,15 @@ class BaseAgent(ABC):
         bias_notes: list[str] = []
         findings: list = []
 
-        conversation = self._resolve_conversation(task_spec)
-        if not conversation.messages or task_spec.get("_user_turn"):
-            # Fresh conversation: record the task as the opening user message.
-            conversation.add_user(json.dumps(task_spec, ensure_ascii=False))
+        session = self._resolve_session(task_spec)
+        if not session.messages or task_spec.get("_user_turn"):
+            # Fresh session: record the task as the opening user message.
+            session.add_user(json.dumps(task_spec, ensure_ascii=False))
 
         while not converged and round_num < self.MAX_ROUNDS:
             # ── PERCEIVE: context assembly (no LLM call) ────────────
             perceive_t0 = time.monotonic()
-            perceive_cache = self._perceive(task_spec, conversation, round_num)
+            perceive_cache = self._perceive(task_spec, session, round_num)
             perceive_elapsed = int((time.monotonic() - perceive_t0) * 1000)
 
             traces.append(
@@ -171,7 +173,7 @@ class BaseAgent(ABC):
 
             # ── REASON: single LLM call ───────────────────────────
             reason_response, reason_trace = self._reason(
-                task_spec, conversation, round_num, perceive_cache
+                task_spec, session, round_num, perceive_cache
             )
             traces.append(reason_trace)
 
@@ -179,25 +181,27 @@ class BaseAgent(ABC):
             act_output, act_traces = self._act(reason_response, round_num, perceive_cache)
             traces.extend(act_traces)
 
-            # ── Record the round in the Conversation ───────────────
+            # ── Record the round in the Session ───────────────────
             action = reason_response.get("action", "text")
             if action == "text":
                 converged = True
                 findings.append(reason_response.get("text", ""))
-                conversation.add_assistant(reason_response.get("text", ""))
+                session.add_assistant(reason_response.get("text", ""))
             elif action == "tool_call":
                 tool_name = reason_response.get("tool", "")
                 params = reason_response.get("params", {})
-                # A failed Tool settles as an error Message in the log, not dropped.
+                # A failed Tool settles as an error Round in the log, not dropped.
                 error = act_output.get("error") if isinstance(act_output, dict) else None
-                conversation.add_tool(
-                    ToolCall(name=tool_name, params=params),
-                    ToolResult(output=act_output, error=error),
+                session.add_tool(
+                    tool_name,
+                    params=params,
+                    output=act_output,
+                    error=error,
                 )
 
             round_num += 1
 
-        confidence = self._compute_confidence(conversation)
+        confidence = self._compute_confidence(session)
 
         return AgentReport(
             agent_name=self.name,
@@ -255,7 +259,7 @@ class BaseAgent(ABC):
     def _llm_call_messages(self, system_prompt: str, messages: list[Message]) -> str:
         """Send a system prompt + projected messages to the ReasoningLLM.
 
-        *messages* is the Conversation projected via ``to_llm_messages()`` —
+        *messages* is the Session projected via ``projection()`` —
         the same role/content list the model consumes, so ``chat()`` receives
         the dialogue directly instead of a re-serialized JSON blob (SPEC-A).
         Falls back to the deterministic stub when no API key is configured.
@@ -300,14 +304,14 @@ class BaseAgent(ABC):
     def _perceive(
         self,
         task_spec: dict,
-        conversation: Conversation,
+        session: Session,
         round_num: int,
     ) -> dict[str, Any]:
         """Assemble the context blob for the next REASON round.
 
         Collects the agent's system prompt, the tool definitions for its
         ``PERMITTED_TOOLS`` (as JSON Schema), and skill content. The dialogue
-        context comes from the Conversation.
+        context comes from the Session.
 
         No LLM call — pure data assembly.
         """
@@ -353,8 +357,8 @@ class BaseAgent(ABC):
             "tool_definitions": tool_defs,
             "skill_content": skill_content,
             "task_spec": task_spec,
-            "conversation": conversation,
-            "llm_messages": conversation.to_llm_messages(),
+            "conversation": session,
+            "llm_messages": session.projection(),
             "round": round_num,
         }
 
@@ -365,7 +369,7 @@ class BaseAgent(ABC):
     def _reason(
         self,
         task_spec: dict,
-        conversation: Conversation,
+        session: Session,
         round_num: int,
         perceive_cache: dict[str, Any],
     ) -> tuple[dict, CallTrace]:
@@ -378,9 +382,9 @@ class BaseAgent(ABC):
         t0 = time.monotonic()
 
         system_prompt = perceive_cache.get("system_prompt", self.system_prompt)
-        # The model-visible dialogue is the Conversation projected to LLM
+        # The model-visible dialogue is the Session projected to LLM
         # messages — the same role/content list ``chat()`` consumes (SPEC-A).
-        llm_messages = perceive_cache.get("llm_messages", conversation.to_llm_messages())
+        llm_messages = perceive_cache.get("llm_messages", session.projection())
         # Task framing (task_spec, tools, skills, round) rides in the system
         # message; the projected dialogue is passed through verbatim.
         task_framing = json.dumps(
@@ -502,13 +506,13 @@ class BaseAgent(ABC):
     # Confidence heuristic
     # ------------------------------------------------------------------
 
-    def _compute_confidence(self, conversation: Conversation) -> float:
+    def _compute_confidence(self, session: Session) -> float:
         """Heuristic confidence from round count and convergence.
 
-        Derived from the Conversation (ADR-0003). Each assistant Message
+        Derived from the Session (ADR-0005). Each assistant Round
         contributes diminishing confidence.
         """
-        n_rounds = sum(1 for m in conversation.messages if m.role == "assistant")
+        n_rounds = sum(1 for m in session.messages if m.role == "assistant")
         if n_rounds == 0:
             return 0.0
         return min(0.9, n_rounds * 0.2)

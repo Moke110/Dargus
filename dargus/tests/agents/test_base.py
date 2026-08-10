@@ -1,4 +1,4 @@
-"""Test Phase D: BaseAgent PRA loop and Conversation integration."""
+"""Test Phase D: BaseAgent PRA loop and Session integration."""
 
 from typing import Any
 
@@ -31,7 +31,7 @@ def test_base_agent_no_di_works():
 
 
 # ------------------------------------------------------------------
-# Conversation as single source of truth (T2 / #85)
+# Session as single source of truth (T2 / #85)
 # ------------------------------------------------------------------
 
 
@@ -61,7 +61,7 @@ def _make_agent(runtime=None, responses: list[str] | None = None):
 
 def test_run_appends_one_assistant_message_per_round():
     """T2: a multi-round run (tool_call then text) appends one assistant
-    Message per round to the Conversation."""
+    Round per round to the Session."""
     agent = _make_agent(
         responses=[
             '{"action": "tool_call", "tool": "read_file", "params": {}}',
@@ -71,15 +71,15 @@ def test_run_appends_one_assistant_message_per_round():
     report = agent.run({"query": "assess"})
     assert report.rounds == 2
 
-    conv = agent._resolve_conversation({"query": "assess"})
+    session = agent._resolve_session({"query": "assess"})
     # Sanity: the text message is the terminal round
-    assert conv.last().text == "concluded"
-    roles = [m.role for m in conv.messages]
+    assert session.last().text == "concluded"
+    roles = [m.role for m in session.messages]
     # user + tool-call assistant + text assistant
     assert roles == ["user", "assistant", "assistant"]
-    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
-    assert len(tool_msgs) == 1
-    assert tool_msgs[0].tool_call.name == "read_file"
+    tool_rounds = [m for m in session.messages if m.tool_name is not None]
+    assert len(tool_rounds) == 1
+    assert tool_rounds[0].tool_name == "read_file"
 
 
 def test_run_settles_interrupted_tool_as_error_message():
@@ -102,10 +102,10 @@ def test_run_settles_interrupted_tool_as_error_message():
     agent.PERMITTED_TOOLS = ["boom_tool"]
     agent.run({"query": "x"})
 
-    conv = agent._resolve_conversation({"query": "x"})
-    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
-    assert len(tool_msgs) == 1
-    assert "kaboom" in (tool_msgs[0].tool_result.error or "")
+    session = agent._resolve_session({"query": "x"})
+    tool_rounds = [m for m in session.messages if m.tool_name is not None]
+    assert len(tool_rounds) == 1
+    assert "kaboom" in (tool_rounds[0].tool_error or "")
 
 
 def test_run_blocks_tool_not_in_permitted_tools():
@@ -116,10 +116,10 @@ def test_run_blocks_tool_not_in_permitted_tools():
     )
     agent.run({"query": "x"})
 
-    conv = agent._resolve_conversation({"query": "x"})
-    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
-    assert len(tool_msgs) == 1
-    output = tool_msgs[0].tool_result.output
+    session = agent._resolve_session({"query": "x"})
+    tool_rounds = [m for m in session.messages if m.tool_name is not None]
+    assert len(tool_rounds) == 1
+    output = tool_rounds[0].tool_output
     assert isinstance(output, dict)
     inner = output.get("output", {})
     assert isinstance(inner, dict)
@@ -141,7 +141,7 @@ class _RecordingLLM:
 
 
 def test_model_visible_context_is_projected_messages():
-    """#94 (SPEC-A): chat() receives the projected Conversation messages as
+    """#94 (SPEC-A): chat() receives the projected Session messages as
     role/content, not a re-serialized JSON blob in one user_prompt.
 
     A tool-call round renders as an assistant message carrying the tool
@@ -167,7 +167,7 @@ def test_model_visible_context_is_projected_messages():
         assert "# Task framing" in call[0].content
         assert all(isinstance(m, Message) for m in call)
 
-    # The projection at each call is the Conversation as it stood *before*
+    # The projection at each call is the Session as it stood *before*
     # that round's own LLM call. Round 1: system + the opening user message.
     first, second = agent._reasoning_llm.calls
     assert [m.role for m in first] == ["system", "user"]
@@ -178,7 +178,7 @@ def test_model_visible_context_is_projected_messages():
     assert "[tool_call] read_file" in second[-1].content
 
 
-def test_two_user_turns_accumulate_in_one_conversation():
+def test_two_user_turns_accumulate_in_one_session():
     """T4: two ask()-style turns on one reused runtime append user messages
     in order and the second turn sees the first turn's messages."""
     from dargus.runtime.context import DargusRuntime
@@ -199,8 +199,8 @@ def test_two_user_turns_accumulate_in_one_conversation():
     agent.run({"query": "what is aspirin?", "session_id": "dialogue", "_user_turn": True})
     agent.run({"query": "and metformin?", "session_id": "dialogue", "_user_turn": True})
 
-    conv = runtime.get_conversation("dialogue", "Iris")
-    texts = [m.text for m in conv.messages]
+    session = runtime.get_conversation("dialogue", "Iris")
+    texts = [m.text for m in session.messages]
     # Two user turns + two assistant replies, in order.
     n_aspirin = sum(1 for t in texts if "what is aspirin?" in t)
     n_metformin = sum(1 for t in texts if "and metformin?" in t)
@@ -208,11 +208,11 @@ def test_two_user_turns_accumulate_in_one_conversation():
     assert n_metformin == 1
     assert "first reply" in texts
     assert "second reply" in texts
-    assert len(conv.messages) == 4
+    assert len(session.messages) == 4
 
 
-def test_distinct_sessions_get_distinct_conversations():
-    """T4 regression: a reused agent resolves a separate Conversation per
+def test_distinct_sessions_get_distinct_sessions():
+    """T4 regression: a reused agent resolves a separate Session per
     session_id instead of caching the first session's log."""
     from dargus.runtime.context import DargusRuntime
 

@@ -39,23 +39,24 @@ class DargusRuntime:
     workspace_guard: Any | None = None  # WorkspaceGuard
     healthy: bool = True
     unhealthy_reason: str | None = None
-    # ── Conversations (ADR-0003 / SPEC-B) ───────────────────────────────
-    # Every agent's Conversation, keyed by (session_id, agent). Owned by the
-    # runtime so the log survives agent churn and API turns.
+    # ── Sessions (ADR-0005) ──────────────────────────────────────────────
+    # Every agent's Session, keyed by (session_id, agent). Owned by the
+    # runtime so the log survives agent churn and API turns (to be removed
+    # in the ownership move — an Iris instance owns its Session).
     conversation_store: dict[tuple[str, str], Any] = field(default_factory=dict)
 
     def get_conversation(self, session_id: str, agent: str, parent_id: str | None = None) -> Any:
-        """Return (creating if needed) the Conversation for session/agent.
+        """Return (creating if needed) the Session for session/agent.
 
-        ``parent_id`` links a child Conversation to its parent's
-        (opencode ``parentID`` analogue).
+        ``parent_id`` is retained for ADR-0003 compatibility; the Session
+        model has no parent linkage.
         """
         key = (session_id, agent)
         conv = self.conversation_store.get(key)
         if conv is None:
-            from dargus.models.conversation import Conversation
+            from dargus.models.session import Session, SessionMetadata
 
-            conv = Conversation(session_id=session_id, agent=agent, parent_id=parent_id)
+            conv = Session(SessionMetadata(session_id=session_id, agent=agent))
             self.conversation_store[key] = conv
         return conv
 

@@ -1,9 +1,8 @@
-"""AgentFactory — the single creation/termination point for every Agent.
+"""AgentFactory — the single creation point for every Agent.
 
-v1.0.0 (design/2_runtime_structure.md): the factory creates and terminates every
-Agent — Iris, Domain Experts, and D4Expert — injecting runtime-provided
-dependencies so any dependency can be replaced with a fake or stub without
-changing Agent code.
+The factory creates every Agent — Iris, Domain Experts, and D4Expert —
+injecting runtime-provided dependencies so any dependency can be replaced
+with a fake or stub without changing Agent code.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ def _import_class(path: str) -> type:
 
 
 class AgentFactory:
-    """Creates and terminates Agents, wiring shared resources from the runtime."""
+    """Creates Agents, wiring shared resources from the runtime."""
 
     def __init__(self, runtime: DargusRuntime) -> None:
         self._runtime = runtime
@@ -44,9 +43,6 @@ class AgentFactory:
             "reasoning_llm": rt.reasoning_llm,
             "tool_registry": rt.tool_registry,
             "skill_registry": rt.skill_registry,
-            "hook_registry": rt.hook_registry,
-            "mode": rt.mode,
-            "mode_config": rt.mode_config,
         }
 
     def _dbase(self) -> Any:
@@ -59,12 +55,7 @@ class AgentFactory:
         return DBase.global_instance()
 
     def _wire(self, agent: Any) -> Any:
-        """Attach the runtime back-reference for runtime-dependent hooks.
-
-        Done post-construction (not via the DI bundle) because Expert and
-        D4Expert subclass constructors declare explicit kwargs and do not
-        forward unknown ones to ``BaseAgent``.
-        """
+        """Attach the runtime back-reference for runtime-dependent behaviour."""
         agent._runtime = self._runtime
         return agent
 
@@ -89,25 +80,13 @@ class AgentFactory:
         Raises:
             ValueError: If *domain* is not recognised.
         """
-        # Lazy import: factory is loaded during BaseAgent init (via the
-        # runtime chain), so importing dargus.experts.reports at module level
-        # would cycle back through dargus.experts.
-        from dargus.experts.reports import DOMAIN_EXPERT_PATHS, EXPERT_NAME_TO_DOMAIN
+        from dargus.config.experts import domain_to_expert_path
 
-        domain = EXPERT_NAME_TO_DOMAIN.get(domain, domain)
-        path = DOMAIN_EXPERT_PATHS.get(domain)
+        path = domain_to_expert_path(domain)
         if path is None:
-            raise ValueError(
-                f"Unknown expert domain {domain!r}. "
-                f"Known domains: {sorted(DOMAIN_EXPERT_PATHS)}"
-            )
+            raise ValueError(f"Unknown expert domain {domain!r}. Known domains: see config.")
         expert_cls = _import_class(path)
-        # Experts run in the least-privilege "expert" mode (SPEC-C): they
-        # self-serve evidence via dbase_query but cannot switch modes, write
-        # files, or spawn subagents. Override the runtime's default mode.
-        di = self._di_kwargs()
-        di["mode"] = "expert"
-        return self._wire(expert_cls(dbase=self._dbase(), **di))
+        return self._wire(expert_cls(dbase=self._dbase(), **self._di_kwargs()))
 
     def d4_expert(self):
         """Create the D4Expert coordinator."""
@@ -119,8 +98,8 @@ class AgentFactory:
         """Create — and then cache — the Iris commander Agent.
 
         Iris is long-lived (SPEC-B): the same instance is returned on
-        subsequent calls so her identity and session state stay stable
-        within a process. The cache is reset by :meth:`terminate`.
+        subsequent calls so her identity stays stable within a process.
+        The cache is reset by :meth:`terminate`.
         """
         if self._iris_cache is not None:
             return self._iris_cache
@@ -128,20 +107,6 @@ class AgentFactory:
 
         iris = self._wire(Iris(agent_factory=self, **self._di_kwargs()))
         self._iris_cache = iris
-
-        # Wire the spawn_expert tool (SPEC-C) into the runtime now that Iris
-        # exists — it needs the factory + Iris back-references. Register once.
-        rt = self._runtime
-        if rt is not None and getattr(rt, "_spawn_tool", None) is None:
-            from dargus.tools.spawn import make_spawn_expert_tool
-
-            tool = make_spawn_expert_tool(self, iris)
-            rt._spawn_tool = tool
-            rt.tool_registry.register(tool)
-            # Expose spawn_expert in predict mode's tool list.
-            predict_spec = rt.mode_config.get("predict")
-            if predict_spec is not None and "spawn_expert" not in predict_spec.tools:
-                predict_spec.tools = list(predict_spec.tools) + ["spawn_expert"]
         return iris
 
     # ------------------------------------------------------------------
@@ -152,9 +117,7 @@ class AgentFactory:
         """Terminate an Agent created by this factory.
 
         Agents hold no external resources today, so termination is a
-        best-effort ``close()`` hook plus a log line; it exists so the
-        factory remains the single lifecycle boundary required by
-        design/2_runtime_structure.md.
+        best-effort ``close()`` hook plus a log line.
         """
         close = getattr(agent, "close", None)
         if callable(close):

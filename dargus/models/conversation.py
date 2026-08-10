@@ -8,7 +8,7 @@ log is **in-memory and single-process only** — durable persistence and
 compaction are explicitly deferred by ADR-0003.
 
 Concepts that sit *alongside* this model, never inside it:
-Mode/ModeSpec (session/agent state), D-Base (orthogonal domain store),
+D-Base (orthogonal domain store),
 AgentReport/CallTrace (run-level artifacts derived *from* the log),
 Hooks (observers that may inject system/synthetic Messages).
 """
@@ -53,32 +53,30 @@ class ConvMessage:
     """One typed entry in a Conversation log.
 
     An assistant Message records **at most one** ``tool_call``/``tool_result``
-    pair, mirroring one-tool-per-round execution (ticket #77). ``mode`` tags
-    the Mode active when the message was produced.
+    pair, mirroring one-tool-per-round execution (ticket #77).
     """
 
     role: str
     text: str = ""
     tool_call: ToolCall | None = None
     tool_result: ToolResult | None = None
-    mode: str | None = None
     created: str = field(default_factory=_now_iso)
 
     @classmethod
-    def user(cls, text: str, mode: str | None = None) -> "ConvMessage":
-        return cls(role=ROLE_USER, text=text, mode=mode)
+    def user(cls, text: str) -> "ConvMessage":
+        return cls(role=ROLE_USER, text=text)
 
     @classmethod
-    def assistant(cls, text: str = "", mode: str | None = None) -> "ConvMessage":
-        return cls(role=ROLE_ASSISTANT, text=text, mode=mode)
+    def assistant(cls, text: str = "") -> "ConvMessage":
+        return cls(role=ROLE_ASSISTANT, text=text)
 
     @classmethod
     def system(cls, text: str) -> "ConvMessage":
         return cls(role=ROLE_SYSTEM, text=text)
 
     @classmethod
-    def synthetic(cls, text: str, mode: str | None = None) -> "ConvMessage":
-        return cls(role=ROLE_SYNTHETIC, text=text, mode=mode)
+    def synthetic(cls, text: str) -> "ConvMessage":
+        return cls(role=ROLE_SYNTHETIC, text=text)
 
     def as_llm_message(self) -> Message:
         """Project this entry into the role/content ``Message`` the
@@ -107,7 +105,7 @@ class Conversation:
 
     Fields:
         session_id: Identifies the owning session (agent-scoped key).
-        parent_id: Optional — links a Subagent's Conversation to its parent's
+        parent_id: Optional — links a child Conversation to its parent's
             (opencode ``Session.info.parentID`` analogue).
         agent: The agent name this log belongs to.
         messages: The ordered log of :class:`ConvMessage`.
@@ -127,23 +125,22 @@ class Conversation:
         self.messages.append(message)
         return message
 
-    def add_user(self, text: str, mode: str | None = None) -> ConvMessage:
-        return self.add(ConvMessage.user(text, mode=mode))
+    def add_user(self, text: str) -> ConvMessage:
+        return self.add(ConvMessage.user(text))
 
-    def add_assistant(self, text: str = "", mode: str | None = None) -> ConvMessage:
-        return self.add(ConvMessage.assistant(text, mode=mode))
+    def add_assistant(self, text: str = "") -> ConvMessage:
+        return self.add(ConvMessage.assistant(text))
 
     def add_system(self, text: str) -> ConvMessage:
         return self.add(ConvMessage.system(text))
 
-    def add_synthetic(self, text: str, mode: str | None = None) -> ConvMessage:
-        return self.add(ConvMessage.synthetic(text, mode=mode))
+    def add_synthetic(self, text: str) -> ConvMessage:
+        return self.add(ConvMessage.synthetic(text))
 
     def add_tool(
         self,
         call: ToolCall,
         result: ToolResult,
-        mode: str | None = None,
     ) -> ConvMessage:
         """Append an assistant Message carrying one tool call + result."""
         return self.add(
@@ -151,7 +148,6 @@ class Conversation:
                 role=ROLE_ASSISTANT,
                 tool_call=call,
                 tool_result=result,
-                mode=mode,
             )
         )
 
@@ -164,8 +160,8 @@ class Conversation:
         consumes, replacing the JSON dump of ``history`` + ``act_cache`` that
         used to be built in the agent loop (base.py:422).
 
-        System-prompt / mode framing stays the responsibility of the
-        ModeSpec/perceive step; this projects the dialogue + tool content.
+        System-prompt framing stays the responsibility of the agent's
+        perceive step; this projects the dialogue + tool content.
         """
         return [m.as_llm_message() for m in self.messages]
 

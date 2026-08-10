@@ -1,11 +1,9 @@
-"""Test Phase D: BaseAgent dependency injection and hook triggering."""
+"""Test Phase D: BaseAgent PRA loop and Conversation integration."""
 
 from typing import Any
-from unittest.mock import MagicMock
 
 from dargus.agents.base import BaseAgent
 from dargus.agents.skill_registry import SkillRegistry
-from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
 
@@ -48,13 +46,12 @@ class _StubLLM:
         self.calls.append(list(messages))
         if self.responses:
             return type("R", (), {"content": self.responses.pop(0)})()
-        return type("R", (), {"content": '{"mode": "auto", "action": "text", "text": "done"}'})()
+        return type("R", (), {"content": '{"action": "text", "text": "done"}'})()
 
 
 def _make_agent(runtime=None, responses: list[str] | None = None):
     agent = _MinimalAgent(
         name="test",
-        hook_registry=HookRegistry(),
         reasoning_llm=_StubLLM(responses or []),
     )
     if runtime is not None:
@@ -67,8 +64,8 @@ def test_run_appends_one_assistant_message_per_round():
     Message per round to the Conversation."""
     agent = _make_agent(
         responses=[
-            '{"mode": "auto", "action": "tool_call", "tool": "dbase_query", "params": {}}',
-            '{"mode": "auto", "action": "text", "text": "concluded"}',
+            '{"action": "tool_call", "tool": "read_file", "params": {}}',
+            '{"action": "text", "text": "concluded"}',
         ]
     )
     report = agent.run({"query": "assess"})
@@ -82,7 +79,7 @@ def test_run_appends_one_assistant_message_per_round():
     assert roles == ["user", "assistant", "assistant"]
     tool_msgs = [m for m in conv.messages if m.tool_call is not None]
     assert len(tool_msgs) == 1
-    assert tool_msgs[0].tool_call.name == "dbase_query"
+    assert tool_msgs[0].tool_call.name == "read_file"
 
 
 def test_run_settles_interrupted_tool_as_error_message():
@@ -97,14 +94,12 @@ def test_run_settles_interrupted_tool_as_error_message():
     boom.bind(lambda: (_ for _ in ()).throw(RuntimeError("kaboom")))
     registry.register(boom)
 
-    agent = _MinimalAgent(name="test", tool_registry=registry)
-    agent._mode_config = {
-        "auto": type("MS", (), {"system_prompt": "", "tools": ["boom_tool"], "skills": []})(),
-    }
-    agent._reasoning_llm = _StubLLM(
-        ['{"mode": "auto", "action": "tool_call", "tool": "boom_tool", "params": {}}']
+    agent = _MinimalAgent(
+        name="test",
+        tool_registry=registry,
+        reasoning_llm=_StubLLM(['{"action": "tool_call", "tool": "boom_tool", "params": {}}']),
     )
-    agent._hook_registry = HookRegistry()
+    agent.PERMITTED_TOOLS = ["boom_tool"]
     agent.run({"query": "x"})
 
     conv = agent._resolve_conversation({"query": "x"})
@@ -113,14 +108,22 @@ def test_run_settles_interrupted_tool_as_error_message():
     assert "kaboom" in (tool_msgs[0].tool_result.error or "")
 
 
-def test_run_messages_carry_active_mode():
-    """T2: Messages carry the Mode active when they were produced."""
-    agent = _make_agent(responses=['{"mode": "predict", "action": "text", "text": "ok"}'])
-    agent._mode = "predict"
+def test_run_blocks_tool_not_in_permitted_tools():
+    """ACT refuses a tool call outside the agent's PERMITTED_TOOLS."""
+    agent = _MinimalAgent(
+        name="test",
+        reasoning_llm=_StubLLM(['{"action": "tool_call", "tool": "write_file", "params": {}}']),
+    )
     agent.run({"query": "x"})
 
     conv = agent._resolve_conversation({"query": "x"})
-    assert all(m.mode == "predict" for m in conv.messages)
+    tool_msgs = [m for m in conv.messages if m.tool_call is not None]
+    assert len(tool_msgs) == 1
+    output = tool_msgs[0].tool_result.output
+    assert isinstance(output, dict)
+    inner = output.get("output", {})
+    assert isinstance(inner, dict)
+    assert "not permitted" in str(inner.get("error", ""))
 
 
 class _RecordingLLM:
@@ -134,7 +137,7 @@ class _RecordingLLM:
         self.calls.append(list(messages))
         if self.responses:
             return type("R", (), {"content": self.responses.pop(0)})()
-        return type("R", (), {"content": '{"mode": "auto", "action": "text", "text": "done"}'})()
+        return type("R", (), {"content": '{"action": "text", "text": "done"}'})()
 
 
 def test_model_visible_context_is_projected_messages():
@@ -148,11 +151,10 @@ def test_model_visible_context_is_projected_messages():
 
     agent = _MinimalAgent(
         name="test",
-        hook_registry=HookRegistry(),
         reasoning_llm=_RecordingLLM(
             [
-                '{"mode": "auto", "action": "tool_call", "tool": "dbase_query", "params": {}}',
-                '{"mode": "auto", "action": "text", "text": "concluded"}',
+                '{"action": "tool_call", "tool": "read_file", "params": {}}',
+                '{"action": "text", "text": "concluded"}',
             ]
         ),
     )
@@ -173,7 +175,7 @@ def test_model_visible_context_is_projected_messages():
     # Round 2: the round-1 tool call now renders as an assistant message
     # carrying the tool content SPEC-A maps (not a JSON blob).
     assert [m.role for m in second] == ["system", "user", "assistant"]
-    assert "[tool_call] dbase_query" in second[-1].content
+    assert "[tool_call] read_file" in second[-1].content
 
 
 def test_two_user_turns_accumulate_in_one_conversation():
@@ -185,11 +187,10 @@ def test_two_user_turns_accumulate_in_one_conversation():
     # Use a stub reasoning LLM wired via DI.
     agent = _MinimalAgent(
         name="Iris",
-        hook_registry=HookRegistry(),
         reasoning_llm=_StubLLM(
             [
-                '{"mode": "auto", "action": "text", "text": "first reply"}',
-                '{"mode": "auto", "action": "text", "text": "second reply"}',
+                '{"action": "text", "text": "first reply"}',
+                '{"action": "text", "text": "second reply"}',
             ]
         ),
     )
@@ -218,11 +219,10 @@ def test_distinct_sessions_get_distinct_conversations():
     runtime = DargusRuntime()
     agent = _MinimalAgent(
         name="Iris",
-        hook_registry=HookRegistry(),
         reasoning_llm=_StubLLM(
             [
-                '{"mode": "auto", "action": "text", "text": "dialogue reply"}',
-                '{"mode": "auto", "action": "text", "text": "predict reply"}',
+                '{"action": "text", "text": "dialogue reply"}',
+                '{"action": "text", "text": "predict reply"}',
             ]
         ),
     )
@@ -272,84 +272,7 @@ def test_base_agent_injected_skill_registry():
     assert agent._skill_registry is custom
 
 
-def test_base_agent_injected_hook_registry():
-    """Injected HookRegistry is stored."""
-    custom = HookRegistry()
-    agent = _MinimalAgent(name="test", hook_registry=custom)
-    assert agent._hook_registry is custom
-
-
-def test_base_agent_none_hook_registry():
-    """When hook_registry is None (default), no hooks run — no crash."""
+def test_base_agent_default_system_prompt_is_empty():
+    """The default agent system_prompt is empty; subclasses declare one."""
     agent = _MinimalAgent(name="test")
-    assert agent._hook_registry is None
-
-
-# ------------------------------------------------------------------
-# Hook triggering in run()
-# ------------------------------------------------------------------
-
-
-def test_run_triggers_reason_end_hook():
-    """When hook_registry is injected, REASON_END fires after reasoning."""
-    registry = HookRegistry()
-    hook_tracker = MagicMock()
-
-    def track_reason_end(ctx: HookContext) -> HookContext:
-        hook_tracker(ctx)
-        return ctx
-
-    registry.register(HookPoint.REASON_END, track_reason_end)
-
-    agent = _MinimalAgent(name="test", hook_registry=registry)
-    report = agent.run({"goal": "simple_test"})
-
-    assert report is not None
-    assert hook_tracker.call_count >= 1
-    call_ctx = hook_tracker.call_args[0][0]
-    assert isinstance(call_ctx, HookContext)
-    assert call_ctx.agent is agent
-
-
-def test_run_triggers_act_end_hook():
-    """When hook_registry is injected, ACT_END fires after execution."""
-    registry = HookRegistry()
-    hook_tracker = MagicMock()
-
-    def track_act_end(ctx: HookContext) -> HookContext:
-        hook_tracker(ctx)
-        return ctx
-
-    registry.register(HookPoint.ACT_END, track_act_end)
-
-    agent = _MinimalAgent(name="test", hook_registry=registry)
-    report = agent.run({"goal": "simple_test"})
-
-    assert report is not None
-    assert hook_tracker.call_count >= 1
-
-
-def test_run_triggers_perceive_end_hook():
-    """When hook_registry is injected, PERCEIVE_END fires after perceiving."""
-    registry = HookRegistry()
-    hook_tracker = MagicMock()
-
-    def track_perceive_end(ctx: HookContext) -> HookContext:
-        hook_tracker(ctx)
-        return ctx
-
-    registry.register(HookPoint.PERCEIVE_END, track_perceive_end)
-
-    agent = _MinimalAgent(name="test", hook_registry=registry)
-    report = agent.run({"goal": "simple_test"})
-
-    assert report is not None
-    assert hook_tracker.call_count >= 1
-
-
-def test_run_does_not_crash_without_hook_registry():
-    """BaseAgent.run() is safe when hook_registry is None."""
-    agent = _MinimalAgent(name="test")
-    report = agent.run({"goal": "simple_test"})
-    assert report is not None
-    assert report.agent_name == "test"  # DI constructor sets self.name
+    assert agent.system_prompt == ""

@@ -6,9 +6,9 @@
 
 1. **One variable for one evidence.** Each evidence record represents one experimental variable or manipulation. Compound results are decomposed into separate records so retrieval, assessment, and synthesis can reason about each claim precisely.
 
-2. **One intact evidence for one input.** Every ingest input yields one complete, intact evidence record that preserves the source claim in full. Decomposition creates child records, but the original intact record remains the canonical source.
+2. **One intact evidence for one input.** Every input yields one complete, intact evidence record that preserves the source claim in full. Decomposition creates child records, but the original intact record remains the canonical source.
 
-3. **LLM summary for fallback.** When structured extraction cannot fully populate the schema, an LLM-generated summary is stored as a fallback representation. The summary lives in a sidecar table keyed by `evidence_id` and can be regenerated or replaced without changing the evidence identity.
+3. **LLM summary for fallback.** When a record cannot be fully populated, an LLM-generated summary is stored as a fallback representation. The summary lives in a sidecar table keyed by `evidence_id` and can be regenerated or replaced without changing the evidence identity.
 
 4. **Expandable vocabularies under human approval.** Controlled vocabularies for biological levels, evidence designs, endpoints, and other enumerations can be extended, but every new term requires explicit human approval before it is accepted into D-Base.
 
@@ -38,7 +38,7 @@ The `-sim` suffix marks simulation-derived evidence. `rct` and `epi` are clinica
 
 ## Single-writer invariant
 
-All writes to D-Base go through a single component. No Agent, Expert, or workflow writes evidence directly. This guarantees:
+All writes to D-Base go through a single component. No Agent or Expert writes evidence directly. This guarantees:
 
 - validation before persistence,
 - content-addressed `evidence_id`,
@@ -51,7 +51,7 @@ All writes to D-Base go through a single component. No Agent, Expert, or workflo
 D-Base uses two complementary deduplication strategies:
 
 1. **Exact deduplication (hard gate).** A content hash of the identity fields produces `evidence_id`. If the same ID already exists, the incoming record is skipped. This is the default and cannot be bypassed.
-2. **Semantic deduplication (soft flag).** The embedding tool converts the record to a dense vector. If cosine similarity to an existing record exceeds a threshold within the same drug/disease/endpoint scope, Dargus raises a `DuplicateReviewRequest`. The final decision is made by the human user, not by the store, any Agent, or an automated workflow.
+2. **Semantic deduplication (soft flag).** The store's embedding model converts the record to a dense vector. If cosine similarity to an existing record exceeds a threshold within the same experimental scope (`x` entity, `disease_id`, `y.type`), Dargus raises a `DuplicateReviewRequest`. The final decision is made by the human user, not by the store or any Agent.
 
 ## Identity and immutability
 

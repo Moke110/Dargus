@@ -16,7 +16,6 @@ from dargus.agents.report import AgentReport, CallTrace
 from dargus.agents.skill_registry import SkillRegistry
 from dargus.models.conversation import Conversation, ToolCall, ToolResult
 from dargus.models.reasoning import LiteLLMBackend, Message, ReasoningLLM
-from dargus.runtime.hooks import HookContext, HookPoint, HookRegistry
 from dargus.tools.base import Tool
 from dargus.tools.registry import ToolRegistry
 
@@ -27,17 +26,18 @@ class BaseAgent(ABC):
     """Harness-equipped agent base class.
 
     Subclasses declare:
+      - name: str
+      - system_prompt: str
       - PERMITTED_TOOLS: list[str]
       - SUPPORTED_SKILLS: list[str]
-      - SUPPORTED_LEVELS: tuple[str, ...]
     """
 
     name: str = "BaseAgent"
+    system_prompt: str = ""
 
     # --- subclass overrides ---
     PERMITTED_TOOLS: list[str] = []
     SUPPORTED_SKILLS: list[str] = []
-    SUPPORTED_LEVELS: tuple[str, ...] = ()
     MAX_ROUNDS: int = 5
 
     def __init__(
@@ -47,9 +47,6 @@ class BaseAgent(ABC):
         reasoning_llm: ReasoningLLM | None = None,
         tool_registry: ToolRegistry | None = None,
         skill_registry: SkillRegistry | None = None,
-        hook_registry: HookRegistry | None = None,
-        mode: str = "auto",
-        mode_config: dict[str, Any] | None = None,
         runtime: Any | None = None,
     ):
         # Backward compat: if first positional arg is a dict, treat as config not name
@@ -64,25 +61,19 @@ class BaseAgent(ABC):
         # DI or defaults — each injected value takes priority; None means "create default"
         self._tool_registry = tool_registry if tool_registry is not None else ToolRegistry()
         self._skill_registry = skill_registry if skill_registry is not None else SkillRegistry()
-        self._hook_registry: HookRegistry | None = hook_registry
 
         # Reasoning LLM comes only from DI (the runtime's single model);
         # without it the agent runs in deterministic stub mode.
         self._reasoning_llm: ReasoningLLM | None = reasoning_llm
 
-        # Mode system (ADR-0002)
-        self._mode: str = mode
-        self._mode_config: dict[str, Any] = mode_config or {}
-
         # Back-reference to the owning DargusRuntime, injected by AgentFactory.
-        # Runtime-dependent hooks (mode-tag validation, workspace guard) read
-        # state off this; None in standalone/test contexts, where those hooks
-        # pass through.
+        # Runtime-dependent behaviour reads state off this; None in
+        # standalone/test contexts.
         self._runtime: Any | None = runtime
 
         # The agent's Conversation (ADR-0003) — the single source of truth
         # for context. Resolved through the runtime's conversation store when
-        # one is wired (T4); a per-instance fallback otherwise.
+        # one is wired; a per-instance fallback otherwise.
         self._conversation: Conversation | None = None
 
         self._validate_permissions()
@@ -109,13 +100,11 @@ class BaseAgent(ABC):
     def _resolve_conversation(self, task_spec: dict[str, Any]) -> Conversation:
         """Return the agent's Conversation, resolving it through the runtime.
 
-        When a runtime conversation store is wired (T4), the store owns the
+        When a runtime conversation store is wired, the store owns the
         Conversation keyed by session/agent so it survives agent churn and
-        API turns. The store is consulted on every call: a long-lived Iris
-        is reused across ``ask()`` (session ``"dialogue"``) and ``predict()``
-        (per-(drug,endpoint) sessions), and each session must get its own log.
-        A per-instance fallback Conversation is used in standalone/test
-        contexts (no runtime store), created once and reused.
+        API turns. The store is consulted on every call so each session gets
+        its own log. A per-instance fallback Conversation is used in
+        standalone/test contexts (no runtime store), created once and reused.
         """
         store = None
         if self._runtime is not None:
@@ -134,12 +123,6 @@ class BaseAgent(ABC):
             )
         return self._conversation
 
-    def _session(self) -> Any | None:
-        """The runtime's durable session object, or None (standalone/test)."""
-        if self._runtime is not None:
-            return getattr(self._runtime, "session", None)
-        return None
-
     @staticmethod
     def _load_default_config() -> dict[str, Any]:
         config_path = Path(__file__).resolve().parent.parent / "config" / "dargus_config.yaml"
@@ -155,9 +138,9 @@ class BaseAgent(ABC):
     def run(self, task_spec: dict[str, Any]) -> AgentReport:
         """Execute Perceive → Reason → Act loop until convergence.
 
-        Every agent (Iris, D4Expert, Domain Expert) uses this single loop.
-        Mode-gating controls which tools, skills, hooks, and system prompt
-        are active for each round.
+        Every agent uses this single loop. The Conversation is the single
+        source of truth (ADR-0003): the loop reads prior context from and
+        appends every round to it.
         """
         traces: list[CallTrace] = []
         round_num = 0
@@ -166,23 +149,10 @@ class BaseAgent(ABC):
         bias_notes: list[str] = []
         findings: list = []
 
-        # The Conversation is the single source of truth (ADR-0003): the loop
-        # reads prior context from and appends every round to it. There is no
-        # separate private history/act_cache buffer.
         conversation = self._resolve_conversation(task_spec)
-        # Record the active session so the spawn_expert tool can link a
-        # Subagent's Conversation to this one's (SPEC-C).
-        if self._runtime is not None:
-            self._runtime.current_session_id = conversation.session_id
         if not conversation.messages or task_spec.get("_user_turn"):
             # Fresh conversation: record the task as the opening user message.
-            # Subsequent user turns (ask() across a reused runtime) carry the
-            # ``_user_turn`` marker so the new query is appended in order —
-            # cross-turn dialogue lives in one ordered log (ADR-0003).
-            conversation.add_user(
-                json.dumps(task_spec, ensure_ascii=False),
-                mode=self._mode,
-            )
+            conversation.add_user(json.dumps(task_spec, ensure_ascii=False))
 
         while not converged and round_num < self.MAX_ROUNDS:
             # ── PERCEIVE: context assembly (no LLM call) ────────────
@@ -190,26 +160,14 @@ class BaseAgent(ABC):
             perceive_cache = self._perceive(task_spec, conversation, round_num)
             perceive_elapsed = int((time.monotonic() - perceive_t0) * 1000)
 
-            perceive_trace = CallTrace(
-                round=round_num,
-                phase="perceive",
-                output_summary=f"mode={self._mode}, tools={perceive_cache.get('tool_names', [])}",
-                elapsed_ms=perceive_elapsed,
-            )
-            traces.append(perceive_trace)
-
-            # Hook: PERCEIVE_END
-            if self._hook_registry is not None:
-                _ctx = HookContext(
-                    runtime=self._runtime,
-                    task_spec=task_spec,
-                    session=self._session(),
-                    agent=self,
+            traces.append(
+                CallTrace(
                     round=round_num,
-                    trace=perceive_trace,
-                    extra={"perceive_cache": perceive_cache},
+                    phase="perceive",
+                    output_summary=f"tools={perceive_cache.get('tool_names', [])}",
+                    elapsed_ms=perceive_elapsed,
                 )
-                self._hook_registry.run(HookPoint.PERCEIVE_END, _ctx)
+            )
 
             # ── REASON: single LLM call ───────────────────────────
             reason_response, reason_trace = self._reason(
@@ -217,72 +175,16 @@ class BaseAgent(ABC):
             )
             traces.append(reason_trace)
 
-            # Hook: REASON_END
-            reason_ctx: HookContext | None = None
-            if self._hook_registry is not None:
-                reason_ctx = HookContext(
-                    runtime=self._runtime,
-                    task_spec=task_spec,
-                    session=self._session(),
-                    agent=self,
-                    round=round_num,
-                    trace=reason_trace,
-                    extra={"reason_response": reason_response},
-                )
-                reason_ctx = self._hook_registry.run(HookPoint.REASON_END, reason_ctx)
-
             # ── ACT: execute or converge ──────────────────────────
-            skip_act = reason_ctx.extra.get("skip_act", False) if reason_ctx else False
-            if skip_act:
-                # Mode-tag mismatch or hook veto — the round is skipped (the
-                # warning was already injected into the next PERCEIVE round by
-                # the mode-tag hook).
-                act_output = {}
-                act_traces: list[CallTrace] = []
-            else:
-                # Hook: ACT_START — pre-execution guard (workspace paths,
-                # tool allowlist). Fired only when ACT will actually run.
-                if self._hook_registry is not None:
-                    _ctx = HookContext(
-                        runtime=self._runtime,
-                        task_spec=task_spec,
-                        session=self._session(),
-                        agent=self,
-                        tools=self._tool_map(),
-                        round=round_num,
-                        trace=CallTrace(
-                            round=round_num,
-                            phase="act",
-                            tool_called=reason_response.get("tool"),
-                        ),
-                        extra={"reason_response": reason_response},
-                    )
-                    self._hook_registry.run(HookPoint.ACT_START, _ctx)
-
-                act_output, act_traces = self._act(reason_response, round_num, perceive_cache)
-
+            act_output, act_traces = self._act(reason_response, round_num, perceive_cache)
             traces.extend(act_traces)
-
-            # Hook: ACT_END
-            if self._hook_registry is not None and not skip_act:
-                _ctx = HookContext(
-                    runtime=self._runtime,
-                    task_spec=task_spec,
-                    session=self._session(),
-                    agent=self,
-                    tools=self._tool_map(),
-                    round=round_num,
-                    trace=act_traces[-1] if act_traces else None,
-                    extra={"act_output": act_output},
-                )
-                self._hook_registry.run(HookPoint.ACT_END, _ctx)
 
             # ── Record the round in the Conversation ───────────────
             action = reason_response.get("action", "text")
             if action == "text":
                 converged = True
                 findings.append(reason_response.get("text", ""))
-                conversation.add_assistant(reason_response.get("text", ""), mode=self._mode)
+                conversation.add_assistant(reason_response.get("text", ""))
             elif action == "tool_call":
                 tool_name = reason_response.get("tool", "")
                 params = reason_response.get("params", {})
@@ -291,26 +193,7 @@ class BaseAgent(ABC):
                 conversation.add_tool(
                     ToolCall(name=tool_name, params=params),
                     ToolResult(output=act_output, error=error),
-                    mode=self._mode,
                 )
-
-            # Track mode transitions
-            if action == "tool_call" and reason_response.get("tool") == "switch_mode":
-                new_mode = reason_response.get("params", {}).get("target", "")
-                if new_mode:
-                    logger.info("%s: mode transition %s → %s", self.name, self._mode, new_mode)
-
-            # Hook: ROUND_END
-            if self._hook_registry is not None:
-                _ctx = HookContext(
-                    runtime=self._runtime,
-                    task_spec=task_spec,
-                    session=self._session(),
-                    agent=self,
-                    round=round_num,
-                    extra={},
-                )
-                self._hook_registry.run(HookPoint.ROUND_END, _ctx)
 
             round_num += 1
 
@@ -336,7 +219,7 @@ class BaseAgent(ABC):
         return self._tool_registry.get(name)
 
     def _tool_map(self) -> dict[str, Tool]:
-        """All registered tools keyed by name — for hook contexts."""
+        """All registered tools keyed by name."""
         try:
             return {tool.name: tool for tool in self._tool_registry.list_all()}
         except Exception:
@@ -374,9 +257,8 @@ class BaseAgent(ABC):
 
         *messages* is the Conversation projected via ``to_llm_messages()`` —
         the same role/content list the model consumes, so ``chat()`` receives
-        the dialogue directly instead of a re-serialized JSON blob (SPEC-A,
-        #94). Falls back to the deterministic stub when no API key is
-        configured (or the call fails), matching :meth:`_llm_call`.
+        the dialogue directly instead of a re-serialized JSON blob (SPEC-A).
+        Falls back to the deterministic stub when no API key is configured.
         """
         if self._reasoning_llm is not None and self._llm_available():
             try:
@@ -423,35 +305,19 @@ class BaseAgent(ABC):
     ) -> dict[str, Any]:
         """Assemble the context blob for the next REASON round.
 
-        Reads the current mode from ``self._mode``, looks up its ModeSpec,
-        collects the mode's system prompt, tool definitions (as JSON Schema),
-        and skill content. The dialogue context comes from the Conversation.
+        Collects the agent's system prompt, the tool definitions for its
+        ``PERMITTED_TOOLS`` (as JSON Schema), and skill content. The dialogue
+        context comes from the Conversation.
 
         No LLM call — pure data assembly.
         """
-        # ── Mode spec lookup ───────────────────────────────────────
-        mode_spec = self._mode_config.get(self._mode)
-        system_prompt = ""
-        mode_tool_names: list[str] = []
-        mode_skill_names: list[str] = []
-
-        if mode_spec is not None:
-            system_prompt = mode_spec.system_prompt
-            mode_tool_names = list(mode_spec.tools)
-            mode_skill_names = list(mode_spec.skills)
-
         # ── Tool definitions (JSON Schema format) ──────────────────
         tool_defs: list[dict[str, Any]] = []
-        for tool_name in mode_tool_names:
+        for tool_name in self.PERMITTED_TOOLS:
             try:
                 tool = self._tool_registry.get(tool_name)
             except KeyError:
                 continue
-            # Skip tools that are mode-restricted and don't match current mode
-            tool_modes: list[str] = getattr(tool, "_modes", [])
-            if tool_modes and tool_modes != ["*"]:
-                # Tool is restricted to specific modes
-                pass  # mode_tool_names already filters
 
             params_schema: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
             for p in tool.parameters:
@@ -471,55 +337,19 @@ class BaseAgent(ABC):
                     "parameters": params_schema,
                 }
             )
-            # Also include always-available tools (switch_mode)
-            all_tools = self._tool_registry.list_all()
-            for tool in all_tools:
-                tool_modes: list[str] = getattr(tool, "_modes", [])
-                if tool_modes == ["*"] and tool.name not in [t["name"] for t in tool_defs]:
-                    params_schema_all: dict[str, Any] = {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    }
-                    for p in tool.parameters:
-                        prop_all: dict[str, Any] = {"type": p.type, "description": p.description}
-                        if p.enum:
-                            prop_all["enum"] = p.enum
-                        if p.default is not None:
-                            prop_all["default"] = p.default
-                        params_schema_all["properties"][p.name] = prop_all
-                        if p.required:
-                            params_schema_all["required"].append(p.name)
-                    tool_defs.append(
-                        {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": params_schema_all,
-                        }
-                    )
 
         # ── Skill content ─────────────────────────────────────────
         skill_content: list[str] = []
-        for skill_name in mode_skill_names:
+        for skill_name in self.SUPPORTED_SKILLS:
             try:
                 skill = self._skill_registry.get(skill_name)
                 skill_content.append(skill.body)
             except KeyError:
                 pass
 
-        # ── Dialogue context: project the Conversation ────────────
-        # Always-available tools (_modes=["*"], e.g. switch_mode) are injected
-        # into orchestrator modes. The least-privilege "expert" subagent mode
-        # opts out — a Subagent cannot switch modes, write files, or spawn
-        # (SPEC-C).
-        if self._mode == "expert":
-            available = list(mode_tool_names)
-        else:
-            available = mode_tool_names + self._always_available_tool_names()
         return {
-            "system_prompt": system_prompt,
-            "mode": self._mode,
-            "mode_tool_names": available,
+            "system_prompt": self.system_prompt,
+            "tool_names": [t["name"] for t in tool_defs],
             "tool_definitions": tool_defs,
             "skill_content": skill_content,
             "task_spec": task_spec,
@@ -527,14 +357,6 @@ class BaseAgent(ABC):
             "llm_messages": conversation.to_llm_messages(),
             "round": round_num,
         }
-
-    def _always_available_tool_names(self) -> list[str]:
-        """Return tool names registered with ``_modes = ["*"]``."""
-        names: list[str] = []
-        for tool in self._tool_registry.list_all():
-            if getattr(tool, "_modes", []) == ["*"]:
-                names.append(tool.name)
-        return names
 
     # ------------------------------------------------------------------
     # REASON — single LLM call
@@ -549,24 +371,21 @@ class BaseAgent(ABC):
     ) -> tuple[dict, CallTrace]:
         """Forward the perceive cache to the LLM and parse the response.
 
-        The LLM returns a mode-tagged JSON response:
-          {"mode": "auto", "action": "text", "text": "Hello!"}
-          {"mode": "auto", "action": "tool_call", "tool": "read_file",
-           "params": {"path": "..."}}
+        The LLM returns a JSON response:
+          {"action": "text", "text": "Hello!"}
+          {"action": "tool_call", "tool": "read_file", "params": {"path": "..."}}
         """
         t0 = time.monotonic()
 
-        system_prompt = perceive_cache.get("system_prompt", self._build_reason_prompt())
+        system_prompt = perceive_cache.get("system_prompt", self.system_prompt)
         # The model-visible dialogue is the Conversation projected to LLM
         # messages — the same role/content list ``chat()`` consumes (SPEC-A).
         llm_messages = perceive_cache.get("llm_messages", conversation.to_llm_messages())
         # Task framing (task_spec, tools, skills, round) rides in the system
-        # message; the projected dialogue is passed through verbatim — no JSON
-        # dump of a private history buffer (ADR-0003, #94).
+        # message; the projected dialogue is passed through verbatim.
         task_framing = json.dumps(
             {
                 "task_spec": perceive_cache.get("task_spec", task_spec),
-                "mode": perceive_cache.get("mode", self._mode),
                 "available_tools": perceive_cache.get("tool_definitions", []),
                 "available_skills": perceive_cache.get("skill_content", []),
                 "round": round_num,
@@ -580,13 +399,10 @@ class BaseAgent(ABC):
             reason_response = json.loads(response.strip())
         except json.JSONDecodeError:
             reason_response = {
-                "mode": self._mode,
                 "action": "text",
                 "text": "I encountered an error processing your request.",
             }
 
-        if "mode" not in reason_response:
-            reason_response["mode"] = self._mode
         if "action" not in reason_response:
             reason_response["action"] = "text"
             reason_response["text"] = str(reason_response)
@@ -617,10 +433,9 @@ class BaseAgent(ABC):
     ) -> tuple[dict, list[CallTrace]]:
         """Execute the tool call from the REASON response, if any.
 
-        Mode-based tool enforcement: only tools listed in the perceive cache's
-        ``mode_tool_names`` (plus always-available ``_modes=["*"]`` tools) may
+        Tool authorization: only tools in the agent's ``PERMITTED_TOOLS`` may
         be called. Returns an error dict when the requested tool is not
-        permitted in the current mode.
+        permitted.
 
         Returns:
             (output_dict, traces_list). Output is empty for text responses.
@@ -633,45 +448,22 @@ class BaseAgent(ABC):
         traces: list[CallTrace] = []
         results: dict[str, Any] = {}
 
-        # ── Mode-based tool authorization (ADR-0002) ───────────────
-        allowed_tools: set[str] = set()
-        if perceive_cache:
-            allowed_tools.update(perceive_cache.get("mode_tool_names", []))
+        # ── Tool authorization (PERMITTED_TOOLS) ──────────────────
+        allowed_tools: set[str] = set(self.PERMITTED_TOOLS)
         if tool_name not in allowed_tools:
-            # Always-available tool check (switch_mode is the canonical example).
-            # The least-privilege "expert" subagent mode opts out of the
-            # always-available escape hatch (SPEC-C).
-            try:
-                tool = self._get_tool(tool_name)
-                tool_modes: list[str] = getattr(tool, "_modes", [])
-                if self._mode == "expert" or tool_modes != ["*"]:
-                    error_msg = f"Tool {tool_name!r} not permitted in mode {self._mode!r}"
-                    results["output"] = {"error": error_msg}
-                    traces.append(
-                        CallTrace(
-                            round=round_num,
-                            phase="act",
-                            tool_called=tool_name,
-                            output_summary=error_msg,
-                            elapsed_ms=0,
-                            error=error_msg,
-                        )
-                    )
-                    return results, traces
-            except KeyError:
-                error_msg = f"Tool {tool_name!r} not found"
-                results["output"] = {"error": error_msg}
-                traces.append(
-                    CallTrace(
-                        round=round_num,
-                        phase="act",
-                        tool_called=tool_name,
-                        output_summary=error_msg,
-                        elapsed_ms=0,
-                        error=error_msg,
-                    )
+            error_msg = f"Tool {tool_name!r} not permitted for agent {self.name!r}"
+            results["output"] = {"error": error_msg}
+            traces.append(
+                CallTrace(
+                    round=round_num,
+                    phase="act",
+                    tool_called=tool_name,
+                    output_summary=error_msg,
+                    elapsed_ms=0,
+                    error=error_msg,
                 )
-                return results, traces
+            )
+            return results, traces
 
         t0 = time.monotonic()
         try:
@@ -688,7 +480,7 @@ class BaseAgent(ABC):
             error = str(exc)
 
         # Surface failures at the top level too so the run loop can settle
-        # an interrupted Tool as an error Message (T2 / #85).
+        # an interrupted Tool as an error Message.
         if error is not None:
             results["error"] = error
 
@@ -707,28 +499,14 @@ class BaseAgent(ABC):
         return results, traces
 
     # ------------------------------------------------------------------
-    # Prompt builders — override in subclasses (deprecated; use ModeSpec)
+    # Confidence heuristic
     # ------------------------------------------------------------------
-
-    def _build_reason_prompt(self) -> str:
-        """Default reason prompt — fallback when no ModeSpec system_prompt."""
-        return (
-            "You are a biomedical evidence analysis agent. "
-            "Given a task specification and available tools, "
-            "return a JSON response.\n\n"
-            "Output format:\n"
-            '{"mode": "<current_mode>", "action": "<text|tool_call>", '
-            '"text": "<response if action is text>", '
-            '"tool": "<tool name if action is tool_call>", '
-            '"params": {}}}'
-        )
 
     def _compute_confidence(self, conversation: Conversation) -> float:
         """Heuristic confidence from round count and convergence.
 
-        Derived from the Conversation (ADR-0003) rather than a private
-        history buffer. Each assistant Message contributes diminishing
-        confidence.
+        Derived from the Conversation (ADR-0003). Each assistant Message
+        contributes diminishing confidence.
         """
         n_rounds = sum(1 for m in conversation.messages if m.role == "assistant")
         if n_rounds == 0:

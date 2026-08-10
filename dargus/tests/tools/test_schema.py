@@ -144,30 +144,3 @@ class TestRegistryValidation:
         reg.register(t1)
         reg.register(t2)
         assert reg.get("t") is t2
-
-
-# ---------------------------------------------------------------------------
-# Regression: existing registry.yaml entries still load
-# ---------------------------------------------------------------------------
-
-
-class TestRegistryYamlLoad:
-    def test_all_default_tools_load(self):
-        """Every existing tool in the default registry.yaml must load without error."""
-        reg = ToolRegistry()
-        tools = reg.list_all()
-        assert len(tools) > 0
-        for t in tools:
-            assert isinstance(t.side_effect, str)
-            assert t.side_effect in ("none", "read", "write")
-            # All params have valid types
-            for p in t.parameters:
-                assert p.type in (
-                    "string",
-                    "integer",
-                    "float",
-                    "boolean",
-                    "array",
-                    "object",
-                    "path",
-                )

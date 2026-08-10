@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from dargus.dbase import DBase
 from dargus.iris.commander import Iris
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 #: Process-lifetime runtime accessor. The first API call bootstraps; every
 #: subsequent call reuses the same DargusRuntime so it (and the Conversations
-#: it owns) survives across ask/predict/ingest/status turns (SPEC-B).
+#: it owns) survives across ask/status turns.
 _RUNTIME_CACHE: Any | None = None
 
 #: Stable session key for the natural-language dialogue. All ask() turns share
@@ -28,11 +27,9 @@ _DEFAULT_SESSION_ID = "dialogue"
 def _get_runtime() -> Any:
     """Return the process-lifetime DargusRuntime, bootstrapping it once.
 
-    Bootstraps lazily on first call and caches the runtime. Per
-    design/2_runtime_structure.md the runtime starts healthy and entry points
-    refuse new sessions while unhealthy — there is no silent fallback to a
-    runtime-less path. On an unrecoverable bootstrap failure the runtime is
-    marked unhealthy and the entry point raises.
+    Bootstraps lazily on first call and caches the runtime. The runtime
+    starts healthy and entry points refuse new sessions while unhealthy —
+    there is no silent fallback to a runtime-less path.
     """
     global _RUNTIME_CACHE
     if _RUNTIME_CACHE is not None:
@@ -54,91 +51,10 @@ def _get_runtime() -> Any:
 def _create_iris_with_lm() -> Iris:
     """Create Iris through the runtime's AgentFactory.
 
-    Uses the process-lifetime runtime (see :func:`_get_runtime`) so the same
-    DargusRuntime and the same cached Iris are reused across API calls.
+    Uses the process-lifetime runtime so the same DargusRuntime and the same
+    cached Iris are reused across API calls.
     """
     return _get_runtime().agent_factory.iris()
-
-
-def predict(
-    drug_ids: list[str],
-    disease_id: str,
-    endpoints: list[str],
-    max_rounds: int = 5,
-) -> dict[str, dict[str, dict[str, Any]]]:
-    """Run a full Iris -> Iris multi-round prediction.
-
-    Reuses the process-lifetime DargusRuntime and the cached Iris;
-    refuses the session when the runtime is unhealthy.
-
-    Args:
-        drug_ids: Drug identifiers to predict for.
-        disease_id: Target disease identifier.
-        endpoints: Endpoint names (e.g. ``["IC50", "efficacy"]``).
-        max_rounds: Maximum Expert dialog rounds (default 5).
-
-    Returns:
-        PredictionMatrix: ``{drug_id: {disease_id: {endpoint: {...}}}}``
-    """
-    iris = _create_iris_with_lm()
-    return iris.predict(
-        drug_ids=drug_ids,
-        disease_id=disease_id,
-        endpoints=endpoints,
-        max_rounds=max_rounds,
-    )
-
-
-def ingest(datadir: str, reset: bool = False, disease_kb_dir: str | None = None) -> dict[str, Any]:
-    """Ingest data into the global D-Base.
-
-    Reuses the process-lifetime DargusRuntime and the cached Iris;
-    refuses the session when the runtime is unhealthy.
-
-    Args:
-        datadir: Path to directory containing data files.
-        reset: If True, clear D-Base before ingestion.
-        disease_kb_dir: Optional path to disease knowledge base directory.
-
-    Returns:
-        IngestResult dict with ``n_records``, ``n_duplicates``, ``n_errors``, etc.
-    """
-    if reset:
-        from dargus.dbase import DBase
-        from dargus.dbase.store import DBaseStore
-
-        dbase = DBase.global_instance()
-        manager = DBaseStore(dbase)
-        manager.reset()
-        logger.info("API: D-Base reset before ingestion")
-
-    iris = _create_iris_with_lm()
-    return iris.ingest(datadir, disease_kb_dir=disease_kb_dir)
-
-
-def query_dbase(
-    disease_id: str | None = None,
-    drug_ids: list[str] | None = None,
-    levels: list[str] | None = None,
-) -> list:
-    """Query records from the global D-Base.
-
-    Args:
-        disease_id: Filter by disease (optional).
-        drug_ids: Filter by drug IDs (optional).
-        levels: Filter by biological_level values (optional).
-
-    Returns:
-        List of matching D-Base records.
-    """
-    dbase = DBase.global_instance()
-    from dargus.dbase.store import DBaseStore
-
-    mgr = DBaseStore(dbase)
-    return mgr.read_records(
-        disease_id=disease_id,
-        x_entity=drug_ids[0] if drug_ids and len(drug_ids) == 1 else None,
-    )
 
 
 def status() -> dict[str, Any]:
@@ -149,18 +65,6 @@ def status() -> dict[str, Any]:
     """
     iris = _create_iris_with_lm()
     return iris.status()
-
-
-def query_expert(expert_name: str) -> dict:
-    """Run a single Expert assessment.
-
-    Note: Full Expert context requires Iris multi-round dialog.
-    Individual Expert calls return a stub result.
-    """
-    return {
-        "expert": expert_name,
-        "note": "Single Expert assessment — full context requires Iris multi-round dialog",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +119,9 @@ def ask(query: str) -> str:
 
         raise NoLLMConfiguredError()
 
-    # Run Iris through the unified PRA loop (ADR-0002). A stable session_id
-    # means the runtime-owned Conversation persists across turns, so follow-ups
-    # like "yes" resolve against prior dialogue (SPEC-B).
+    # Run Iris through the unified PRA loop. A stable session_id means the
+    # runtime-owned Conversation persists across turns, so follow-ups like
+    # "yes" resolve against prior dialogue (SPEC-B).
     report = iris.run({"query": query, "session_id": _DEFAULT_SESSION_ID, "_user_turn": True})
 
     # Extract text response from the AgentReport
@@ -261,7 +165,7 @@ def get_llm_config() -> dict[str, Any]:
     with config_path.open("r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
 
-    # v1.0.0: read from models.reasoning block (single source of truth)
+    # Read from models.reasoning block (single source of truth)
     reasoning_cfg = (cfg.get("models") or {}).get("reasoning", {})
     return {
         "provider": reasoning_cfg.get("provider", "openai"),
@@ -293,7 +197,7 @@ def save_llm_config(model: str, base_url: str, provider: str = "openai") -> None
         with config_path.open("r", encoding="utf-8") as fh:
             cfg = yaml.safe_load(fh) or {}
 
-    # v1.0.0: write into models.reasoning block (single source of truth)
+    # Write into models.reasoning block (single source of truth)
     cfg.setdefault("models", {}).setdefault("reasoning", {})
     cfg["models"]["reasoning"]["model"] = model
     cfg["models"]["reasoning"]["base_url"] = base_url
@@ -468,187 +372,6 @@ def run_tests(module: str | None = None) -> int:
     return pytest.main(["-q", test_dir])
 
 
-def test_write_evidence(raw: dict, source_id: str = "test-dbase:cli") -> dict[str, Any]:
-    """Write a single evidence record to test D-Base.
-
-    Args:
-        raw: Raw evidence data dict.
-        source_id: Source identifier for metadata.
-
-    Returns:
-        Dict with keys: evidence_id, biological_level, y_type, status.
-    """
-    from dargus.dbase import DBase
-    from dargus.dbase.store import DBaseStore
-
-    dbase = DBase.global_instance()
-    manager = DBaseStore(dbase)
-
-    evidence = manager.build_evidence(
-        raw,
-        source_metadata={"type": "file_path", "id": source_id},
-    )
-    wrote = manager.write_record(evidence)
-
-    return {
-        "evidence_id": evidence["evidence_id"],
-        "biological_level": evidence.get("biological_level", "?"),
-        "y_type": (evidence.get("y") or {}).get("type", "?"),
-        "status": "added" if wrote is True else "duplicate — skipped",
-    }
-
-
-def test_bulk_input(directory: str) -> dict[str, Any]:
-    """Bulk-write evidence .json files from directory to test D-Base.
-
-    Args:
-        directory: Directory containing .json evidence files.
-
-    Returns:
-        Dict with keys: directory, total, added, duplicates, hard_rejects, errors, elapsed.
-    """
-    import json
-    import time
-    from pathlib import Path
-
-    from dargus.dbase import DBase
-    from dargus.dbase.store import DBaseStore
-
-    dir_path = Path(directory).expanduser()
-    if not dir_path.is_dir():
-        return {
-            "directory": str(dir_path),
-            "total": 0,
-            "added": 0,
-            "duplicates": 0,
-            "hard_rejects": 0,
-            "errors": 1,
-            "elapsed": 0.0,
-            "error_details": [f"Directory not found: {dir_path}"],
-        }
-
-    json_files = sorted(dir_path.glob("*.json"))
-    dbase = DBase.global_instance()
-    manager = DBaseStore(dbase)
-
-    added = 0
-    duplicates = 0
-    hard_rejects = 0
-    errors = 0
-    error_details: list[str] = []
-    t0 = time.perf_counter()
-
-    for jf in json_files:
-        try:
-            raw_data = json.loads(jf.read_text(encoding="utf-8"))
-            evidence = manager.build_evidence(
-                raw_data,
-                source_metadata={"type": "file_path", "id": f"test-bulk:{jf.name}"},
-            )
-            result = manager.write_record(evidence)
-            if result is True:
-                added += 1
-            else:
-                duplicates += 1
-        except json.JSONDecodeError as exc:
-            hard_rejects += 1
-            error_details.append(f"{jf.name}: JSON parse error — {exc}")
-        except ValueError as exc:
-            hard_rejects += 1
-            error_details.append(f"{jf.name}: {str(exc)[:120]}")
-        except Exception as exc:
-            errors += 1
-            error_details.append(f"{jf.name}: {exc}")
-
-    elapsed = time.perf_counter() - t0
-
-    return {
-        "directory": str(dir_path),
-        "total": len(json_files),
-        "added": added,
-        "duplicates": duplicates,
-        "hard_rejects": hard_rejects,
-        "errors": errors,
-        "elapsed": elapsed,
-        "error_details": error_details,
-    }
-
-
-def test_ingest_dir(directory: str) -> dict[str, Any]:
-    """Run ingest workflow on test data directory.
-
-    Args:
-        directory: Directory containing test data files.
-
-    Returns:
-        Dict with keys: directory, total, added, duplicates, hard_rejects, errors, elapsed.
-    """
-    import time
-    from pathlib import Path
-
-    from dargus.dbase import DBase
-
-    dir_path = Path(directory).expanduser()
-    if not dir_path.is_dir():
-        return {
-            "directory": str(dir_path),
-            "total": 0,
-            "added": 0,
-            "duplicates": 0,
-            "hard_rejects": 0,
-            "errors": 1,
-            "elapsed": 0.0,
-            "error_details": [f"Directory not found: {dir_path}"],
-        }
-
-    # Ingest via the single task_spec calling convention
-    from dargus.workflows.ingest import run_ingest
-
-    file_map: list[tuple] = []
-    for fp in sorted(dir_path.iterdir()):
-        if not fp.is_file():
-            continue
-        file_map.append(fp)
-
-    dbase = DBase.global_instance()
-
-    added = 0
-    duplicates = 0
-    hard_rejects = 0
-    errors = 0
-    error_details: list[str] = []
-    t0 = time.perf_counter()
-
-    for fp in file_map:
-        try:
-            result = run_ingest({"workflow": "ingest", "source_path": str(fp), "max_rounds": 1})
-            added += result.get("n_records", 0)
-            duplicates += result.get("n_duplicates", 0)
-            errors += result.get("n_errors", 0)
-        except Exception as exc:
-            errors += 1
-            error_details.append(f"{fp.name}: ingest failed — {exc}")
-
-    elapsed = time.perf_counter() - t0
-
-    # Rebuild view (best-effort)
-    try:
-        dbase.rebuild_view()
-    except Exception:
-        pass
-
-    return {
-        "directory": str(dir_path),
-        "total": len(file_map),
-        "added": added,
-        "duplicates": duplicates,
-        "hard_rejects": hard_rejects,
-        "errors": errors,
-        "elapsed": elapsed,
-        "error_details": error_details,
-    }
-
-
 def get_test_config(key: str, default: str = "") -> str:
     """Get a test configuration value.
 
@@ -701,48 +424,3 @@ def set_test_config(key: str, value: str) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("w", encoding="utf-8") as fh:
         yaml.safe_dump(cfg, fh, allow_unicode=True, default_flow_style=False, sort_keys=False)
-
-
-def write_ingest_report(result: dict[str, Any]) -> str:
-    """Write ingest test report to markdown file.
-
-    Args:
-        result: Result dict from test_ingest_dir.
-
-    Returns:
-        Path to the written report file.
-    """
-    from datetime import datetime
-    from pathlib import Path
-
-    report_path = Path(result["directory"]).parent / "Ingest-test-report.md"
-
-    lines = [
-        "# Ingest Test Report",
-        "",
-        f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"**Data directory**: `{result['directory']}`",
-        "",
-        "## Summary",
-        "",
-        "| Metric | Value |",
-        "|---|---|",
-        f"| Files processed | {result['total']} |",
-        f"| Evidence records added | {result['added']} |",
-        f"| Duplicates skipped | {result['duplicates']} |",
-        f"| Hard rejects | {result['hard_rejects']} |",
-        f"| Errors | {result['errors']} |",
-        f"| Total time | {result['elapsed']:.1f}s |",
-        "",
-    ]
-
-    if result.get("error_details"):
-        lines.append("## Error Details")
-        lines.append("")
-        for detail in result["error_details"][:20]:
-            lines.append(f"- {detail}")
-        if len(result["error_details"]) > 20:
-            lines.append(f"- ... and {len(result['error_details']) - 20} more")
-
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return str(report_path)

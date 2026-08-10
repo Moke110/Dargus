@@ -18,16 +18,9 @@ logging:
 safety:
   disclaimer: Dargus outputs are for research purposes only and do not constitute
     clinical advice.
-modes:
-  auto:
-    tools: [read_file, dbase_query, switch_mode]
-    skills: []
-    hooks: [mode_tag_validation]
-  ingest:
-    tools: [read_file, write_file, switch_mode]
-    skills: []
-    hooks: [mode_tag_validation]
-  predict:
-    tools: [read_file, dbase_query, switch_mode]
-    skills: []
-    hooks: [mode_tag_validation]
+experts:
+  domains:
+    molecular: dargus.experts.molecule.MoleculeExpert
+    biomedical: dargus.experts.biomed.BiomedExpert
+    bioinformatics: dargus.experts.bioinfo.BioinfoExpert
+    clinical: dargus.experts.clinic.ClinicExpert

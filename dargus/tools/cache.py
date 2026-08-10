@@ -1,8 +1,7 @@
-"""ToolCache — session-scoped cache for heavy tool resources.
+"""ToolCache — process-lifetime cache for heavy tool resources.
 
-Created at session start, closed at ``SESSION_END``. Heavy resources
-(embedding models) stay resident across PRA rounds instead of being
-reloaded per call (design/3_D-Base.md §embedding tool).
+Heavy resources (embedding models) stay resident across PRA rounds instead
+of being reloaded per call (design/3_D-Base.md §embedding tool).
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # Runtime Structure
 
-> Dargus runs inside a single **DargusRuntime**. The runtime is the program container registered with the OS task manager; it owns configuration, the hook registry, the dependency graph, and D-Base access through tools. Agents receive their dependencies from the runtime.
+> Dargus runs inside a single **DargusRuntime**. The runtime is the process-level container; it owns configuration, the shared model dependencies, the registries, the conversation store, and the AgentFactory. Agents receive their dependencies from the runtime.
 
 ## DargusRuntime
 
@@ -9,8 +9,11 @@
 ### Core responsibilities
 
 - Load configuration and expose resolved settings to every other component.
-- Own the **HookRegistry**, which stores hook registrations and executes them at named lifecycle points.
-- Own the **AgentFactory**, which creates and terminates every Agent (Iris, Domain Experts, D4Expert). The factory injects runtime-provided dependencies, making the system testable: any dependency can be replaced with a fake or stub without changing Agent code.
+- Own the shared **reasoning LLM** and **embedding model** (the embedding model is shared with D-Base).
+- Own the **ToolRegistry** and **SkillRegistry**.
+- Own the **WorkspaceGuard**, which enforces the file-access boundary for the file Tools.
+- Own the **conversation store** — every Agent's Conversation, keyed by `(session_id, agent)` — so the log survives agent churn and API turns (ADR-0003).
+- Own the **AgentFactory**, which creates every Agent (Iris, Domain Experts, D4Expert). The factory injects runtime-provided dependencies, making the system testable: any dependency can be replaced with a fake or stub without changing Agent code.
 
 ## dargus.api — the sole interaction interface
 
@@ -18,10 +21,6 @@
 
 The API exposes a **non-interactive core**: every function takes plain arguments, performs no prompting, and returns plain data. Interactive behavior — menus, prompts, confirmation display, output formatting — lives in the CLI as thin wrappers around the core. Destructive operations are guarded at the API layer so the safety gate travels with the operation rather than depending on the caller.
 
-## HookRegistry
-
-`HookRegistry` stores all hook registrations and executes them at the named lifecycle points defined in `4_harness.md`. The runtime registers core hooks at startup. Skills may register additional hooks at load time. Hook execution is sequential; non-observer hooks that raise exceptions abort the remaining hooks at that point and propagate to the runtime (fail-closed).
-
 ## AgentFactory
 
-`AgentFactory` creates and terminates every Agent. It injects runtime-provided dependencies so that Agent code never reaches into the runtime directly. This is the sole creation path for Agents — no code may instantiate an Agent outside the factory.
+`AgentFactory` creates every Agent and injects runtime-provided dependencies so that Agent code never reaches into the runtime directly. This is the sole creation path for Agents — no code may instantiate an Agent outside the factory.

@@ -1,21 +1,8 @@
-"""ClinicExpert — rct and epidemiological evidence assessment."""
+"""ClinicExpert — rct and epidemiological evidence assessment (skeleton)."""
 
 from __future__ import annotations
 
 from dargus.experts.base import Expert
-from dargus.experts.protocol import (
-    ConfidenceInterval,
-    EvidenceAssessment,
-)
-
-_PHASE_WEIGHTS = {
-    "phase_1": 0.3,
-    "phase_2": 0.5,
-    "phase_3": 0.7,
-    "phase_4": 0.65,
-    "rwe": 0.4,
-    "meta_analysis": 0.8,
-}
 
 
 class ClinicExpert(Expert):
@@ -26,58 +13,19 @@ class ClinicExpert(Expert):
     """
 
     name = "ClinicExpert"
-    PERMITTED_TOOLS = ["dbase_query", "pubmed_search"]
-    SUPPORTED_SKILLS = []
+    system_prompt = (
+        "You are ClinicExpert, a biomedical domain expert specializing in "
+        "clinical trial and epidemiological evidence. Given a task "
+        "specification and available tools, return a JSON response.\n\n"
+        "Output format:\n"
+        '{"action": "<text|tool_call>", '
+        '"text": "<response if action is text>", '
+        '"tool": "<tool name if action is tool_call>", '
+        '"params": {}}'
+    )
+    # Task-specific tools (dbase_query, pubmed_search) were removed with the
+    # task-specific code; Experts are silent skeletons until the redo.
+    PERMITTED_TOOLS: list[str] = []
+    SUPPORTED_SKILLS: list[str] = []
 
     SUPPORTED_LEVELS = ("rct", "epi", "rct-sim")
-    SIM_PENALTY = 0.3
-    SIM_BIAS_MSG = "Record {eid}: rct simulation data — no actual patient evidence"
-    RELEVANCE_MAP = {"rct": "high", "epi": "high"}
-
-    def _collect_gaps(
-        self, records: list[dict], findings: list[EvidenceAssessment]
-    ) -> tuple[list[str], list[str]]:
-        bias_notes: list[str] = []
-        data_gaps: list[str] = []
-
-        # Mixed direction detection
-        readouts = []
-        for record in records:
-            r = self._read_field(record, "readout_value")
-            if r is not None:
-                try:
-                    readouts.append(float(r))
-                except (TypeError, ValueError):
-                    pass
-        if readouts and any(r > 0 for r in readouts) and any(r < 0 for r in readouts):
-            bias_notes.append("Mixed clinical effect directions detected")
-
-        real_clinical = sum(1 for f in findings if f.biological_level in ("rct", "epi"))
-        if real_clinical == 0:
-            data_gaps.append("No real clinical trial evidence — only simulated or none")
-
-        return data_gaps, bias_notes
-
-    def _assess_quality(self, record: dict) -> float:
-        score = 0.5
-        phase = self._read_field(record, "phase")
-        if phase is not None:
-            phase_key = str(phase).strip().lower().replace(" ", "_")
-            score = _PHASE_WEIGHTS.get(phase_key, 0.5)
-        if self._read_field(record, "readout_value") is not None:
-            score = min(score + 0.1, 1.0)
-        return min(max(score, 0.0), 1.0)
-
-    def _assess_confidence(self, findings: list[EvidenceAssessment]) -> ConfidenceInterval:
-        if not findings:
-            return ConfidenceInterval(low=0.0, high=1.0, sources=["no_clinical_evidence"])
-        avg = sum(f.quality_score for f in findings) / len(findings)
-        real_clinical = sum(1 for f in findings if f.biological_level in ("rct", "epi"))
-        sources: list[str] = []
-        if real_clinical == 0:
-            sources.append("no_real_clinical_data")
-        return ConfidenceInterval(
-            low=max(0.0, avg - 0.15),
-            high=min(1.0, avg + 0.15),
-            sources=sources,
-        )

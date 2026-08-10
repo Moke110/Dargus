@@ -1,13 +1,13 @@
 # CLI Design
 
-> The Dargus CLI is the researcher's primary interface to the system. "CLI" refers to the whole command-line interface, which has two interaction modes: **one-shot commands** and the interactive **REPL**.
+> The Dargus CLI is the researcher's primary interface to the system. "CLI" refers to the whole command-line interface, which has two interaction surfaces: **one-shot commands** and the interactive **REPL**.
 
-## Two interaction modes
+## Two interaction surfaces
 
 1. **REPL.** Running `dargus` with no subcommand launches an interactive REPL. The user types natural-language requests; anything that is not a slash command is sent to Iris, whose Perceive → Reason → Act loop decides how to handle it.
 2. **One-shot commands.** `dargus iris <query>`, `dargus config`, and `dargus test` run a single task and exit.
 
-Both modes reach the runtime exclusively through `dargus.api`.
+Both surfaces reach the runtime exclusively through `dargus.api`.
 
 ## API boundary
 
@@ -24,7 +24,7 @@ The API exposes a **non-interactive core**: every function takes plain arguments
 | `dargus config` | Launch the Dargus configuration menu |
 | `dargus test` | Launch the Dargus test menu |
 
-There are no other one-shot commands. Capabilities such as predict, ingest, and status are reached by asking Iris, in either mode.
+There are no other one-shot commands. Capabilities such as status are reached by asking Iris, in either surface.
 
 ## REPL input routing
 

@@ -134,11 +134,21 @@ class TestResumeSession:
         assert len(resumed.turns) == 2
 
     def test_resume_unknown_id_raises(self, wire_runtime):
+        """An unknown resume id raises FileNotFoundError and the live session
+        is still persisted (it was not silently discarded)."""
         import dargus.api as api
 
-        wire_runtime([])
+        rt = wire_runtime(["first reply"])
+        api.ask("hello")
+        live_id = _live(rt)._session.metadata.session_id
+
         with pytest.raises(FileNotFoundError):
             api.resume_session("no-such-session")
+
+        # The live session was not lost — it is still the live one.
+        assert _live(rt)._session.metadata.session_id == live_id
+        api.end_session()
+        assert live_id in _archive_ids(rt)
 
     def test_resume_projects_prior_turns_coarse(self, wire_runtime):
         """A resumed session's loaded turns project coarse (prompt + final

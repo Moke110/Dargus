@@ -15,13 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 #: Process-lifetime runtime accessor. The first API call bootstraps; every
-#: subsequent call reuses the same DargusRuntime so it (and the Conversations
-#: it owns) survives across ask/status turns.
+#: subsequent call reuses the same DargusRuntime (holding at most one live
+#: Iris) so the live Session survives across ask/status turns.
 _RUNTIME_CACHE: Any | None = None
-
-#: Stable session key for the natural-language dialogue. All ask() turns share
-#: it so Iris's runtime-owned Conversation accumulates across turns.
-_DEFAULT_SESSION_ID = "dialogue"
 
 
 def _get_runtime() -> Any:
@@ -119,10 +115,10 @@ def ask(query: str) -> str:
 
         raise NoLLMConfiguredError()
 
-    # Run Iris through the unified PRA loop. A stable session_id means the
-    # runtime-owned Conversation persists across turns, so follow-ups like
-    # "yes" resolve against prior dialogue (SPEC-B).
-    report = iris.run({"query": query, "session_id": _DEFAULT_SESSION_ID, "_user_turn": True})
+    # Run Iris through the unified PRA loop. The live Iris owns its Session
+    # (ADR-0005): each ask() appends a fresh turn, so follow-ups like "yes"
+    # resolve against prior dialogue (SPEC-B).
+    report = iris.run({"query": query})
 
     # Extract text response from the AgentReport
     if report.findings and isinstance(report.findings[-1], str):

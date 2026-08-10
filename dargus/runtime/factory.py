@@ -98,8 +98,10 @@ class AgentFactory:
         """Create — and then cache — the Iris commander Agent.
 
         Iris is long-lived (SPEC-B): the same instance is returned on
-        subsequent calls so her identity stays stable within a process.
-        The cache is reset by :meth:`terminate`.
+        subsequent calls so her identity stays stable within a process, and
+        **at most one live Iris** exists at a time. The cache is reset by
+        :meth:`terminate` (the swap path) — a fresh Iris then owns a fresh
+        Session.
         """
         if self._iris_cache is not None:
             return self._iris_cache

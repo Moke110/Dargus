@@ -49,9 +49,9 @@ class _StubLLM:
         return type("R", (), {"content": '{"action": "text", "text": "done"}'})()
 
 
-def _make_agent(runtime=None, responses: list[str] | None = None):
+def _make_agent(runtime=None, responses: list[str] | None = None, name: str = "test"):
     agent = _MinimalAgent(
-        name="test",
+        name=name,
         reasoning_llm=_StubLLM(responses or []),
     )
     if runtime is not None:
@@ -179,27 +179,20 @@ def test_model_visible_context_is_projected_messages():
 
 
 def test_two_user_turns_accumulate_in_one_session():
-    """T4: two ask()-style turns on one reused runtime append user messages
+    """T4: two ask()-style turns on one reused Iris append user messages
     in order and the second turn sees the first turn's messages."""
-    from dargus.runtime.context import DargusRuntime
-
-    runtime = DargusRuntime()
-    # Use a stub reasoning LLM wired via DI.
-    agent = _MinimalAgent(
+    agent = _make_agent(
         name="Iris",
-        reasoning_llm=_StubLLM(
-            [
-                '{"action": "text", "text": "first reply"}',
-                '{"action": "text", "text": "second reply"}',
-            ]
-        ),
+        responses=[
+            '{"action": "text", "text": "first reply"}',
+            '{"action": "text", "text": "second reply"}',
+        ],
     )
-    agent._runtime = runtime
 
-    agent.run({"query": "what is aspirin?", "session_id": "dialogue", "_user_turn": True})
-    agent.run({"query": "and metformin?", "session_id": "dialogue", "_user_turn": True})
+    agent.run({"query": "what is aspirin?"})
+    agent.run({"query": "and metformin?"})
 
-    session = runtime.get_conversation("dialogue", "Iris")
+    session = agent._resolve_session({})
     texts = [m.text for m in session.messages]
     # Two user turns + two assistant replies, in order.
     n_aspirin = sum(1 for t in texts if "what is aspirin?" in t)
@@ -211,34 +204,29 @@ def test_two_user_turns_accumulate_in_one_session():
     assert len(session.messages) == 4
 
 
-def test_distinct_sessions_get_distinct_sessions():
-    """T4 regression: a reused agent resolves a separate Session per
-    session_id instead of caching the first session's log."""
-    from dargus.runtime.context import DargusRuntime
-
-    runtime = DargusRuntime()
-    agent = _MinimalAgent(
+def test_distinct_agents_get_distinct_sessions():
+    """T4 regression: each agent instance owns its own Session — no
+    cross-agent bleed."""
+    agent_a = _make_agent(
         name="Iris",
-        reasoning_llm=_StubLLM(
-            [
-                '{"action": "text", "text": "dialogue reply"}',
-                '{"action": "text", "text": "predict reply"}',
-            ]
-        ),
+        responses=['{"action": "text", "text": "dialogue reply"}'],
     )
-    agent._runtime = runtime
+    agent_b = _make_agent(
+        name="ClinicExpert",
+        responses=['{"action": "text", "text": "predict reply"}'],
+    )
 
-    agent.run({"query": "follow up", "session_id": "dialogue", "_user_turn": True})
-    agent.run({"query": "predict", "session_id": "predict:d1:d2:IC50", "_user_turn": True})
+    agent_a.run({"query": "follow up"})
+    agent_b.run({"query": "predict"})
 
-    dialogue = runtime.get_conversation("dialogue", "Iris")
-    predict = runtime.get_conversation("predict:d1:d2:IC50", "Iris")
+    session_a = agent_a._resolve_session({})
+    session_b = agent_b._resolve_session({})
     # Distinct logs: the predict turn did not bleed into the dialogue log.
-    assert dialogue is not predict
-    assert len(dialogue.messages) == 2
-    assert len(predict.messages) == 2
-    assert "follow up" in dialogue.messages[0].text
-    assert "predict" in predict.messages[0].text
+    assert session_a is not session_b
+    assert len(session_a.messages) == 2
+    assert len(session_b.messages) == 2
+    assert "follow up" in session_a.messages[0].text
+    assert "predict" in session_b.messages[0].text
 
 
 def test_base_agent_config_only_works():

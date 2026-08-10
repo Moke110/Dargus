@@ -2,9 +2,9 @@
 
 One runtime owns configuration, the single reasoning LLM, the embedding
 model (shared with D-Base), tool/skill registries, the AgentFactory, a
-session-scoped ToolCache, the health flag, and the conversation store.
-All Agents receive their dependencies from the runtime, either directly
-or through the AgentFactory.
+session-scoped ToolCache, and the health flag. All Agents receive their
+dependencies from the runtime, either directly or through the AgentFactory.
+The runtime holds **no per-session state** and at most one live Iris.
 """
 
 from __future__ import annotations
@@ -39,26 +39,6 @@ class DargusRuntime:
     workspace_guard: Any | None = None  # WorkspaceGuard
     healthy: bool = True
     unhealthy_reason: str | None = None
-    # ── Sessions (ADR-0005) ──────────────────────────────────────────────
-    # Every agent's Session, keyed by (session_id, agent). Owned by the
-    # runtime so the log survives agent churn and API turns (to be removed
-    # in the ownership move — an Iris instance owns its Session).
-    conversation_store: dict[tuple[str, str], Any] = field(default_factory=dict)
-
-    def get_conversation(self, session_id: str, agent: str, parent_id: str | None = None) -> Any:
-        """Return (creating if needed) the Session for session/agent.
-
-        ``parent_id`` is retained for ADR-0003 compatibility; the Session
-        model has no parent linkage.
-        """
-        key = (session_id, agent)
-        conv = self.conversation_store.get(key)
-        if conv is None:
-            from dargus.models.session import Session, SessionMetadata
-
-            conv = Session(SessionMetadata(session_id=session_id, agent=agent))
-            self.conversation_store[key] = conv
-        return conv
 
     def mark_unhealthy(self, reason: str) -> None:
         """Flip the health flag after an unrecoverable dependency failure.

@@ -71,10 +71,10 @@ class BaseAgent(ABC):
         # standalone/test contexts.
         self._runtime: Any | None = runtime
 
-        # The agent's Session (ADR-0005) — the single source of truth
-        # for context. Resolved through the runtime's conversation store when
-        # one is wired; a per-instance fallback otherwise.
-        self._session: Session | None = None
+        # The agent's Session (ADR-0005) — Iris instance state. The agent
+        # reads and appends its own Session directly; the runtime holds no
+        # per-session state.
+        self._session = Session(SessionMetadata(agent=self.name))
 
         self._validate_permissions()
 
@@ -98,31 +98,17 @@ class BaseAgent(ABC):
     # ------------------------------------------------------------------
 
     def _resolve_session(self, task_spec: dict[str, Any]) -> Session:
-        """Return the agent's Session, resolving it through the runtime.
+        """Return the agent's own Session (ADR-0005).
 
-        When a runtime conversation store is wired, the store owns the
-        Session keyed by session/agent so it survives agent churn and
-        API turns. The store is consulted on every call so each session gets
-        its own log. A per-instance fallback Session is used in
-        standalone/test contexts (no runtime store), created once and reused.
+        A live Session is Iris instance state: the agent reads and appends
+        its own Session directly instead of resolving one through the
+        runtime. The workspace root is seeded from the runtime's
+        WorkspaceGuard when one is wired.
         """
-        store = None
-        if self._runtime is not None:
-            store = getattr(self._runtime, "conversation_store", None)
-        if store is not None:
-            session_id = task_spec.get("session_id", f"{self.name}")
-            getter = getattr(self._runtime, "get_conversation", None)
-            if getter is not None:
-                return getter(session_id, self.name)
-            return store.get((session_id, self.name))
-
-        if self._session is None:
-            self._session = Session(
-                SessionMetadata(
-                    session_id=task_spec.get("session_id", f"{self.name}"),
-                    agent=self.name,
-                )
-            )
+        if self._runtime is not None and not self._session.metadata.workspace_root:
+            guard = getattr(self._runtime, "workspace_guard", None)
+            if guard is not None:
+                self._session.metadata.workspace_root = str(getattr(guard, "root", "") or "")
         return self._session
 
     @staticmethod
@@ -140,9 +126,9 @@ class BaseAgent(ABC):
     def run(self, task_spec: dict[str, Any]) -> AgentReport:
         """Execute Perceive → Reason → Act loop until convergence.
 
-        Every agent uses this single loop. The Session is the single
-        source of truth (ADR-0005): the loop reads prior context from and
-        appends every round to it.
+        Every agent uses this single loop. The Session is Iris instance
+        state (ADR-0005): the loop reads prior context from and appends
+        every round to it.
         """
         traces: list[CallTrace] = []
         round_num = 0
@@ -152,9 +138,9 @@ class BaseAgent(ABC):
         findings: list = []
 
         session = self._resolve_session(task_spec)
-        if not session.messages or task_spec.get("_user_turn"):
-            # Fresh session: record the task as the opening user message.
-            session.add_user(json.dumps(task_spec, ensure_ascii=False))
+        # Each run() is one user Turn (ADR-0005): record the task as the
+        # opening user prompt. Iris recalls prior Turns through the Session.
+        session.add_user(json.dumps(task_spec, ensure_ascii=False))
 
         while not converged and round_num < self.MAX_ROUNDS:
             # ── PERCEIVE: context assembly (no LLM call) ────────────

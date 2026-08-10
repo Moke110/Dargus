@@ -170,6 +170,91 @@ def ask(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Session lifecycle (ADR-0005)
+# ---------------------------------------------------------------------------
+
+
+def _live_iris() -> Iris:
+    """Return the live Iris, creating it through the runtime's factory."""
+    return _create_iris_with_lm()
+
+
+def new_session() -> str:
+    """Start a fresh empty Session (the ``/new`` entry point).
+
+    The current live Session is persisted-then-ended first (the swap verb),
+    so switching contexts never silently discards work. Returns the new
+    Session's id.
+    """
+    runtime = _get_runtime()
+    iris = runtime.agent_factory.swap(hydrate=None)
+    return iris._session.metadata.session_id
+
+
+def resume_session(session_id: str) -> str:
+    """Resume an archived Session under a fresh identity (the ``/resume``
+    entry point).
+
+    Persists-then-ends the current live Session, then hydrates the chosen
+    archived Session into a fresh Iris with a **fresh** ``session_id``. All
+    loaded Turns project coarse (the structural rule); the archived original
+    is never mutated.
+
+    Args:
+        session_id: The archived Session to resume.
+
+    Returns:
+        The new (resumed) Session's fresh id.
+
+    Raises:
+        FileNotFoundError: No archived Session with *session_id* in the
+            current workspace.
+    """
+    runtime = _get_runtime()
+    root = _workspace_root(runtime)
+    from dargus.sessions.store import SessionStore
+
+    loaded = SessionStore(root).read(session_id)
+
+    # Fresh identity — resume continues prior work as a *new* Session.
+    from dargus.models.session import new_session_id
+
+    loaded.metadata.session_id = new_session_id()
+    loaded.metadata.closed = None
+
+    iris = runtime.agent_factory.swap(hydrate=loaded)
+    return iris._session.metadata.session_id
+
+
+def end_session() -> str | None:
+    """Explicitly end and persist the live Session (runtime exit).
+
+    Idempotent — the archive is append-only. Returns the persisted Session
+    id, or ``None`` when there is no live Session.
+    """
+    runtime = _RUNTIME_CACHE
+    if runtime is None:
+        return None
+    factory = getattr(runtime, "agent_factory", None)
+    if factory is None:
+        return None
+    iris = getattr(factory, "_iris_cache", None)
+    if iris is None:
+        return None
+    session_id = iris._session.metadata.session_id
+    iris.close()
+    return session_id
+
+
+def _workspace_root(runtime: Any) -> str:
+    """Resolve the workspace root off the runtime's WorkspaceGuard."""
+    guard = getattr(runtime, "workspace_guard", None)
+    if guard is None:
+        return ""
+    return str(getattr(guard, "root", "") or "")
+
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 

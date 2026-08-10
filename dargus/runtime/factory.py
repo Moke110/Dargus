@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dargus.agents.base import BaseAgent
+    from dargus.iris.commander import Iris
+    from dargus.models.session import Session
     from dargus.runtime.context import DargusRuntime
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,31 @@ class AgentFactory:
 
         iris = self._wire(Iris(agent_factory=self, **self._di_kwargs()))
         self._iris_cache = iris
+        return iris
+
+    # ------------------------------------------------------------------
+    # Swap (ADR-0005 single session-swap verb)
+    # ------------------------------------------------------------------
+
+    def swap(self, *, hydrate: "Session | None" = None) -> Iris:
+        """Persist-then-end the current live Iris and start a fresh one.
+
+        This is the single session-swap verb shared by ``/new`` and
+        ``/resume <id>``: the one-live-Iris invariant holds before, during,
+        and after the swap.
+
+        Args:
+            hydrate: An optional loaded Session to seed the fresh Iris with
+                (resume). ``None`` starts a fresh empty Session (``/new``).
+
+        Returns:
+            The new live Iris.
+        """
+        if self._iris_cache is not None:
+            self.terminate(self._iris_cache)
+        iris = self.iris()
+        if hydrate is not None:
+            iris._session = hydrate  # fresh Iris, resumed history
         return iris
 
     # ------------------------------------------------------------------

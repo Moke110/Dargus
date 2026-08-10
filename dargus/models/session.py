@@ -111,6 +111,30 @@ class Round:
 
         return Message(role=self.role, content=self.text)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this Round for the on-disk archive."""
+        return {
+            "role": self.role,
+            "text": self.text,
+            "tool_name": self.tool_name,
+            "tool_params": self.tool_params,
+            "tool_output": self.tool_output,
+            "tool_error": self.tool_error,
+            "created": self.created,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Round":
+        return cls(
+            role=data.get("role", ""),
+            text=data.get("text", ""),
+            tool_name=data.get("tool_name"),
+            tool_params=data.get("tool_params") or {},
+            tool_output=data.get("tool_output"),
+            tool_error=data.get("tool_error"),
+            created=data.get("created", _now_iso()),
+        )
+
 
 @dataclass
 class Turn:
@@ -136,6 +160,20 @@ class Turn:
         """The coarse (user prompt, final reply) exchange."""
         return (self.prompt, self.final_reply)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this Turn (prompt + full Rounds) for the archive."""
+        return {
+            "prompt": self.prompt,
+            "rounds": [r.to_dict() for r in self.rounds],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Turn":
+        return cls(
+            prompt=data.get("prompt", ""),
+            rounds=[Round.from_dict(r) for r in data.get("rounds", [])],
+        )
+
 
 @dataclass
 class SessionMetadata:
@@ -147,6 +185,27 @@ class SessionMetadata:
     closed: str | None = None
     workspace_root: str = ""
     turn_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "session_id": self.session_id,
+            "created": self.created,
+            "closed": self.closed,
+            "workspace_root": self.workspace_root,
+            "turn_count": self.turn_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SessionMetadata":
+        return cls(
+            agent=data.get("agent", ""),
+            session_id=data.get("session_id", new_session_id()),
+            created=data.get("created", _now_iso()),
+            closed=data.get("closed"),
+            workspace_root=data.get("workspace_root", ""),
+            turn_count=data.get("turn_count", 0),
+        )
 
 
 @dataclass
@@ -263,3 +322,26 @@ class Session:
 
     def __len__(self) -> int:
         return len(self.messages)
+
+    # ------------------------------------------------------------------
+    # Persistence (ADR-0005 archive)
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the full Turns→Rounds tree plus metadata.
+
+        This is the on-disk archive shape: the complete record, never a
+        projection.
+        """
+        return {
+            "version": 1,
+            "metadata": self.metadata.to_dict(),
+            "turns": [t.to_dict() for t in self.turns],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Session":
+        return cls(
+            metadata=SessionMetadata.from_dict(data.get("metadata", {})),
+            turns=[Turn.from_dict(t) for t in data.get("turns", [])],
+        )

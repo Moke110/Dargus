@@ -503,6 +503,59 @@ class BaseAgent(ABC):
             return 0.0
         return min(0.9, n_rounds * 0.2)
 
+    # ------------------------------------------------------------------
+    # Session end / persistence (ADR-0005)
+    # ------------------------------------------------------------------
+
+    def end(self) -> Path | None:
+        """End this agent's Session and persist it to the archive.
+
+        An ended Session is written once, never overwritten (the archive is
+        append-only/immutable). Calling :meth:`end` repeatedly for the same
+        Session is a no-op for the already-persisted archive entry.
+
+        Returns:
+            The written archive path, or ``None`` if there was nothing to
+            write (no workspace root) or the archive refused the write.
+        """
+        session = self._session
+        if session is None:
+            return None
+
+        root = session.metadata.workspace_root or self._session_workspace_root()
+        if root:
+            session.metadata.workspace_root = root
+        if not root:
+            logger.warning("%s: no workspace root — cannot persist session", self.name)
+            return None
+
+        from dargus.models.session import _now_iso
+        from dargus.sessions.store import SessionStore
+
+        if session.metadata.closed is None:
+            session.metadata.closed = _now_iso()
+
+        store = SessionStore(workspace_root=root)
+        return store.write(session)
+
+    def close(self) -> None:
+        """Explicit close hook (called by the runtime's AgentFactory and the
+        REPL exit path). Persists the live Session — the archive is
+        append-only, so a second close is a no-op."""
+        try:
+            self.end()
+        except Exception:
+            logger.exception("%s: failed to persist session on close", self.name)
+
+    def _session_workspace_root(self) -> str:
+        """Resolve the workspace root off the runtime's WorkspaceGuard."""
+        if self._runtime is None:
+            return ""
+        guard = getattr(self._runtime, "workspace_guard", None)
+        if guard is None:
+            return ""
+        return str(getattr(guard, "root", "") or "")
+
 
 def new_task_id() -> str:
     return str(uuid.uuid4())

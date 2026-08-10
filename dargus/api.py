@@ -41,7 +41,44 @@ def _get_runtime() -> Any:
         raise RuntimeError(f"DargusRuntime failed to start: {exc} — refusing new session") from exc
     runtime.ensure_healthy()
     _RUNTIME_CACHE = runtime
+    _register_atexit_persist()
     return runtime
+
+
+def _register_atexit_persist() -> None:
+    """Register the atexit safety net: persist the live Iris's Session on
+    process exit (never ``__del__``). Guarded so repeated registration is a
+    no-op."""
+    import atexit
+
+    if getattr(_register_atexit_persist, "_registered", False):
+        return
+    _register_atexit_persist._registered = True  # type: ignore[attr-defined]
+    atexit.register(_persist_live_session_on_exit)
+
+
+def _persist_live_session_on_exit() -> None:
+    """Persist the live Session when the process exits (atexit safety net).
+
+    Idempotent: the archive is append-only, so re-persisting an already
+    written Session is a no-op.
+    """
+    global _RUNTIME_CACHE
+    runtime = _RUNTIME_CACHE
+    if runtime is None:
+        return
+    factory = getattr(runtime, "agent_factory", None)
+    if factory is None:
+        return
+    iris = getattr(factory, "_iris_cache", None)
+    if iris is None:
+        return
+    end = getattr(iris, "end", None)
+    if callable(end):
+        try:
+            end()
+        except Exception:
+            logger.exception("API: failed to persist live session at exit")
 
 
 def _create_iris_with_lm() -> Iris:

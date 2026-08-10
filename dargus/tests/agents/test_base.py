@@ -204,6 +204,51 @@ def test_two_user_turns_accumulate_in_one_session():
     assert len(session.messages) == 4
 
 
+def test_projection_across_turns_is_coarse_prior_plus_detailed_current():
+    """#105: after several completed turns, the model-visible context is
+    coarse for prior turns and full only for the in-flight turn."""
+    from dargus.models.reasoning import Message
+
+    agent = _make_agent(
+        name="Iris",
+        responses=[
+            '{"action": "text", "text": "first reply"}',  # turn 1 closes
+            '{"action": "tool_call", "tool": "read_file", "params": {}}',  # turn 2 round 1
+            '{"action": "text", "text": "second reply"}',  # turn 2 closes
+        ],
+    )
+    agent.run({"query": "turn one?"})
+    agent.run({"query": "turn two?"})
+
+    # Turn 1 is closed; turn 2's rounds completed, so the final Session is
+    # all-coarse. The in-flight view is what the LLM saw during turn 2's
+    # round 1 (before its final reply): prior turn coarse, current turn full.
+    session = agent._resolve_session({})
+    assert [m.role for m in session.projection()] == ["user", "assistant", "user", "assistant"]
+    assert [m.content for m in session.projection()] == [
+        '{"query": "turn one?"}',
+        "first reply",
+        '{"query": "turn two?"}',
+        "second reply",
+    ]
+
+    # The LLM's round-2 call in turn 2 saw turn 1 coarse + turn 2 in-flight
+    # (the round-1 tool result in full, no final reply yet).
+    second_turn_round_two = agent._reasoning_llm.calls[2]
+    assert [m.role for m in second_turn_round_two] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert second_turn_round_two[1].content == '{"query": "turn one?"}'
+    assert second_turn_round_two[2].content == "first reply"
+    assert '"turn two?"' in second_turn_round_two[3].content
+    assert "[tool_call] read_file" in second_turn_round_two[4].content
+    assert all(isinstance(m, Message) for m in second_turn_round_two)
+
+
 def test_distinct_agents_get_distinct_sessions():
     """T4 regression: each agent instance owns its own Session — no
     cross-agent bleed."""

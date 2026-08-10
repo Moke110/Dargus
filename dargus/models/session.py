@@ -215,15 +215,43 @@ class Session:
             entries.extend(turn.rounds)
         return entries
 
+    def _is_in_flight(self, turn: Turn) -> bool:
+        """True while the PRA loop is still building *turn*.
+
+        A Turn is in flight until it receives its final reply; once closed
+        its internal Rounds are retained for record but no longer shown to
+        the model.
+        """
+        return not bool(turn.final_reply)
+
     def projection(self) -> list[Message]:
         """Project the Session into the ``list[Message]`` ``ReasoningLLM.chat()``
-        consumes, replacing the JSON dump of ``history`` + ``act_cache`` that
-        used to be built in the agent loop.
+        consumes (ADR-0005 structural rule).
+
+        Closed Turns project as their coarse ``(prompt, final reply)`` summary
+        only; the in-flight Turn (the one currently being built, without a
+        final reply) projects its full Rounds so multi-round tasks stay
+        coherent. What Iris sees depends on a Turn's state — never on how the
+        Session was loaded. A Session loaded from the archive has all Turns
+        closed, so a resumed Session projects coarse until the next Turn is
+        opened.
 
         System-prompt framing stays the responsibility of the agent's
         perceive step; this projects the dialogue + tool content.
         """
-        return [m.as_llm_message() for m in self.messages]
+        projected: list[Message] = []
+        for turn in self.turns:
+            if self._is_in_flight(turn):
+                if turn.prompt:
+                    projected.append(Message(role=ROLE_USER, content=turn.prompt))
+                projected.extend(r.as_llm_message() for r in turn.rounds)
+            else:
+                prompt, reply = turn.summary
+                if prompt:
+                    projected.append(Message(role=ROLE_USER, content=prompt))
+                if reply:
+                    projected.append(Message(role=ROLE_ASSISTANT, content=reply))
+        return projected
 
     # ------------------------------------------------------------------
     # Derived views

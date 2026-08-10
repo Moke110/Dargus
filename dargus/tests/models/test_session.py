@@ -109,26 +109,92 @@ class TestSession:
         assert session.metadata.session_id == "s1"
         assert session.metadata.agent == "Iris"
 
-    def test_projection_projects_roles_in_order(self):
+    def test_projection_closed_turn_is_coarse_summary(self):
+        """A closed Turn projects as (prompt, final reply) only — its
+        internal Rounds (system/synthetic/tool) are not shown to the model."""
         session = self._session()
         session.add_user("q1")
-        session.add_assistant("a1")
         session.add_system("context")
-        session.add_synthetic("subagent done")
+        session.add_assistant("a1")
         msgs = session.projection()
-        assert [m.role for m in msgs] == ["user", "assistant", "system", "synthetic"]
+        assert [m.role for m in msgs] == ["user", "assistant"]
         assert msgs[0].content == "q1"
         assert msgs[1].content == "a1"
 
-    def test_tool_round_appears_in_projection(self):
+    def test_projection_in_flight_turn_is_full_rounds(self):
+        """The in-flight Turn (no final reply yet) projects its full Rounds
+        so multi-round tool use stays coherent."""
         session = self._session()
-        session.add_user("assess")
+        session.add_user("q1")
         session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "..."})
-        session.add_assistant("concluded")
+        # No assistant text yet — the Turn is still in flight.
         msgs = session.projection()
-        assert len(msgs) == 3
+        assert [m.role for m in msgs] == ["user", "assistant"]
         assert "[tool_call] read_file" in msgs[1].content
         assert msgs[1].role == "assistant"
+
+    def test_projection_mixes_closed_and_in_flight(self):
+        """Prior closed Turns are coarse; the current in-flight Turn is
+        detailed — the structural rule."""
+        session = self._session()
+        # Closed turn 1: prompt + final reply only.
+        session.add_user("q1")
+        session.add_assistant("a1")
+        # In-flight turn 2: full rounds visible.
+        session.add_user("q2")
+        session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "data"})
+        msgs = session.projection()
+        assert [m.role for m in msgs] == ["user", "assistant", "user", "assistant"]
+        assert msgs[0].content == "q1"
+        assert msgs[1].content == "a1"
+        assert msgs[2].content == "q2"
+        assert "[tool_call] read_file" in msgs[3].content
+
+    def test_projection_closed_turn_rounds_not_shown(self):
+        """A closed Turn's tool/synthetic Rounds are retained on the Session
+        but never shown to the model."""
+        session = self._session()
+        session.add_user("q1")
+        session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "data"})
+        session.add_synthetic("subagent result")
+        session.add_assistant("concluded")
+        msgs = session.projection()
+        assert [m.role for m in msgs] == ["user", "assistant"]
+        assert msgs[0].content == "q1"
+        assert msgs[1].content == "concluded"
+        assert "read_file" not in " ".join(m.content for m in msgs)
+
+    def test_projection_resumed_session_is_all_coarse(self):
+        """A Session loaded from the archive has all Turns closed, so it
+        projects coarse until the next Turn is opened — load-path independent."""
+        session = self._session()
+        session.add_user("q1")
+        session.add_tool("read_file", params={"path": "/tmp/x"}, output={"content": "data"})
+        session.add_assistant("a1")
+        session.add_user("q2")
+        session.add_assistant("a2")
+        # Both turns closed (each has a final reply).
+        msgs = session.projection()
+        assert [m.role for m in msgs] == ["user", "assistant", "user", "assistant"]
+        assert [m.content for m in msgs] == ["q1", "a1", "q2", "a2"]
+        assert "read_file" not in " ".join(m.content for m in msgs)
+
+    def test_projection_in_flight_depends_on_state_not_load_path(self):
+        """The same Turns project the same way regardless of how the Session
+        was assembled — projection is a pure function of Turn state."""
+        a = self._session()
+        a.add_user("q1")
+        a.add_assistant("a1")
+        a.add_user("q2")
+        a.add_tool("read_file", params={"path": "/x"}, output={"ok": True})
+
+        b = self._session()
+        b.add_user("q1")
+        b.add_assistant("a1")
+        b.add_user("q2")
+        b.add_tool("read_file", params={"path": "/x"}, output={"ok": True})
+
+        assert [m.content for m in a.projection()] == [m.content for m in b.projection()]
 
     def test_len_and_last(self):
         session = self._session()

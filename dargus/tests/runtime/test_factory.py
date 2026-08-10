@@ -13,6 +13,13 @@ from dargus.runtime.context import DargusRuntime
 from dargus.runtime.factory import AgentFactory
 
 
+def _runtime(tmp_path: pytest.TempPathFactory | None = None) -> DargusRuntime:
+    """A runtime rooted at a tmp workspace so agent persistence stays hermetic."""
+    if tmp_path is None:
+        return DargusRuntime()
+    return DargusRuntime(config={"workspace_root": str(tmp_path)})
+
+
 class TestAgentFactory:
     """Tests for AgentFactory."""
 
@@ -93,9 +100,9 @@ class TestExpertCreation:
         iris2 = factory.iris()
         assert iris1 is iris2
 
-    def test_iris_cache_reset_on_terminate(self):
+    def test_iris_cache_reset_on_terminate(self, tmp_path):
         """SPEC-B: terminating Iris clears the factory cache."""
-        factory = AgentFactory(DargusRuntime())
+        factory = AgentFactory(_runtime(tmp_path))
         iris1 = factory.iris()
         factory.terminate(iris1)
         iris2 = factory.iris()
@@ -118,8 +125,8 @@ class TestExpertCreation:
 
 
 class TestTermination:
-    def test_terminate_without_close_is_noop(self):
-        factory = AgentFactory(DargusRuntime())
+    def test_terminate_without_close_is_noop(self, tmp_path):
+        factory = AgentFactory(_runtime(tmp_path))
         agent = factory.base_agent("TermAgent")
         factory.terminate(agent)  # must not raise
 
@@ -132,7 +139,7 @@ class TestTermination:
                 self.closed = True
 
         agent = _Agent()
-        factory = AgentFactory(DargusRuntime())
+        factory = AgentFactory(_runtime())
         factory.terminate(agent)
         assert agent.closed is True
 
@@ -143,5 +150,5 @@ class TestTermination:
             def close(self):
                 raise RuntimeError("boom")
 
-        factory = AgentFactory(DargusRuntime())
+        factory = AgentFactory(_runtime())
         factory.terminate(_Agent())  # logs but must not raise

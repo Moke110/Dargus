@@ -21,6 +21,8 @@ CLAUDE.local.md
 .superpowers/
 .teaching/
 .wayfinder/
+# per-workspace Session archive (ADR-0005) — runtime state, never published
+.dargus/
 CLAUDE.md
 CONTEXT.md
 data/

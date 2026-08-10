@@ -174,11 +174,6 @@ def ask(query: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _live_iris() -> Iris:
-    """Return the live Iris, creating it through the runtime's factory."""
-    return _create_iris_with_lm()
-
-
 def new_session() -> str:
     """Start a fresh empty Session (the ``/new`` entry point).
 

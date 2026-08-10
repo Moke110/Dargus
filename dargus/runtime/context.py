@@ -89,6 +89,14 @@ class DargusRuntime:
             self.tool_cache.close()
         self.healthy = False
 
+    @property
+    def workspace_root(self) -> str:
+        """The canonical workspace root off the WorkspaceGuard (or empty)."""
+        guard = self.workspace_guard
+        if guard is None:
+            return ""
+        return str(getattr(guard, "root", "") or "")
+
 
 def health_check(runtime: DargusRuntime) -> bool:
     """Return True if both reasoning_llm and embedding_model are present."""

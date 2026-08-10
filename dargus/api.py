@@ -242,11 +242,8 @@ def end_session() -> str | None:
 
 
 def _workspace_root(runtime: Any) -> str:
-    """Resolve the workspace root off the runtime's WorkspaceGuard."""
-    guard = getattr(runtime, "workspace_guard", None)
-    if guard is None:
-        return ""
-    return str(getattr(guard, "root", "") or "")
+    """Resolve the workspace root off the runtime (ADR-0005)."""
+    return runtime.workspace_root
 
 
 # ---------------------------------------------------------------------------

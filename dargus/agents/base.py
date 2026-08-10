@@ -102,13 +102,10 @@ class BaseAgent(ABC):
 
         A live Session is Iris instance state: the agent reads and appends
         its own Session directly instead of resolving one through the
-        runtime. The workspace root is seeded from the runtime's
-        WorkspaceGuard when one is wired.
+        runtime. The workspace root is seeded from the runtime's guard.
         """
         if self._runtime is not None and not self._session.metadata.workspace_root:
-            guard = getattr(self._runtime, "workspace_guard", None)
-            if guard is not None:
-                self._session.metadata.workspace_root = str(getattr(guard, "root", "") or "")
+            self._session.metadata.workspace_root = self._runtime.workspace_root
         return self._session
 
     @staticmethod
@@ -545,13 +542,10 @@ class BaseAgent(ABC):
             logger.exception("%s: failed to persist session on close", self.name)
 
     def _session_workspace_root(self) -> str:
-        """Resolve the workspace root off the runtime's WorkspaceGuard."""
+        """Resolve the workspace root off the runtime (ADR-0005)."""
         if self._runtime is None:
             return ""
-        guard = getattr(self._runtime, "workspace_guard", None)
-        if guard is None:
-            return ""
-        return str(getattr(guard, "root", "") or "")
+        return self._runtime.workspace_root
 
 
 def new_task_id() -> str:

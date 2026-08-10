@@ -18,7 +18,10 @@ from dargus.cli.ui.logo import DESCRIPTION, build_logo
 _HELP = """\
 Available commands:
   /help         — show this message
-  /quit         — exit
+  /new          — start a fresh session (the current one is saved first)
+  /resume <id>  — resume an archived session by its id (saves the current one first)
+  /quit         — exit (saves the current session)
+  /exit         — exit (saves the current session)
   /config       — interactive LLM configuration wizard
   /clear-dbase  — clear all records from the global D-Base
   /test         — run internal test suite
@@ -121,6 +124,14 @@ def _format_error(text: str) -> Text:
 # ── REPL ──────────────────────────────────────────────────────────────────
 
 
+def _end_live_session(api, console: Console) -> None:
+    """Persist-then-end the live Session (runtime exit path)."""
+    try:
+        api.end_session()
+    except Exception:
+        console.print(_format_error("Failed to save the current session before exit."))
+
+
 def run_repl() -> None:
     """Launch the Dargus REPL."""
     from dargus import api
@@ -193,15 +204,55 @@ def run_repl() -> None:
             )
             cmd = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
+            # Ctrl-C / Ctrl-D on the prompt: persist-then-end, then exit.
             console.print()
+            _end_live_session(api, console)
             console.print("Goodbye.", style=Style(color="grey50"))
             break
 
         if not cmd:
             continue
-        if cmd in ("/quit", "/q"):
+        if cmd in ("/quit", "/q", "/exit"):
+            # Persist-then-end the live Session before leaving — quitting
+            # never loses a finished session.
+            _end_live_session(api, console)
             console.print("Goodbye.", style=Style(color="grey50"))
             break
+        if cmd == "/new":
+            try:
+                new_id = api.new_session()
+            except Exception as exc:
+                console.print(_format_error(f"Failed to start a new session: {exc}"))
+            else:
+                console.print(
+                    f"Started a fresh session ({new_id[:8]}…). " "The previous session was saved.",
+                    style=Style(color="grey70"),
+                )
+            console.print()
+            continue
+        if cmd.startswith("/resume"):
+            parts = cmd.split()
+            if len(parts) != 2 or not parts[1]:
+                console.print(_format_error("Usage: /resume <session-id> — an id is required."))
+                console.print()
+                continue
+            session_id = parts[1]
+            try:
+                resumed_id = api.resume_session(session_id)
+            except FileNotFoundError:
+                console.print(
+                    _format_error(f"No archived session with id {session_id!r} in this workspace.")
+                )
+            except Exception as exc:
+                console.print(_format_error(f"Failed to resume session: {exc}"))
+            else:
+                console.print(
+                    f"Resumed session {session_id[:8]}… as a fresh continuation "
+                    f"({resumed_id[:8]}…).",
+                    style=Style(color="grey70"),
+                )
+            console.print()
+            continue
         if cmd in ("/test", "/t"):
             from dargus.cli.commands.test import run_test_menu
 

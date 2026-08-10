@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "metadata": {
+    "agent": "TermAgent",
+    "session_id": "2cf403e4-808b-450c-8f91-db3a740bd714",
+    "created": "2026-08-10T07:55:39.068204+00:00",
+    "closed": "2026-08-10T07:55:39.068214+00:00",
+    "workspace_root": "/home/chang/dargus",
+    "turn_count": 0
+  },
+  "turns": []
+}

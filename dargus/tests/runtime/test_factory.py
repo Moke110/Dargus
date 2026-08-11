@@ -152,3 +152,53 @@ class TestTermination:
 
         factory = AgentFactory(_runtime())
         factory.terminate(_Agent())  # logs but must not raise
+
+
+class TestLiveAccess:
+    """end_live()/live_session_id() — the factory owns live-Iris access."""
+
+    def test_live_session_id_none_without_iris(self):
+        factory = AgentFactory(_runtime())
+        assert factory.live_session_id() is None
+
+    def test_live_session_id_returns_live_id(self):
+        factory = AgentFactory(_runtime())
+        iris = factory.iris()
+        assert factory.live_session_id() == iris._session.metadata.session_id
+
+    def test_live_session_id_none_after_swap(self):
+        """After a swap (terminate + fresh iris), the id is the *new* iris's."""
+        factory = AgentFactory(_runtime())
+        iris1 = factory.iris()
+        factory.swap(hydrate=None)
+        assert factory.live_session_id() != iris1._session.metadata.session_id
+
+    def test_end_live_none_without_iris(self):
+        factory = AgentFactory(_runtime())
+        assert factory.end_live() is None
+
+    def test_end_live_persists_and_returns_id(self, tmp_path):
+        """end_live() persists the live Session and returns its id."""
+        factory = AgentFactory(_runtime(tmp_path))
+        iris = factory.iris()
+        iris._session.metadata.workspace_root = str(tmp_path)
+        iris._session.add_user("q1")
+        iris._session.add_assistant("reply")
+
+        session_id = factory.end_live()
+        assert session_id == iris._session.metadata.session_id
+
+        from dargus.sessions.store import SessionStore
+
+        assert session_id in SessionStore(str(tmp_path)).list_ids()
+
+    def test_end_live_idempotent(self, tmp_path):
+        """A second end_live is a no-op (append-only archive)."""
+        factory = AgentFactory(_runtime(tmp_path))
+        iris = factory.iris()
+        iris._session.metadata.workspace_root = str(tmp_path)
+        iris._session.add_user("q1")
+        iris._session.add_assistant("reply")
+
+        first = factory.end_live()
+        assert factory.end_live() == first  # same id, no error

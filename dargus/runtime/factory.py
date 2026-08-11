@@ -114,6 +114,40 @@ class AgentFactory:
         return iris
 
     # ------------------------------------------------------------------
+    # Live-Iris access (ADR-0005 one-live-Iris)
+    # ------------------------------------------------------------------
+
+    def live_session_id(self) -> str | None:
+        """The live Iris's Session id, or ``None`` when no Iris is live.
+
+        The factory owns the iris cache, so it is the one place that reads
+        the live Session's identity — the API never touches ``_session``.
+        """
+        if self._iris_cache is None:
+            return None
+        session = getattr(self._iris_cache, "_session", None)
+        return getattr(session, "metadata", None).session_id if session is not None else None
+
+    def end_live(self) -> str | None:
+        """Persist-then-end the live Iris's Session (the exit/atexit path).
+
+        Returns the persisted Session id, or ``None`` when there is no live
+        Iris. Idempotent: ``close()`` re-persisting an already-written Session
+        is a no-op (append-only archive).
+        """
+        if self._iris_cache is None:
+            return None
+        iris = self._iris_cache
+        close = getattr(iris, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.warning("Failed to persist live session at exit", exc_info=True)
+                return None
+        return self.live_session_id()
+
+    # ------------------------------------------------------------------
     # Swap (ADR-0005 single session-swap verb)
     # ------------------------------------------------------------------
 

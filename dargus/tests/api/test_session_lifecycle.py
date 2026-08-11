@@ -168,6 +168,34 @@ class TestResumeSession:
         assert [m.role for m in msgs] == ["user", "assistant"]
         assert msgs[1].content == "first reply"
 
+    def test_resume_re_stamps_created_and_id(self, wire_runtime):
+        """Resume continues prior work as a *new* Session: fresh id, fresh
+        created timestamp, open record (ADR-0005)."""
+        import dargus.api as api
+
+        rt = wire_runtime(["first reply"])
+        api.ask("hello")
+        archived_id = _live(rt)._session.metadata.session_id
+        archived_created = _live(rt)._session.metadata.created
+        api.new_session()
+
+        resumed_id = api.resume_session(archived_id)
+        resumed = _live(rt)._session
+
+        assert resumed.metadata.session_id == resumed_id != archived_id
+        assert resumed.metadata.created != archived_created
+        assert resumed.metadata.closed is None
+        # The archived original keeps its own identity (never mutated).
+        import json
+
+        from dargus.sessions.store import archive_dir
+
+        archived_path = archive_dir(rt.workspace_root) / f"{archived_id}.json"
+        original = json.loads(archived_path.read_text(encoding="utf-8"))["metadata"]
+        assert original["session_id"] == archived_id
+        assert original["created"] == archived_created
+        assert original["closed"] is not None
+
 
 class TestEndSession:
     def test_end_session_persists_live(self, wire_runtime):

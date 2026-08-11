@@ -375,3 +375,16 @@ class Session:
         """Stamp the Session's closed timestamp (once)."""
         if self.metadata.closed is None:
             self.metadata.closed = _now_iso()
+
+    def reopen(self) -> None:
+        """Re-stamp identity so a loaded Session resumes as a *new* Session.
+
+        Gives a fresh ``session_id``, a fresh ``created`` timestamp, and an
+        open (``closed=None``) record — the same shape a live Session has.
+        The archived original is untouched: this acts on the in-memory copy
+        loaded for resume (ADR-0005: resume continues prior work as a new
+        Session).
+        """
+        self.metadata.session_id = new_session_id()
+        self.metadata.created = _now_iso()
+        self.metadata.closed = None

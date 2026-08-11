@@ -7,6 +7,8 @@ records at most one tool payload.
 
 from __future__ import annotations
 
+import json
+
 from dargus.models.session import (
     Round,
     Session,
@@ -235,3 +237,50 @@ class TestSession:
         assert session.turns[0].summary == ("first", "reply 1")
         assert session.turns[1].summary == ("second", "reply 2")
         assert session.metadata.turn_count == 2
+
+    def test_reopen_gives_fresh_identity(self):
+        """reopen() re-stamps session_id, created, and closed on a loaded
+        Session — resume continues prior work as a *new* Session (ADR-0005)."""
+        session = self._session(session_id="orig")
+        session.add_user("q1")
+        session.add_assistant("a1")
+        session.close()
+        original_id = session.metadata.session_id
+        original_created = session.metadata.created
+
+        session.reopen()
+
+        assert session.metadata.session_id != original_id
+        assert session.metadata.session_id  # a fresh, non-empty id
+        assert session.metadata.created != original_created
+        assert session.metadata.created  # a fresh timestamp
+        assert session.metadata.closed is None
+        # History is retained — only the identity is re-stamped.
+        assert len(session.turns) == 1
+        assert session.turns[0].summary == ("q1", "a1")
+
+    def test_reopen_does_not_mutate_archive_original(self, tmp_path):
+        """reopen() acts on the in-memory copy; the archived original keeps
+        its identity (ADR-0005: the archived Session is never mutated)."""
+        from dargus.sessions.store import SessionStore
+
+        store = SessionStore(str(tmp_path))
+        session = self._session(session_id="orig")
+        session.metadata.workspace_root = str(tmp_path)
+        session.add_user("q1")
+        session.add_assistant("a1")
+        session.close()
+        store.write(session)
+
+        loaded = store.read("orig")
+        loaded.reopen()
+        assert loaded.metadata.session_id != "orig"
+
+        # The archived file is unchanged.
+        persisted = Session.from_dict(
+            json.loads(
+                (tmp_path / ".dargus" / "sessions" / "orig.json").read_text(encoding="utf-8")
+            )
+        )
+        assert persisted.metadata.session_id == "orig"
+        assert persisted.metadata.closed is not None

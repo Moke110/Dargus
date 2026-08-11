@@ -61,22 +61,19 @@ def _persist_live_session_on_exit() -> None:
     """Persist the live Session when the process exits (atexit safety net).
 
     Idempotent: the archive is append-only, so re-persisting an already
-    written Session is a no-op.
+    written Session is a no-op. Never raises — the handler runs during
+    interpreter shutdown.
     """
-    global _RUNTIME_CACHE
     runtime = _RUNTIME_CACHE
     if runtime is None:
         return
     factory = getattr(runtime, "agent_factory", None)
     if factory is None:
         return
-    iris = getattr(factory, "_iris_cache", None)
-    if iris is None:
-        return
-    end = getattr(iris, "end", None)
-    if callable(end):
+    end_live = getattr(factory, "end_live", None)
+    if callable(end_live):
         try:
-            end()
+            end_live()
         except Exception:
             logger.exception("API: failed to persist live session at exit")
 
@@ -182,8 +179,8 @@ def new_session() -> str:
     Session's id.
     """
     runtime = _get_runtime()
-    iris = runtime.agent_factory.swap(hydrate=None)
-    return iris._session.metadata.session_id
+    runtime.agent_factory.swap(hydrate=None)
+    return runtime.agent_factory.live_session_id()
 
 
 def resume_session(session_id: str) -> str:
@@ -214,14 +211,13 @@ def resume_session(session_id: str) -> str:
     # resume persists-then-ends, then hydrates).
     loaded = SessionStore(root).read(session_id)
 
-    # Fresh identity — resume continues prior work as a *new* Session.
-    from dargus.models.session import new_session_id
+    # Fresh identity — resume continues prior work as a *new* Session: a new
+    # session_id, a fresh created timestamp, and an open (not closed) record.
+    # The archived original keeps its own identity and is never mutated.
+    loaded.reopen()
 
-    loaded.metadata.session_id = new_session_id()
-    loaded.metadata.closed = None
-
-    iris = runtime.agent_factory.swap(hydrate=loaded)
-    return iris._session.metadata.session_id
+    runtime.agent_factory.swap(hydrate=loaded)
+    return runtime.agent_factory.live_session_id()
 
 
 def end_session() -> str | None:
@@ -236,12 +232,10 @@ def end_session() -> str | None:
     factory = getattr(runtime, "agent_factory", None)
     if factory is None:
         return None
-    iris = getattr(factory, "_iris_cache", None)
-    if iris is None:
+    end_live = getattr(factory, "end_live", None)
+    if not callable(end_live):
         return None
-    session_id = iris._session.metadata.session_id
-    iris.close()
-    return session_id
+    return end_live()
 
 
 def _workspace_root(runtime: Any) -> str:

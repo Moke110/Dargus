@@ -103,6 +103,30 @@ class TestPersistOnEnd:
         assert store.write(session) is None
         assert first.read_text(encoding="utf-8") == first_text
 
+    def test_append_only_refusal_logs_warning(self, workspace: Path, caplog):
+        """The genuinely anomalous overwrite still warns (backstop, #109)."""
+        import logging
+
+        store = SessionStore(str(workspace))
+        session = _populated_session(session_id="warn1", root=str(workspace))
+        store.write(session)
+        with caplog.at_level(logging.WARNING, logger="dargus.sessions.store"):
+            assert store.write(session) is None
+        assert "refusing to overwrite archived session" in caplog.text
+
+    def test_successful_persist_logs_debug_not_info(self, workspace: Path, caplog):
+        """Persist is bookkeeping, not user-facing: INFO → DEBUG (#109)."""
+        import logging
+
+        store = SessionStore(str(workspace))
+        with caplog.at_level(logging.DEBUG, logger="dargus.sessions.store"):
+            store.write(_populated_session(session_id="dbg1", root=str(workspace)))
+        assert "persisted session" in caplog.text
+        # No INFO-level "persisted session …" line at exit.
+        assert not any(
+            r.levelno >= logging.INFO and "persisted session" in r.message for r in caplog.records
+        )
+
     def test_store_without_root_skips(self):
         store = SessionStore("")
         session = _populated_session(root="")
@@ -128,6 +152,29 @@ class TestPersistOnEnd:
 
         path = agent.end()
         assert path is not None and path.exists()
+
+    def test_double_persist_is_silent_noop(self, workspace: Path, caplog):
+        """The atexit re-persist returns None silently (no append-only warning).
+
+        (#109: the REPL persists on quit and the atexit safety net re-persists;
+        the second write is a true no-op, not a flagged archive collision.)
+        """
+        import logging
+
+        from dargus.agents.base import BaseAgent
+
+        agent = BaseAgent(name="Iris")
+        agent._session.metadata.workspace_root = str(workspace)
+        agent._session.add_user("q1")
+        agent._session.add_assistant("reply")
+
+        first = agent.end()
+        assert first is not None
+
+        with caplog.at_level(logging.WARNING, logger="dargus.agents.base"):
+            second = agent.end()
+        assert second is None  # silent no-op
+        assert "refusing to overwrite" not in caplog.text
 
 
 # ------------------------------------------------------------------

@@ -514,14 +514,23 @@ class BaseAgent(ABC):
 
         An ended Session is written once, never overwritten (the archive is
         append-only/immutable). Calling :meth:`end` repeatedly for the same
-        Session is a no-op for the already-persisted archive entry.
+        Session returns ``None`` silently — the archive entry already exists,
+        so the double-persist (REPL persist + atexit safety net) is a true
+        no-op and never emits the append-only warning.
 
         Returns:
             The written archive path, or ``None`` if there was nothing to
-            write (no workspace root) or the archive refused the write.
+            write (no workspace root, no Session, or the archive already
+            holds this Session).
         """
         session = self._session
         if session is None:
+            return None
+
+        # The Session is already persisted (closed timestamp stamped): the
+        # atexit safety-net re-persist is a silent no-op, not an archive
+        # collision.
+        if session.metadata.closed is not None:
             return None
 
         root = session.metadata.workspace_root or self._session_workspace_root()

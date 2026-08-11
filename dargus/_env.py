@@ -6,6 +6,20 @@ import os
 from pathlib import Path
 
 
+def use_local_model_cost_map() -> None:
+    """Force LiteLLM to use its bundled local model cost map (ADR-0007).
+
+    On its first import LiteLLM otherwise tries to fetch the model cost map
+    from GitHub (5s timeout), and logs a WARNING when the fetch fails — which
+    the REPL rendered as an error line on the first message. The local backup
+    is what LiteLLM falls back to anyway, so Dargus skips the remote fetch.
+
+    Must be called before ``import litellm``. ``setdefault`` means a user who
+    exports ``LITELLM_LOCAL_MODEL_COST_MAP`` themselves still wins.
+    """
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+
+
 def load_dotenv(env_path: str | Path | None = None) -> None:
     """Load KEY=VALUE lines from a .env file into os.environ via setdefault.
 

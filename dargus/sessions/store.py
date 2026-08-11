@@ -64,7 +64,7 @@ class SessionStore:
         tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(target)  # atomic; the archive entry appears complete
-        logger.info("SessionStore: persisted session %s → %s", session.metadata.session_id, target)
+        logger.debug("SessionStore: persisted session %s → %s", session.metadata.session_id, target)
         return target
 
     # ------------------------------------------------------------------

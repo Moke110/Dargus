@@ -357,6 +357,9 @@ def test_llm_connection(
     import os
     import time
 
+    from dargus._env import use_local_model_cost_map
+
+    use_local_model_cost_map()  # ADR-0007: before litellm import
     import litellm
 
     key = api_key or os.environ.get("DARGUS_LLM_API_KEY")

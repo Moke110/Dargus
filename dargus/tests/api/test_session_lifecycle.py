@@ -216,6 +216,23 @@ class TestEndSession:
         # Second end is a no-op (append-only archive) but still returns the id.
         assert api.end_session() is not None
 
+    def test_double_end_no_refusing_warning(self, wire_runtime, caplog):
+        """A second end_session writes no archive and emits no append-only
+        warning — the double-persist is a true silent no-op (#109)."""
+        import logging
+
+        import dargus.api as api
+
+        rt = wire_runtime(["first reply"])
+        api.ask("hello")
+        api.end_session()
+        n_archives = len(_archive_ids(rt))
+
+        with caplog.at_level(logging.WARNING, logger="dargus.sessions.store"):
+            assert api.end_session() is not None
+        assert len(_archive_ids(rt)) == n_archives  # no second archive write
+        assert "refusing to overwrite archived session" not in caplog.text
+
 
 class TestInterruptedTool:
     def test_interrupted_tool_settles_as_error_entry(self, tmp_path, wire_runtime):

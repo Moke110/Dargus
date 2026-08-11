@@ -93,6 +93,9 @@ class LiteLLMBackend:
         litellm_messages = [{"role": m.role, "content": m.content} for m in messages]
 
         try:
+            from dargus._env import use_local_model_cost_map
+
+            use_local_model_cost_map()  # ADR-0007: before litellm import
             import litellm
 
             litellm.set_verbose = False

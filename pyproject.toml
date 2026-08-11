@@ -36,6 +36,7 @@ dependencies = [
     "pymc>=5.10",
     "pytensor>=2.18",
     "torch>=2.1",
+    "prompt-toolkit>=3",
 ]
 
 [project.optional-dependencies]

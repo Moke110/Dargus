@@ -192,8 +192,11 @@ class TestLiveAccess:
 
         assert session_id in SessionStore(str(tmp_path)).list_ids()
 
-    def test_end_live_idempotent(self, tmp_path):
-        """A second end_live is a no-op (append-only archive)."""
+    def test_end_live_idempotent(self, tmp_path, caplog):
+        """A second end_live is a no-op (append-only archive), emitting no
+        append-only warning (#109: the double-persist is a true no-op)."""
+        import logging
+
         factory = AgentFactory(_runtime(tmp_path))
         iris = factory.iris()
         iris._session.metadata.workspace_root = str(tmp_path)
@@ -201,4 +204,7 @@ class TestLiveAccess:
         iris._session.add_assistant("reply")
 
         first = factory.end_live()
-        assert factory.end_live() == first  # same id, no error
+        with caplog.at_level(logging.WARNING, logger="dargus.sessions.store"):
+            second = factory.end_live()
+        assert second == first  # same id, no error
+        assert "refusing to overwrite archived session" not in caplog.text

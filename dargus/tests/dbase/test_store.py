@@ -175,6 +175,21 @@ def test_manager_read_records_by_filters():
         assert len(records) >= 1
 
 
+def test_manager_read_records_falls_back_without_parquet_engine(monkeypatch):
+    """Reads still work when the parquet engine (pyarrow/fastparquet) is
+    absent: query_parquet falls back to the shard scan instead of returning
+    nothing (fresh-install CI regression)."""
+    import sys
+
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setitem(sys.modules, "pyarrow", None)  # block parquet engine
+        dbase = DBase("test", root_dir=tmp)
+        manager = DBaseStore(dbase)
+        manager.write_record(_make_evidence())
+        records = manager.read_records(y_type="logP")
+        assert len(records) >= 1
+
+
 def test_manager_build_evidence_from_three_axis_raw():
     """build_evidence with three-axis raw input."""
     with tempfile.TemporaryDirectory() as tmp:

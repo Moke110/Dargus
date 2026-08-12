@@ -203,7 +203,17 @@ class DBase:
             self.rebuild_view()
 
         if not self.parquet_path.exists():
-            return []
+            # The parquet engine (pyarrow/fastparquet) is unavailable or the
+            # view could not be built — fall back to the shard scan so reads
+            # still work (the documented contract below).
+            return self._query_shards(
+                y_type,
+                y_category,
+                x_entity,
+                disease_id,
+                biological_level,
+                evidence_design,
+            )
 
         df = pd.read_parquet(self.parquet_path)
 

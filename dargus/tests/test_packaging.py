@@ -40,7 +40,7 @@ SCIENTIFIC_DEPS = [
 ]
 
 #: The slim base dependencies the package actually imports (T7).
-CORE_DEPS = ["litellm", "sentence-transformers", "prompt-toolkit", "rich", "PyYAML"]
+CORE_DEPS = ["litellm", "sentence-transformers", "prompt-toolkit", "rich", "PyYAML", "pyarrow"]
 
 
 @pytest.fixture(scope="module")

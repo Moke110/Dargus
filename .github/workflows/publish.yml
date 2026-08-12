@@ -50,15 +50,16 @@ jobs:
           python -m build
 
       - name: Verify wheel contents
-        run: python - <<'EOF'
+        run: |
+          python - <<'EOF'
           import glob, zipfile
           wheel = glob.glob("dist/dargus_cli-*.whl")[0]
           with zipfile.ZipFile(wheel) as z:
-            names = set(z.namelist())
-            for f in ("dargus/config/dargus_config.yaml",
-                      "dargus/dbase/field_registry.yaml",
-                      "dargus/dbase/vocabularies.json"):
-              assert f in names, f"missing packaged data file {f}"
+              names = set(z.namelist())
+              for f in ("dargus/config/dargus_config.yaml",
+                        "dargus/dbase/field_registry.yaml",
+                        "dargus/dbase/vocabularies.json"):
+                  assert f in names, f"missing packaged data file {f}"
           print("wheel contents OK")
           EOF
 

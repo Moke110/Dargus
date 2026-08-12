@@ -31,20 +31,27 @@ def _populated_session(root: str):
 
 
 def main() -> int:
+    import os
+
     with tempfile.TemporaryDirectory() as tmp:
         workspace = Path(tmp) / "workspace"
         workspace.mkdir()
+        # The session archive is per-user: point DARGUS_HOME at tmp (T2).
+        home = Path(tmp) / "dargus_home"
+        home.mkdir()
+        os.environ["DARGUS_HOME"] = str(home)
 
-        from dargus.sessions.store import SessionStore
+        from dargus.sessions.store import SessionStore, home_archive_dir
 
         store = SessionStore(str(workspace))
 
-        # 1. Create a session and persist it to the archive.
+        # 1. Create a session and persist it to the *home* archive.
         session = _populated_session(root=str(workspace))
         original_id = session.metadata.session_id
         written = store.write(session)
         assert written is not None, "SessionStore.write returned None"
         assert written.exists(), f"archive file not on disk: {written}"
+        assert written == home_archive_dir() / f"{original_id}.json"
 
         # 2. The archive now lists exactly one id (append-only).
         ids = store.list_ids()

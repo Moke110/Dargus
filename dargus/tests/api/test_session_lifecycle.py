@@ -17,6 +17,14 @@ from dargus.models.reasoning import LLMResponse, LLMUsage, Message, ReasoningLLM
 from dargus.runtime.context import DargusRuntime
 
 
+@pytest.fixture(autouse=True)
+def _dargus_home(tmp_path: Path, monkeypatch):
+    """Point DARGUS_HOME at tmp so session writes stay hermetic (T2)."""
+    home = tmp_path / "dargus_home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DARGUS_HOME", str(home))
+
+
 class _ScriptedBackend:
     """ReasoningBackend returning queued PRA responses, then a default."""
 
@@ -188,9 +196,9 @@ class TestResumeSession:
         # The archived original keeps its own identity (never mutated).
         import json
 
-        from dargus.sessions.store import archive_dir
+        from dargus.sessions.store import home_archive_dir
 
-        archived_path = archive_dir(rt.workspace_root) / f"{archived_id}.json"
+        archived_path = home_archive_dir() / f"{archived_id}.json"
         original = json.loads(archived_path.read_text(encoding="utf-8"))["metadata"]
         assert original["session_id"] == archived_id
         assert original["created"] == archived_created

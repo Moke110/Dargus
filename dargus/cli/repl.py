@@ -285,6 +285,75 @@ def _end_live_session(api, console: Console) -> None:
         console.print(_format_error("Failed to save the current session before exit."))
 
 
+def _run_uninitialized_repl(console: Console) -> bool:
+    """Setup banner loop for an uninitialised Dargus home (T5).
+
+    Offers ``/setup`` to run the interactive wizard or exit. Returns True
+    when setup completed (proceed to the normal REPL) and False when the
+    user exited.
+    """
+    from dargus import api
+
+    console.print(
+        Panel(
+            Text.assemble(
+                Text("Dargus is not set up yet.\n", style=Style(color="yellow", bold=True)),
+                Text(
+                    "Run /setup to initialise your config, API key, D-Base, "
+                    "and session archive.",
+                    style=Style(color="grey70"),
+                ),
+            ),
+            border_style="yellow",
+            padding=(0, 2),
+        )
+    )
+    console.print()
+
+    while True:
+        try:
+            cmd = _prompt_input("> ").strip()
+        except KeyboardInterrupt:
+            console.print("^C", style=Style(color="grey50"))
+            continue
+        except EOFError:
+            console.print()
+            console.print("Goodbye!", style=Style(color="grey50"))
+            return False
+
+        if not cmd:
+            continue
+        if cmd in ("/quit", "/q", "/exit"):
+            console.print("Goodbye!", style=Style(color="grey50"))
+            return False
+        if cmd == "/setup":
+            from dargus.cli.commands.setup import run_setup_wizard
+
+            run_setup_wizard()
+            console.print()
+            if api.is_home_initialized():
+                console.print(
+                    Text("Setup complete — starting Dargus.", style=Style(color=IRIS_COLOR))
+                )
+                console.print()
+                return True
+            console.print(
+                Text(
+                    "Setup is still incomplete — run /setup again or /quit to exit.",
+                    style=Style(color="yellow"),
+                )
+            )
+            console.print()
+            continue
+        console.print(
+            Text(
+                "Run /setup to initialise Dargus, or /quit to exit.",
+                style=Style(color="yellow"),
+            )
+        )
+        console.print()
+
+
 def run_repl() -> None:
     """Launch the Dargus REPL."""
     from dargus import api
@@ -293,6 +362,12 @@ def run_repl() -> None:
     console = Console()
 
     _install_litellm_handler(console)
+
+    # First-run guard (T5): an uninitialised home shows a setup banner
+    # offering /setup or exit instead of a half-broken runtime.
+    if not api.is_home_initialized():
+        if not _run_uninitialized_repl(console):
+            return
 
     # ── intro block ───────────────────────────────────────────────────────────
     # Logo (boxed) with vertical separator + description — only when terminal is

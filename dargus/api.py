@@ -7,6 +7,7 @@ No adapter imports anything deeper than ``dargus.api``.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from dargus.iris.commander import Iris
@@ -384,6 +385,175 @@ def test_llm_connection(
         return {"ok": True, "model": model, "latency_ms": latency_ms}
     except Exception as exc:
         return {"ok": False, "model": model, "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Setup / uninstall lifecycle (T4/T6)
+# ---------------------------------------------------------------------------
+
+
+def is_home_initialized() -> bool:
+    """True when Dargus home holds a user config (``dargus setup`` has run).
+
+    This is the first-run guard's single source of truth: one-shot commands
+    refuse while this is False and the bare REPL shows a setup banner.
+    """
+    from dargus.config.home import is_initialized
+
+    return is_initialized()
+
+
+def dargus_home() -> str:
+    """The canonical Dargus home directory (``$DARGUS_HOME``, else the home
+    chosen at setup, else ``~/.dargus``)."""
+    from dargus.config.home import dargus_home as resolve_home
+
+    return str(resolve_home())
+
+
+def _default_config_text() -> str:
+    """The packaged default config YAML (the clean, machine-agnostic default)."""
+    packaged = Path(__file__).resolve().parent / "config" / "dargus_config.yaml"
+    return packaged.read_text(encoding="utf-8")
+
+
+def _init_dbase_dirs(home_path: Path) -> Path:
+    """Create the D-Base directory structure under *home_path*."""
+    from dargus.dbase.paths import working_dbase
+
+    dbase_dir = home_path / working_dbase()
+    for sub in ("data", "views", "sidecars"):
+        (dbase_dir / sub).mkdir(parents=True, exist_ok=True)
+    return dbase_dir
+
+
+def setup(home: str | Path | None = None, api_key: str | None = None) -> dict[str, Any]:
+    """Initialise a Dargus home (the ``dargus setup`` API seam, T4).
+
+    Idempotent: an already-initialised home is never clobbered — the default
+    config is only written when absent, the API key updates in place, the
+    D-Base directories are created with ``exist_ok``, and legacy session
+    migration skips ids already present in the home archive.
+
+    Args:
+        home: The Dargus home directory. Defaults to the canonical Dargus
+            home (``$DARGUS_HOME`` or ``~/.dargus``).
+        api_key: An optional LLM API key written to ``{home}/.env``.
+
+    Returns:
+        A summary dict with ``home``, ``config``, ``env`` (or ``None`` when
+        skipped), ``dbase``, and ``migrated`` (count).
+    """
+    from dargus._env import write_dotenv
+    from dargus.config.home import dargus_home, record_home
+    from dargus.sessions.store import migrate_legacy_archives
+
+    home_path = Path(home).expanduser() if home else dargus_home()
+    home_path.mkdir(parents=True, exist_ok=True)
+
+    # A non-default home chosen here becomes the canonical home for later
+    # runs, so the first-run guards and uninstall resolve the same location.
+    if home:
+        record_home(home_path)
+
+    # 1. Clean default config — written only if the user has none yet.
+    config_path = home_path / "dargus_config.yaml"
+    if not config_path.exists():
+        config_path.write_text(_default_config_text(), encoding="utf-8")
+
+    # 2. API key into {home}/.env (skippable; the wizard drives this step).
+    env_written: str | None = None
+    if api_key:
+        env_written = write_dotenv("DARGUS_LLM_API_KEY", api_key, config_path.parent / ".env")
+
+    # 3. D-Base directory structure under home.
+    dbase_dir = _init_dbase_dirs(home_path)
+
+    # 4. Migrate legacy per-workspace session archives (copy-merge, dedupe by
+    #    session_id, never overwrite — the migration is non-destructive).
+    #    The current working directory is the natural candidate; the runtime's
+    #    dual-read fallback keeps any other legacy archive resumable.
+    migrated = migrate_legacy_archives([Path.cwd()], target_home=home_path)
+
+    return {
+        "home": str(home_path),
+        "config": str(config_path),
+        "env": env_written,
+        "dbase": str(dbase_dir),
+        "migrated": migrated,
+    }
+
+
+def uninstall() -> dict[str, Any]:
+    """Uninstall the Dargus program, preserving the Dargus home data (T6).
+
+    Delegates to the uv tool uninstall path (``uv tool uninstall dargus-cli``)
+    — the way the supported install route (T9) puts ``dargus`` on the PATH.
+    Never deletes the Dargus home: config, secrets, D-Base, and sessions are
+    left intact and their location is reported.
+
+    Returns:
+        A summary dict with ``uninstalled`` (bool), the ``command`` run, the
+        subprocess ``output``/``error``, and the preserved ``home`` paths.
+    """
+    import shutil
+    import subprocess
+
+    from dargus.config.home import dargus_home
+
+    command = ["uv", "tool", "uninstall", "dargus-cli"]
+    uv = shutil.which("uv")
+    home = dargus_home()
+
+    if uv is None:
+        return {
+            "uninstalled": False,
+            "command": " ".join(command),
+            "error": "uv not found — Dargus was not installed via `uv tool install dargus-cli`",
+            "home": str(home),
+            "data": _home_data_paths(home),
+        }
+
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True)
+    except Exception as exc:  # pragma: no cover — defensive
+        return {
+            "uninstalled": False,
+            "command": " ".join(command),
+            "error": str(exc),
+            "home": str(home),
+            "data": _home_data_paths(home),
+        }
+
+    return {
+        "uninstalled": proc.returncode == 0,
+        "command": " ".join(command),
+        "output": proc.stdout.strip() or proc.stderr.strip(),
+        "error": None if proc.returncode == 0 else (proc.stderr.strip() or proc.stdout.strip()),
+        "home": str(home),
+        "data": _home_data_paths(home),
+    }
+
+
+def _home_data_paths(home_path: Path) -> dict[str, str | None]:
+    """The Dargus home data that uninstall preserves, mapped to their paths.
+
+    Derived through the same resolver functions as every other path module,
+    so uninstall reports exactly what Dargus itself resolves (ADR-0009).
+    ``home_path`` is the canonical ``dargus_home()``, so the resolvers below
+    agree with it by construction.
+    """
+    from dargus.config.home import env_path as home_env_path
+    from dargus.config.home import sessions_dir, user_config_path
+    from dargus.dbase.paths import working_dbase
+
+    return {
+        "home": str(home_path),
+        "config": str(user_config_path()),
+        "env": str(home_env_path()),
+        "dbase": str(home_path / working_dbase()),
+        "sessions": str(sessions_dir()),
+    }
 
 
 # ---------------------------------------------------------------------------

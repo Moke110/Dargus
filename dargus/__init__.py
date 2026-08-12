@@ -1,6 +1,6 @@
 """Dargus — clinical efficacy prediction system (runtime + agent skeleton)."""
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 from dargus.api import status
 from dargus.dbase import DBase

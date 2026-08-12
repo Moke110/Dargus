@@ -9,9 +9,6 @@ models:
   embedding:
     provider: sentence_transformers
     model: all-MiniLM-L6-v2
-test:
-  bulk_input_dir: test/ingest/slices
-  ingest_dir: /home/chang/dargus-dev/data
 logging:
   level: INFO
   format: '%(asctime)s | %(name)s | %(levelname)s | %(message)s'

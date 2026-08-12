@@ -32,6 +32,24 @@ def _clear_api_key():
         os.environ["DARGUS_LLM_API_KEY"] = old
 
 
+@pytest.fixture(autouse=True)
+def _initialized_home(tmp_path, monkeypatch):
+    """A tmp Dargus home that is initialised (T5): existing REPL tests drive
+    the normal path; banner tests opt out by clearing the config."""
+    home = tmp_path / "dargus_home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "dargus_config.yaml").write_text("models: {}\n", encoding="utf-8")
+    monkeypatch.setenv("DARGUS_HOME", str(home))
+    return home
+
+
+@pytest.fixture
+def uninitialized_home(_initialized_home):
+    """Make the tmp home uninitialised (no config → setup banner path)."""
+    (_initialized_home / "dargus_config.yaml").unlink()
+    return _initialized_home
+
+
 # ── Startup / greeting ─────────────────────────────────────────────────────
 
 
@@ -46,6 +64,49 @@ def test_greeting_contains_iris():
                 output = fake_out.getvalue()
                 assert "Iris" in output
                 assert "Dargus" in output
+
+
+def test_uninitialized_home_shows_setup_banner_and_exits(uninitialized_home):
+    """Bare `dargus` on an uninitialised home shows the setup banner (T5)."""
+    from dargus.cli.repl import run_repl
+
+    with patch("dargus.cli.repl._prompt_input", side_effect=["/quit"]):
+        with patch("sys.stdout", new=io.StringIO()) as fake_out:
+            run_repl()
+            output = fake_out.getvalue()
+            assert "not set up yet" in output
+            assert "/setup" in output
+            assert "Goodbye!" in output
+
+
+def test_uninitialized_home_setup_then_normal_repl(uninitialized_home):
+    """/setup initialises and the REPL proceeds to the normal greeting."""
+    from dargus.cli.repl import run_repl
+
+    with patch("dargus.cli.repl._prompt_input", side_effect=["/setup", "/quit"]):
+        with patch(
+            "dargus.cli.commands.setup.run_setup_wizard",
+            side_effect=lambda: (uninitialized_home / "dargus_config.yaml").write_text(
+                "models: {}\n", encoding="utf-8"
+            )
+            or 0,
+        ):
+            with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                run_repl()
+                output = fake_out.getvalue()
+                assert "Setup complete" in output
+                assert "starting Dargus" in output
+
+
+def test_uninitialized_home_unknown_command_hints(uninitialized_home):
+    """Non-command input on the banner re-shows the setup hint."""
+    from dargus.cli.repl import run_repl
+
+    with patch("dargus.cli.repl._prompt_input", side_effect=["hello", "/quit"]):
+        with patch("sys.stdout", new=io.StringIO()) as fake_out:
+            run_repl()
+            output = fake_out.getvalue()
+            assert "Run /setup to initialise" in output
 
 
 def test_greeting_contains_key_phrases():

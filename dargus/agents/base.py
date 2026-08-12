@@ -536,10 +536,9 @@ class BaseAgent(ABC):
         root = session.metadata.workspace_root or self._session_workspace_root()
         if root:
             session.metadata.workspace_root = root
-        if not root:
-            logger.warning("%s: no workspace root — cannot persist session", self.name)
-            return None
 
+        # The archive is the per-user home (T2): a Session persists even
+        # without a workspace root; the root remains recorded as metadata.
         from dargus.sessions.store import SessionStore
 
         session.close()

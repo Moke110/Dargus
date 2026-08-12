@@ -1,8 +1,9 @@
-"""Tests for Session persistence — the filesystem seam (ADR-0005, #106).
+"""Tests for Session persistence — the filesystem seam (ADR-0005/T2, #106).
 
-Ending a Session writes ``{workspace}/.dargus/sessions/<id>.json`` with the
-full Turns→Rounds shape and metadata fields; the archive accumulates without
-overwrite; resume reads it back correctly.
+Ending a Session writes ``{Dargus home}/sessions/<id>.json`` — the archive is
+per-user, not per-workspace. The archive accumulates without overwrite; reads
+try the home archive first and fall back to the legacy
+``{workspace}/.dargus/sessions`` path so a pre-migration Session is resumable.
 """
 
 from __future__ import annotations
@@ -13,12 +14,26 @@ from pathlib import Path
 import pytest
 
 from dargus.models.session import Session, SessionMetadata
-from dargus.sessions.store import SessionStore, archive_dir
+from dargus.sessions.store import (
+    SessionStore,
+    home_archive_dir,
+    legacy_archive_dir,
+    migrate_legacy_archives,
+)
+
+
+@pytest.fixture(autouse=True)
+def dargus_home(tmp_path: Path, monkeypatch):
+    """Point DARGUS_HOME at a tmp dir so tests never touch the real home."""
+    home = tmp_path / "dargus_home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DARGUS_HOME", str(home))
+    return home
 
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
-    """A tmp workspace root."""
+    """A tmp workspace root (legacy archive location)."""
     ws = tmp_path / "workspace"
     ws.mkdir(parents=True, exist_ok=True)
     return ws
@@ -43,7 +58,7 @@ def _load(path: Path) -> dict:
 
 
 class TestPersistOnEnd:
-    def test_end_writes_full_tree_to_archive(self, workspace: Path):
+    def test_end_writes_full_tree_to_home_archive(self, workspace: Path):
         from dargus.agents.base import BaseAgent
 
         agent = BaseAgent(name="Iris")
@@ -54,7 +69,7 @@ class TestPersistOnEnd:
 
         path = agent.end()
         assert path is not None
-        assert path == archive_dir(workspace) / f"{agent._session.metadata.session_id}.json"
+        assert path == home_archive_dir() / f"{agent._session.metadata.session_id}.json"
         assert path.exists()
 
         data = _load(path)
@@ -66,6 +81,17 @@ class TestPersistOnEnd:
         round_roles = [r["role"] for r in turns[0]["rounds"]]
         assert round_roles == ["assistant", "assistant"]
 
+    def test_archive_lands_in_home_not_workspace(self, workspace: Path):
+        """T2: writes go to {home}/sessions, never the workspace archive."""
+        from dargus.agents.base import BaseAgent
+
+        agent = BaseAgent(name="Iris")
+        agent._session.metadata.workspace_root = str(workspace)
+        agent._session.add_user("q1")
+        path = agent.end()
+        assert path is not None
+        assert legacy_archive_dir(workspace).exists() is False  # nothing written there
+
     def test_metadata_fields_persisted(self, workspace: Path):
         from dargus.agents.base import BaseAgent
 
@@ -76,7 +102,7 @@ class TestPersistOnEnd:
 
         ids = SessionStore(str(workspace)).list_ids()
         assert len(ids) == 1
-        data = _load(archive_dir(workspace) / f"{ids[0]}.json")
+        data = _load(home_archive_dir() / f"{ids[0]}.json")
         meta = data["metadata"]
         assert meta["agent"] == "Iris"
         assert meta["session_id"] == ids[0]
@@ -127,10 +153,14 @@ class TestPersistOnEnd:
             r.levelno >= logging.INFO and "persisted session" in r.message for r in caplog.records
         )
 
-    def test_store_without_root_skips(self):
+    def test_write_without_workspace_root_persists_to_home(self):
+        """T2: a Session persists to the home archive even with no root."""
         store = SessionStore("")
         session = _populated_session(root="")
-        assert store.write(session) is None
+        path = store.write(session)
+        assert path is not None
+        assert path == home_archive_dir() / f"{session.metadata.session_id}.json"
+        assert path.exists()
 
     def test_atexit_safety_net_persists(self, workspace: Path):
         """The atexit-registered close persists a Session whose workspace is
@@ -224,6 +254,94 @@ class TestStoreRoundTrip:
         assert msgs[0].content == "first question"
         assert msgs[1].content == "concluded"
         assert "read_file" not in " ".join(m.content for m in msgs)
+
+
+# ------------------------------------------------------------------
+# Dual-read fallback (T2)
+# ------------------------------------------------------------------
+
+
+class TestLegacyFallback:
+    def test_read_falls_back_to_legacy_workspace_archive(self, workspace: Path):
+        """A session archived before the move is still resumable."""
+        legacy = legacy_archive_dir(workspace)
+        legacy.mkdir(parents=True, exist_ok=True)
+        session = _populated_session(session_id="legacy-1", root=str(workspace))
+        (legacy / "legacy-1.json").write_text(
+            json.dumps(session.to_dict(), ensure_ascii=False), encoding="utf-8"
+        )
+
+        store = SessionStore(str(workspace))
+        loaded = store.read("legacy-1")
+        assert loaded.metadata.session_id == "legacy-1"
+        assert loaded.metadata.agent == "Iris"
+        assert home_archive_dir().exists() is False or "legacy-1.json" not in [
+            p.name for p in home_archive_dir().glob("*.json")
+        ]
+
+    def test_home_archive_wins_over_legacy(self, workspace: Path):
+        """When both archives hold an id, the home copy is authoritative."""
+        store = SessionStore(str(workspace))
+        store.write(_populated_session(session_id="dup", root=str(workspace), agent="Home"))
+
+        legacy = legacy_archive_dir(workspace)
+        legacy.mkdir(parents=True, exist_ok=True)
+        session = _populated_session(session_id="dup", root=str(workspace), agent="Legacy")
+        (legacy / "dup.json").write_text(
+            json.dumps(session.to_dict(), ensure_ascii=False), encoding="utf-8"
+        )
+
+        loaded = store.read("dup")
+        assert loaded.metadata.agent == "Home"
+
+    def test_list_ids_merges_home_and_legacy(self, workspace: Path):
+        store = SessionStore(str(workspace))
+        store.write(_populated_session(session_id="home-a", root=str(workspace)))
+        store.write(_populated_session(session_id="home-b", root=str(workspace)))
+
+        legacy = legacy_archive_dir(workspace)
+        legacy.mkdir(parents=True, exist_ok=True)
+        (legacy / "legacy-c.json").write_text("{}", encoding="utf-8")
+
+        assert store.list_ids() == ["home-a", "home-b", "legacy-c"]
+
+    def test_migrate_legacy_archives_copies_into_home(self, workspace: Path):
+        legacy = legacy_archive_dir(workspace)
+        legacy.mkdir(parents=True, exist_ok=True)
+        for sid in ("m1", "m2"):
+            session = _populated_session(session_id=sid, root=str(workspace))
+            (legacy / f"{sid}.json").write_text(
+                json.dumps(session.to_dict(), ensure_ascii=False), encoding="utf-8"
+            )
+
+        migrated = migrate_legacy_archives([workspace])
+        assert migrated == 2
+        assert (home_archive_dir() / "m1.json").exists()
+        assert (home_archive_dir() / "m2.json").exists()
+
+        # The legacy originals are left in place (non-destructive).
+        assert (legacy / "m1.json").exists()
+
+    def test_migrate_dedupes_by_session_id_never_overwrites(self, workspace: Path):
+        """Migration skips ids already in the home archive."""
+        store = SessionStore(str(workspace))
+        existing = _populated_session(session_id="shared", root=str(workspace), agent="Home")
+        store.write(existing)
+
+        legacy = legacy_archive_dir(workspace)
+        legacy.mkdir(parents=True, exist_ok=True)
+        older = _populated_session(session_id="shared", root=str(workspace), agent="Legacy")
+        (legacy / "shared.json").write_text(
+            json.dumps(older.to_dict(), ensure_ascii=False), encoding="utf-8"
+        )
+
+        migrated = migrate_legacy_archives([workspace])
+        assert migrated == 0  # nothing new to copy
+        loaded = store.read("shared")
+        assert loaded.metadata.agent == "Home"  # never overwritten
+
+    def test_migrate_no_legacy_archive_is_noop(self, workspace: Path):
+        assert migrate_legacy_archives([workspace]) == 0
 
 
 class TestSessionDict:

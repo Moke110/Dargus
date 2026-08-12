@@ -17,6 +17,7 @@ never touches a real key, network, or D-Base).
 | `smoke_models.py` | temp-config parsing + deterministic offline embedding round-trip | yes |
 | `smoke_agents.py` | a real Iris turn settles through the harness (converged AgentReport) | yes |
 | `smoke_api.py` | `new_session` / `resume_session` / `end_session` through the public facade | yes |
+| `smoke_package.py` | wheel build + package-data contents; fresh venv install boots `dargus` from the packaged config | wheel checks yes; fresh-install needs network |
 | `smoke_e2e.py` | real `python -m dargus iris "<query>"` → CLI → bootstrap → Iris → live LLM reply | **no** — real LLM |
 
 - **Module smokes** run offline in an isolated temp workspace; they never

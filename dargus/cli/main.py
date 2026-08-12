@@ -32,7 +32,24 @@ def main(argv: list[str] | None = None) -> int:
     # test command — test menu
     subparsers.add_parser("test", help="test menu")
 
+    # setup command — interactive first-run wizard (T4)
+    subparsers.add_parser("setup", help="initialise Dargus on this machine")
+
+    # uninstall command — remove the program, preserve home data (T6)
+    subparsers.add_parser("uninstall", help="uninstall Dargus (keeps your data)")
+
     args = parser.parse_args(argv)
+
+    # First-run guards (T5): one-shot commands refuse until `dargus setup`
+    # has run; setup/uninstall themselves always work.
+    if args.command in ("iris", "config", "test") and not api.is_home_initialized():
+        print(
+            "Dargus is not set up on this machine yet.\n"
+            "Run `dargus setup` first — it initialises your config, API key, "
+            "D-Base, and session archive.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Dispatch to commands
     if args.command == "iris":
@@ -50,6 +67,16 @@ def main(argv: list[str] | None = None) -> int:
         from dargus.cli.commands.test import run_test_menu
 
         return run_test_menu()
+
+    if args.command == "setup":
+        from dargus.cli.commands.setup import run_setup_wizard
+
+        return run_setup_wizard()
+
+    if args.command == "uninstall":
+        from dargus.cli.commands.uninstall import run_uninstall
+
+        return run_uninstall()
 
     # No command — launch REPL
     from dargus.cli.repl import run_repl

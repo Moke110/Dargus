@@ -21,26 +21,34 @@ def use_local_model_cost_map() -> None:
 
 
 def load_dotenv(env_path: str | Path | None = None) -> None:
-    """Load KEY=VALUE lines from a .env file into os.environ via setdefault.
+    """Load KEY=VALUE lines from .env file(s) into os.environ via setdefault.
 
     Args:
-        env_path: Path to .env file. If None, searches: cwd, then workspace
-                  root (parent of dargus package).
+        env_path: Path to a specific .env file. If None, loads from the
+                  Dargus home ``{home}/.env`` first, then searches cwd and
+                  the workspace root (dev) — the home is authoritative
+                  (T3), while cwd/workspace stay as backward-compatible
+                  fallbacks so existing keys keep resolving.
     """
     if env_path is None:
+        from dargus.config.home import env_path as home_env_path
+
         dargus_dir = Path(__file__).resolve().parent
         candidates = [
+            home_env_path(),  # {Dargus home}/.env — home-first (T3)
             Path.cwd() / ".env",  # cwd
             dargus_dir.parent / ".env",  # workspace root during dev
         ]
         for candidate in candidates:
             if candidate.exists():
-                env_path = candidate
-                break
-        else:
-            return  # no .env found, silently no-op
+                _load_env_file(candidate)
+        return  # all candidates loaded home-first; no-op if none exist
 
-    env_path = Path(env_path)
+    _load_env_file(Path(env_path))
+
+
+def _load_env_file(env_path: Path) -> None:
+    """Load a single .env file into os.environ via setdefault."""
     if not env_path.exists():
         return
 
@@ -61,13 +69,16 @@ def write_dotenv(key: str, value: str, env_path: str | Path | None = None) -> st
     Args:
         key: the environment variable name
         value: the value to assign
-        env_path: path to .env file. If None, writes to cwd/.env.
+        env_path: path to .env file. If None, writes to ``{home}/.env``
+            (the canonical secrets location, T3).
 
     Returns:
         The path to the .env file that was written.
     """
     if env_path is None:
-        env_path = Path.cwd() / ".env"
+        from dargus.config.home import env_path as home_env_path
+
+        env_path = home_env_path()
     else:
         env_path = Path(env_path)
 

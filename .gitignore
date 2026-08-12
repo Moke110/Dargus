@@ -39,3 +39,5 @@ opencode/
 
 # --- smoke-suite rolling outputs (scripts + README are committed) ---
 dargus/tests/smoke/out/
+build/
+*.whl

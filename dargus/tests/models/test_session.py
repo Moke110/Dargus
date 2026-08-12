@@ -9,12 +9,22 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from dargus.models.session import (
     Round,
     Session,
     SessionMetadata,
     Turn,
 )
+
+
+@pytest.fixture(autouse=True)
+def _dargus_home(tmp_path, monkeypatch):
+    """Point DARGUS_HOME at tmp so store round-trips stay hermetic (T2)."""
+    home = tmp_path / "dargus_home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DARGUS_HOME", str(home))
 
 
 class TestRound:
@@ -277,10 +287,10 @@ class TestSession:
         assert loaded.metadata.session_id != "orig"
 
         # The archived file is unchanged.
+        from dargus.sessions.store import home_archive_dir
+
         persisted = Session.from_dict(
-            json.loads(
-                (tmp_path / ".dargus" / "sessions" / "orig.json").read_text(encoding="utf-8")
-            )
+            json.loads((home_archive_dir() / "orig.json").read_text(encoding="utf-8"))
         )
         assert persisted.metadata.session_id == "orig"
         assert persisted.metadata.closed is not None

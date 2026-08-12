@@ -1,0 +1,74 @@
+name: Publish
+
+# Tag-triggered release (T10): tagging `vX.Y.Z` re-runs the full quality
+# gates, builds the wheel, publishes to PyPI via GitHub OIDC trusted
+# publishing (no API token or password lives in the repo or CI secrets), and
+# attaches the install script (scripts/install.sh) to the GitHub Release so
+# the stable `latest/download/install.sh` URL serves it (T9).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write # required for PyPI trusted publishing
+
+jobs:
+  publish:
+    name: Build, gate, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package (dev extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # ── Quality gates (the same gates the PR CI runs) ──────────────────
+      - name: Run tests
+        run: pytest -q
+
+      - name: Lint
+        run: ruff check dargus
+
+      - name: Format check
+        run: black --check dargus
+
+      # ── Build the wheel ────────────────────────────────────────────────
+      - name: Build wheel
+        run: |
+          python -m pip install --quiet build
+          python -m build
+
+      - name: Verify wheel contents
+        run: python - <<'EOF'
+          import glob, zipfile
+          wheel = glob.glob("dist/dargus_cli-*.whl")[0]
+          with zipfile.ZipFile(wheel) as z:
+            names = set(z.namelist())
+            for f in ("dargus/config/dargus_config.yaml",
+                      "dargus/dbase/field_registry.yaml",
+                      "dargus/dbase/vocabularies.json"):
+              assert f in names, f"missing packaged data file {f}"
+          print("wheel contents OK")
+          EOF
+
+      # ── Publish to PyPI via OIDC trusted publishing (no secrets) ───────
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      # ── Attach the install script to the GitHub Release (T9) ───────────
+      - name: Attach install script to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: scripts/install.sh
+          generate_release_notes: true

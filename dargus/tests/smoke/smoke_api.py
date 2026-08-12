@@ -42,9 +42,15 @@ def _archive_ids(workspace: Path) -> list[str]:
 
 
 def main() -> int:
+    import os
+
     with tempfile.TemporaryDirectory() as tmp:
         workspace = Path(tmp) / "workspace"
         workspace.mkdir()
+        # The session archive is per-user: point DARGUS_HOME at tmp (T2).
+        home = Path(tmp) / "dargus_home"
+        home.mkdir()
+        os.environ["DARGUS_HOME"] = str(home)
 
         # Drive dargus.api with a runtime wired to a tmp workspace + stub LLM.
         import dargus.api as api

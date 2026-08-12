@@ -13,6 +13,14 @@ from dargus.runtime.context import DargusRuntime
 from dargus.runtime.factory import AgentFactory
 
 
+@pytest.fixture(autouse=True)
+def _dargus_home(tmp_path, monkeypatch):
+    """Point DARGUS_HOME at tmp so end_live persistence stays hermetic (T2)."""
+    home = tmp_path / "dargus_home"
+    home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DARGUS_HOME", str(home))
+
+
 def _runtime(tmp_path: pytest.TempPathFactory | None = None) -> DargusRuntime:
     """A runtime rooted at a tmp workspace so agent persistence stays hermetic."""
     if tmp_path is None:
